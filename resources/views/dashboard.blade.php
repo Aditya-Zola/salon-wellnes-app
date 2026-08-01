@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Selesa Salon - Sistem Operasional</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,600,0,0&icon_names=add,admin_panel_settings,analytics,calendar_month,campaign,category,chevron_right,close,dashboard,groups,inventory_2,logout,manage_accounts,notifications,payments,percent,point_of_sale,receipt_long,schedule,search,spa,store,sync_alt,wallet,work_history&display=block" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salon.css') }}">
     <link rel="stylesheet" href="{{ asset('css/roles.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/redesign.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/material-icons.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}">
 </head>
 <body data-portal="{{ $portal ?? auth()->user()->role }}">
 <div class="app">
@@ -37,6 +43,10 @@
                 <article><i class="gold">↗</i><div><small>Pendapatan hari ini</small><strong>Rp1.485.000</strong><span>Naik 12% dari kemarin</span></div></article>
                 <article><i class="rose">!</i><div><small>Stok menipis</small><strong>2 produk</strong><span>Perlu ditambah</span></div></article>
             </div>
+            <div class="analytics-grid">
+                <article class="analytics-card"><div class="analytics-head"><div><h3>Analitik Pendapatan</h3><p>Performa pendapatan minggu ini</p></div><select><option>Minggu ini</option></select></div><div class="line-chart"><span class="axis a1">Rp3jt</span><span class="axis a2">Rp2jt</span><span class="axis a3">Rp1jt</span><div class="chart-grid"></div><div class="chart-line"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="4,68 20,48 36,60 52,30 68,44 84,22 97,36"></polyline></svg><i style="--x:4%;--y:68%"></i><i style="--x:20%;--y:48%"></i><i style="--x:36%;--y:60%"></i><i style="--x:52%;--y:30%"></i><i style="--x:68%;--y:44%"></i><i style="--x:84%;--y:22%"></i><i style="--x:97%;--y:36%"></i></div><div class="chart-labels"><span>Sen</span><span>Sel</span><span>Rab</span><span>Kam</span><span>Jum</span><span>Sab</span><span>Min</span></div></div></article>
+                <article class="analytics-card treatment-performance"><div class="analytics-head"><div><h3>Performa Treatment</h3><p>Jumlah pelayanan 7 hari terakhir</p></div><select><option>7 hari terakhir</option></select></div><div class="performance-list">@foreach([['Hair Spa',88,32],['Facial Ritual',76,28],['Creambath',62,21],['Nail Art',53,18],['Body Massage',42,14]] as [$name,$width,$total])<div><span>{{ $name }}</span><i><b style="width:{{ $width }}%"></b></i><strong>{{ $total }}</strong></div>@endforeach</div></article>
+            </div>
             <div class="two-column">
                 <div class="card"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></div>
                 <div class="card"><div class="card-head"><div><h3>Ketersediaan terapis</h3><p>Jadwal aktif hari ini</p></div></div><div class="therapists">
@@ -44,6 +54,7 @@
                     <div><i>RA</i><span><b>Rani</b><small>Beauty therapist</small></span><em>Siap 10.30</em></div>
                     <div><i>MA</i><span><b>Maya</b><small>Hair therapist</small></span><em>Tersedia</em></div>
                     <div><i>SA</i><span><b>Sari</b><small>Nail artist</small></span><em>Tersedia</em></div>
+                    <div class="stock-mini"><i>!</i><span><b>Peringatan stok menipis</b><small>2 produk di bawah stok minimum</small></span><button class="link show-toast" data-message="Buka halaman Produk & Stok untuk melihat detail">Lihat detail</button></div>
                 </div></div>
             </div>
         </section>
