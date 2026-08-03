@@ -15,6 +15,8 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call(AccessControlSeeder::class);
+
         User::whereIn('email', [
             'owner@selesa.test', 'admin@selesa.test',
             'marketing@selesa.test', 'kasir@selesa.test',
@@ -29,10 +31,16 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($accounts as $account) {
-            User::updateOrCreate(
-                ['email' => $account['email'], 'role' => $account['role']],
-                [...$account, 'password' => 'password']
+            $user = User::updateOrCreate(
+                ['email' => $account['email']],
+                [
+                    'name' => $account['name'],
+                    'email' => $account['email'],
+                    'password' => 'password',
+                ]
             );
+
+            $user->syncRoles($account['role'] === 'super_admin' ? 'super-admin' : $account['role']);
         }
     }
 }

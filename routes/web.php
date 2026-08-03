@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Access\RoleController;
+use App\Http\Controllers\Access\UserController;
 use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -9,22 +11,48 @@ Route::middleware('guest')->group(function () {
 });
 
 Route::middleware('auth')->group(function () {
-    Route::get('/', function () {
-        return redirect()->route(match (auth()->user()->role) {
-            'super_admin' => 'portal.super-admin',
-            'admin' => 'portal.admin',
-            'marketing' => 'portal.marketing',
-            'kasir' => 'portal.kasir',
-        });
-    })->name('dashboard');
+    Route::view('/', 'dashboard')
+        ->middleware('permission:dashboard.view')
+        ->name('dashboard');
 
-    Route::view('/super-admin', 'dashboard', ['portal' => 'super_admin'])
-        ->middleware('role:super_admin')->name('portal.super-admin');
-    Route::view('/admin', 'dashboard', ['portal' => 'admin'])
-        ->middleware('role:admin')->name('portal.admin');
-    Route::view('/marketing', 'dashboard', ['portal' => 'marketing'])
-        ->middleware('role:marketing')->name('portal.marketing');
-    Route::view('/kasir', 'dashboard', ['portal' => 'kasir'])
-        ->middleware('role:kasir')->name('portal.kasir');
+    Route::redirect('/super-admin', '/');
+    Route::redirect('/admin', '/');
+    Route::redirect('/marketing', '/');
+    Route::redirect('/kasir', '/');
+
+    Route::prefix('hak-akses')->name('access.')->group(function () {
+        Route::get('/peran', [RoleController::class, 'index'])
+            ->middleware('permission:access.roles.view')
+            ->name('roles.index');
+        Route::post('/peran', [RoleController::class, 'store'])
+            ->middleware('permission:access.roles.manage')
+            ->name('roles.store');
+        Route::get('/peran/{role}/edit', [RoleController::class, 'edit'])
+            ->middleware('permission:access.roles.view')
+            ->name('roles.edit');
+        Route::put('/peran/{role}', [RoleController::class, 'update'])
+            ->middleware('permission:access.roles.manage')
+            ->name('roles.update');
+        Route::delete('/peran/{role}', [RoleController::class, 'destroy'])
+            ->middleware('permission:access.roles.manage')
+            ->name('roles.destroy');
+
+        Route::get('/pengguna', [UserController::class, 'index'])
+            ->middleware('permission:access.users.view')
+            ->name('users.index');
+        Route::post('/pengguna', [UserController::class, 'store'])
+            ->middleware('permission:access.users.manage')
+            ->name('users.store');
+        Route::get('/pengguna/{user}/edit', [UserController::class, 'edit'])
+            ->middleware('permission:access.users.view')
+            ->name('users.edit');
+        Route::put('/pengguna/{user}', [UserController::class, 'update'])
+            ->middleware('permission:access.users.manage')
+            ->name('users.update');
+        Route::delete('/pengguna/{user}', [UserController::class, 'destroy'])
+            ->middleware('permission:access.users.manage')
+            ->name('users.destroy');
+    });
+
     Route::post('/logout', [AuthController::class, 'destroy'])->name('logout');
 });

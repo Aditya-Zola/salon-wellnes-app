@@ -14,7 +14,6 @@ class LogoutTest extends TestCase
     {
         $user = User::factory()->create([
             'email' => 'admin@gmail.com',
-            'role' => 'admin',
         ]);
         $response = $this->actingAs($user)->post('/logout');
 

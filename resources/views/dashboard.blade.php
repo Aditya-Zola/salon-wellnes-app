@@ -8,29 +8,32 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,600,0,0&icon_names=add,admin_panel_settings,analytics,calendar_month,campaign,category,chevron_right,close,dashboard,groups,inventory_2,logout,manage_accounts,notifications,payments,percent,point_of_sale,receipt_long,schedule,search,spa,store,sync_alt,wallet,work_history&display=block" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salon.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/roles.css') }}">
     <link rel="stylesheet" href="{{ asset('css/redesign.css') }}">
     <link rel="stylesheet" href="{{ asset('css/material-icons.css') }}">
     <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
+    <style>
+        @cannot('reservations.view') #reservasi,.go-reservation{display:none!important} @endcannot
+        @cannot('cashier.view') #kasir{display:none!important} @endcannot
+        @cannot('treatments.view') #treatment{display:none!important} @endcannot
+        @cannot('memberships.view') #membership{display:none!important} @endcannot
+        @cannot('products.view') #stok,.stock-mini .link{display:none!important} @endcannot
+        @cannot('finance.view') #keuangan{display:none!important} @endcannot
+        @cannot('payroll.view') #penggajian{display:none!important} @endcannot
+        @cannot('activity.view') #log{display:none!important} @endcannot
+        @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
+        @cannot('cashier.process') #open-payment{display:none!important} @endcannot
+        @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
+        @cannot('memberships.manage') #membership .card-head>.primary{display:none!important} @endcannot
+        @cannot('products.create') #open-product{display:none!important} @endcannot
+        @cannot('products.stocktake') #stok .toolbar .secondary{display:none!important} @endcannot
+        @cannot('payroll.manage') #penggajian .toolbar>.primary{display:none!important} @endcannot
+    </style>
 </head>
-<body data-portal="{{ $portal ?? auth()->user()->role }}">
+<body>
 <div class="app">
-    <aside class="sidebar">
-        <div class="brand"><span>S</span><div><strong>selesa</strong><small>Salon & Wellness</small></div></div>
-        <nav id="navigation">
-            <button class="active" data-page="dashboard"><b>⌂</b><span>Dashboard</span></button>
-            <button data-page="reservasi"><b>▦</b><span>Reservasi</span></button>
-            <button data-page="kasir"><b>▣</b><span>Kasir</span></button>
-            <button data-page="treatment"><b>✦</b><span>Treatment</span></button>
-            <button data-page="membership"><b>◇</b><span>Membership</span></button>
-            <button data-page="stok"><b>▤</b><span>Produk & Stok</span></button>
-            <button data-page="keuangan"><b>↗</b><span>Keuangan</span></button>
-            <button data-page="penggajian"><b>◎</b><span>Penggajian</span></button>
-            <button data-page="log"><b>≡</b><span>Log Aktivitas</span></button>
-        </nav>
-        <div class="account"><i>{{ strtoupper(substr(auth()->user()->name, 0, 2)) }}</i><div><strong>{{ auth()->user()->name }}</strong><small>{{ ucwords(str_replace('_', ' ', auth()->user()->role)) }}</small></div><form method="POST" action="{{ route('logout') }}">@csrf<button type="submit" class="logout" title="Keluar dari sistem"><b>OUT</b><span>Logout</span></button></form></div>
-    </aside>
+    @include('partials.internal-sidebar')
 
     <main>
         <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><label class="search">⌕ <input placeholder="Cari pelanggan, transaksi..."></label><button class="bell">♢<sup>3</sup></button></div></header>
