@@ -20,3 +20,10 @@ main{margin-left:230px;padding:0 28px 36px}header{height:92px;margin:0 -28px 24p
 @media(max-width:700px){#toast{right:16px!important;bottom:16px!important;left:16px!important;max-width:none;text-align:left}}
 
 .dashboard-brand{display:block;width:170px;padding:0 7px 42px;text-decoration:none}.dashboard-brand img{display:block;width:100%;height:auto}@media(max-width:1100px){.dashboard-brand{width:150px;padding-bottom:28px}}@media(max-width:700px){.dashboard-brand{width:46px;padding:0 2px 28px}}
+.dashboard-metric{position:relative;cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
+.dashboard-metric::after{content:"chevron_right";position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:"Material Symbols Rounded";font-size:18px;font-variation-settings:"FILL" 1,"wght" 550,"GRAD" 0,"opsz" 20;color:#a6a2b4;opacity:0;transition:opacity .15s ease,right .15s ease}
+.dashboard-metric:hover{border-color:#d8d0ff;box-shadow:0 5px 16px rgba(79,57,180,.08);transform:translateY(-1px)}
+.dashboard-metric:hover::after,.dashboard-metric:focus-visible::after{right:11px;opacity:1}
+.dashboard-metric:focus-visible{outline:3px solid rgba(115,87,246,.2);outline-offset:2px;border-color:#927df7}
+.dashboard-metric:active{transform:translateY(0)}
+.time-field small{display:block;margin-top:6px;color:var(--ui-muted);font-size:9px;font-weight:400}.time-field select{cursor:pointer;background-color:#fff}
