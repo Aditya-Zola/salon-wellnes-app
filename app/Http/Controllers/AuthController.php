@@ -19,15 +19,14 @@ class AuthController extends Controller
         $credentials = $request->validate([
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
-            'role' => ['required', 'in:super_admin,admin,marketing,kasir'],
         ]);
 
         $remember = $request->boolean('remember');
 
         if (! Auth::attempt($credentials, $remember)) {
             return back()->withErrors([
-                'email' => 'Email, kata sandi, atau peran tidak sesuai.',
-            ])->onlyInput('email', 'role');
+                'email' => 'Email atau kata sandi tidak sesuai.',
+            ])->onlyInput('email');
         }
 
         $request->session()->regenerate();
