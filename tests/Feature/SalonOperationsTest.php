@@ -68,6 +68,11 @@ class SalonOperationsTest extends TestCase
 
         $availability=$this->actingAs($admin)->getJson("/operasional/reservasi/terapis-tersedia?date={$date}&time=10:30&treatment_id={$treatment->id}")->assertOk();
         $this->assertFalse(collect($availability->json('therapists'))->firstWhere('id',$therapist->id)['available']);
+        $this->assertCount(3,collect($availability->json('therapists'))->where('available',true));
+
+        $freeDate=today()->addDays(10)->toDateString();
+        $allFree=$this->actingAs($admin)->getJson("/operasional/reservasi/terapis-tersedia?date={$freeDate}&time=14:00&treatment_id={$treatment->id}")->assertOk();
+        $this->assertCount(4,collect($allFree->json('therapists'))->where('available',true));
     }
 
     public function test_queue_numbers_follow_reservation_time_for_each_date(): void
