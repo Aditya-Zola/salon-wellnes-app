@@ -3,6 +3,7 @@
 use App\Http\Controllers\Access\RoleController;
 use App\Http\Controllers\Access\UserController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\SalonController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
@@ -11,9 +12,22 @@ Route::middleware('guest')->group(function () {
 });
 
 Route::middleware('auth')->group(function () {
-    Route::view('/', 'dashboard')
+    Route::get('/', [SalonController::class, 'dashboard'])
         ->middleware('permission:dashboard.view')
         ->name('dashboard');
+
+    Route::prefix('operasional')->name('operations.')->group(function () {
+        Route::get('/data', [SalonController::class, 'data'])->middleware('permission:dashboard.view')->name('data');
+        Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
+        Route::patch('/reservasi/{id}', [SalonController::class, 'updateReservation'])->middleware('permission:reservations.update')->name('reservations.update');
+        Route::post('/produk', [SalonController::class, 'storeProduct'])->middleware('permission:products.create')->name('products.store');
+        Route::patch('/produk/{id}/stok', [SalonController::class, 'adjustStock'])->middleware('permission:products.update')->name('products.stock');
+        Route::post('/treatment', [SalonController::class, 'storeTreatment'])->middleware('permission:treatments.create')->name('treatments.store');
+        Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');
+        Route::post('/member', [SalonController::class, 'storeMember'])->middleware('permission:memberships.manage')->name('members.store');
+        Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
+        Route::patch('/penggajian/{id}', [SalonController::class, 'updatePayroll'])->middleware('permission:payroll.manage')->name('payroll.update');
+    });
 
     Route::redirect('/super-admin', '/');
     Route::redirect('/admin', '/');
