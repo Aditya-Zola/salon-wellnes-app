@@ -42,5 +42,7 @@ class DatabaseSeeder extends Seeder
 
             $user->syncRoles($account['role'] === 'super_admin' ? 'super-admin' : $account['role']);
         }
+
+        $this->call(SalonOperationSeeder::class);
     }
 }

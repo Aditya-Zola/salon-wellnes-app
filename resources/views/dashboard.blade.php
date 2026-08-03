@@ -29,6 +29,10 @@
         @cannot('products.create') #open-product{display:none!important} @endcannot
         @cannot('products.stocktake') #stok .toolbar .secondary{display:none!important} @endcannot
         @cannot('payroll.manage') #penggajian .toolbar>.primary{display:none!important} @endcannot
+        @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
+        @cannot('treatments.update') .recipe-button{display:none!important} @endcannot
+        @cannot('products.update') .stock-edit{display:none!important} @endcannot
+        @cannot('payroll.manage') .payroll-edit{display:none!important} @endcannot
     </style>
 </head>
 <body>
@@ -70,7 +74,7 @@
 
         <section class="page" id="membership"><div class="metrics three"><article><i class="clay">◇</i><div><small>Member aktif</small><strong>248</strong><span>+18 bulan ini</span></div></article><article><i class="gold">✦</i><div><small>Event aktif</small><strong>3</strong><span>2 berakhir bulan ini</span></div></article><article><i class="green">↗</i><div><small>Transaksi member</small><strong>68%</strong><span>Dari total bulan ini</span></div></article></div><div class="two-column membership-grid"><div class="card"><div class="card-head"><div><h3>Daftar membership</h3><p>Gratis tanpa masa berlaku</p></div><button class="primary show-toast" data-message="Form member baru siap dikembangkan">＋ Member baru</button></div><div id="member-list"></div></div><div class="card"><div class="card-head"><div><h3>Event membership</h3><p>Program diskon tersedia</p></div></div><div class="event"><small>AKTIF</small><h3>Member Facial Week</h3><p>Diskon 10% seluruh Facial Ritual</p><span>1-31 Agustus 2026 · 42x digunakan</span></div><div class="event pale"><small>AKTIF</small><h3>Hair Care Bundle</h3><p>Harga khusus paket hair treatment</p><span>15 Juli-15 Agustus 2026 · 18x digunakan</span></div></div></div></section>
 
-        <section class="page" id="stok"><div class="toolbar"><div class="tabs"><button class="active stock-tab" data-stock="list">Daftar produk <b>42</b></button><button class="stock-tab" data-stock="history">Riwayat keluar-masuk</button></div><div><button class="secondary show-toast" data-message="Form stok opname siap dikembangkan">Stok opname</button><button class="primary" id="open-product">＋ Tambah produk</button></div></div><div class="card"><div id="stock-list" class="table stock-table"></div><div id="stock-history" class="table history-table hidden"></div></div></section>
+        <section class="page" id="stok"><div class="toolbar"><div class="tabs"><button class="active stock-tab" data-stock="list">Daftar produk <b>42</b></button><button class="stock-tab" data-stock="history">Riwayat keluar-masuk</button></div><div><button class="secondary" id="open-stocktake">Stok opname</button><button class="primary" id="open-product">＋ Tambah produk</button></div></div><div class="card"><div id="stock-list" class="table stock-table"></div><div id="stock-history" class="table history-table hidden"></div></div></section>
 
         <section class="page" id="keuangan"><div class="metrics"><article><i class="green">↗</i><div><small>Pemasukan bulan ini</small><strong>Rp42.850.000</strong><span>Naik 9,2% dari Juli</span></div></article><article><i class="rose">↘</i><div><small>Pengeluaran</small><strong>Rp18.420.000</strong><span>Termasuk gaji dan stok</span></div></article><article><i class="gold">◎</i><div><small>Saldo bersih</small><strong>Rp24.430.000</strong><span>Per 1 Agustus</span></div></article><article><i class="clay">▣</i><div><small>Transaksi</small><strong>286</strong><span>Rata-rata Rp149.825</span></div></article></div><div class="two-column"><div class="card"><div class="card-head"><div><h3>Arus kas</h3><p>Pemasukan dan pengeluaran bulan berjalan</p></div></div><div class="cash-bars" id="cash-bars"></div></div><div class="card"><div class="card-head"><div><h3>Transaksi terbaru</h3><p>Hari ini</p></div></div><div id="transactions"></div></div></div></section>
 
@@ -86,6 +90,7 @@
 
 <div class="modal" id="product-modal"><div class="modal-box"><div class="modal-head"><div><h2>Tambah produk baru</h2><p>Produk dapat digunakan dalam resep treatment</p></div><button class="close-modal">×</button></div><form id="product-form"><div class="form-grid"><label>Nama produk<input required placeholder="Contoh: Hair Spa L'Oréal"></label><label>Kategori<select><option>Hair</option><option>Facial</option><option>Spa</option><option>Nail</option><option>Konsumsi</option></select></label><label>Stok awal<input type="number" value="500"></label><label>Satuan<select><option>ml</option><option>gr</option><option>pcs</option><option>sachet</option></select></label><label>Batas minimum<input type="number" value="100"></label><label>Harga jual<input type="number" value="0"></label></div><footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan produk</button></footer></form></div></div>
 <div id="toast"></div>
-<script src="{{ asset('js/salon.js') }}"></script>
+<script>window.SALON_DATA = @json($salonData ?? []);</script>
+<script src="{{ asset('js/salon.js') }}?v={{ filemtime(public_path('js/salon.js')) }}"></script>
 </body>
 </html>

@@ -109,6 +109,10 @@ class AccessControlSeeder extends Seeder
             'treatments.view',
             'memberships.view',
             'memberships.manage',
+            'products.view',
+            'products.create',
+            'products.update',
+            'products.stocktake',
         ]);
         Role::findByName('kasir')->syncPermissions([
             'dashboard.view',
