@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Selesa Salon - Sistem Operasional')</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,600,0,0&icon_names=admin_panel_settings,calendar_month,chevron_right,dashboard,groups,inventory_2,payments,point_of_sale,receipt_long,spa,wallet&display=block" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,550,1,0&icon_names=admin_panel_settings,analytics,calendar_month,campaign,chevron_right,dashboard,groups,inventory_2,logout,payments,point_of_sale,receipt_long,spa,store,wallet,work_history&display=block" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salon.css') }}">
     <link rel="stylesheet" href="{{ asset('css/redesign.css') }}">
     <link rel="stylesheet" href="{{ asset('css/material-icons.css') }}">

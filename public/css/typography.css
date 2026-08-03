@@ -1,5 +1,5 @@
 :root {
-    --font-sans: "Inter", "Segoe UI", Arial, sans-serif;
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 html,

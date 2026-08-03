@@ -110,7 +110,38 @@ class SalonController extends Controller
 
     private function snapshot(): array
     {
-        return ['reservations'=>DB::table('reservations')->join('customers','customers.id','=','reservations.customer_id')->join('treatments','treatments.id','=','reservations.treatment_id')->join('therapists','therapists.id','=','reservations.therapist_id')->select('reservations.*','customers.name as customer_name','customers.phone','customers.is_member','treatments.name as treatment_name','treatments.price','therapists.name as therapist_name')->orderByDesc('reservation_date')->orderBy('reservation_time')->get(),'treatments'=>DB::table('treatments')->where('active',true)->get(),'therapists'=>DB::table('therapists')->where('active',true)->get(),'members'=>DB::table('customers')->where('is_member',true)->get(),'products'=>DB::table('products')->get(),'stock_movements'=>DB::table('stock_movements')->join('products','products.id','=','stock_movements.product_id')->leftJoin('users','users.id','=','stock_movements.created_by')->select('stock_movements.*','products.name as product_name','products.unit','users.name as user_name')->latest('stock_movements.created_at')->limit(30)->get(),'transactions'=>DB::table('transactions')->leftJoin('customers','customers.id','=','transactions.customer_id')->select('transactions.*','customers.name as customer_name')->latest('transactions.created_at')->limit(20)->get(),'payrolls'=>DB::table('payrolls')->get(),'activities'=>DB::table('activity_logs')->leftJoin('users','users.id','=','activity_logs.user_id')->select('activity_logs.*','users.name as user_name')->latest('activity_logs.created_at')->limit(30)->get(),'promotions'=>DB::table('promotions')->where('active',true)->get()];
+        return ['dashboard'=>$this->dashboardAnalytics(),'reservations'=>DB::table('reservations')->join('customers','customers.id','=','reservations.customer_id')->join('treatments','treatments.id','=','reservations.treatment_id')->join('therapists','therapists.id','=','reservations.therapist_id')->select('reservations.*','customers.name as customer_name','customers.phone','customers.is_member','treatments.name as treatment_name','treatments.price','therapists.name as therapist_name')->orderByDesc('reservation_date')->orderBy('reservation_time')->get(),'treatments'=>DB::table('treatments')->where('active',true)->get(),'therapists'=>DB::table('therapists')->where('active',true)->get(),'members'=>DB::table('customers')->where('is_member',true)->get(),'products'=>DB::table('products')->get(),'stock_movements'=>DB::table('stock_movements')->join('products','products.id','=','stock_movements.product_id')->leftJoin('users','users.id','=','stock_movements.created_by')->select('stock_movements.*','products.name as product_name','products.unit','users.name as user_name')->latest('stock_movements.created_at')->limit(30)->get(),'transactions'=>DB::table('transactions')->leftJoin('customers','customers.id','=','transactions.customer_id')->select('transactions.*','customers.name as customer_name','customers.is_member')->latest('transactions.created_at')->limit(20)->get(),'payrolls'=>DB::table('payrolls')->get(),'activities'=>DB::table('activity_logs')->leftJoin('users','users.id','=','activity_logs.user_id')->select('activity_logs.*','users.name as user_name')->latest('activity_logs.created_at')->limit(30)->get(),'promotions'=>DB::table('promotions')->where('active',true)->whereDate('starts_at','<=',today())->whereDate('ends_at','>=',today())->get()];
+    }
+
+    private function dashboardAnalytics(): array
+    {
+        $today=Carbon::today();
+        $start=$today->copy()->subDays(6);
+        $activeReservations=DB::table('reservations')->whereDate('reservation_date',$today)->where('status','!=','Batal');
+        $reservationCount=(clone $activeReservations)->count();
+        $arrivedCount=(clone $activeReservations)->whereIn('status',['Sudah datang','Sedang dilayani','Selesai'])->count();
+        $servingCount=(clone $activeReservations)->where('status','Sedang dilayani')->count();
+        $todayRevenue=(int)DB::table('transactions')->whereDate('created_at',$today)->sum('total');
+        $yesterdayRevenue=(int)DB::table('transactions')->whereDate('created_at',$today->copy()->subDay())->sum('total');
+        $lowStockCount=DB::table('products')->whereColumn('stock','<=','minimum_stock')->count();
+        $monthStart=$today->copy()->startOfMonth();
+        $monthEnd=$today->copy()->endOfDay();
+        $memberCount=DB::table('customers')->where('is_member',true)->count();
+        $newMembersMonth=DB::table('customers')->where('is_member',true)->whereBetween('member_since',[$monthStart->toDateString(),$today->toDateString()])->count();
+        $activePromotionCount=DB::table('promotions')->where('active',true)->whereDate('starts_at','<=',$today)->whereDate('ends_at','>=',$today)->count();
+        $endingPromotionsMonth=DB::table('promotions')->where('active',true)->whereBetween('ends_at',[$today->toDateString(),$today->copy()->endOfMonth()->toDateString()])->count();
+        $monthTransactions=DB::table('transactions')->whereBetween('transactions.created_at',[$monthStart,$monthEnd]);
+        $monthTransactionCount=(clone $monthTransactions)->count();
+        $memberTransactionCount=(clone $monthTransactions)->join('customers','customers.id','=','transactions.customer_id')->where('customers.is_member',true)->count();
+        $monthIncome=(int)DB::table('cash_entries')->where('type','masuk')->whereBetween('entry_date',[$monthStart->toDateString(),$today->toDateString()])->sum('amount');
+        $monthExpense=(int)DB::table('cash_entries')->where('type','keluar')->whereBetween('entry_date',[$monthStart->toDateString(),$today->toDateString()])->sum('amount');
+        $dayNames=[1=>'Sen',2=>'Sel',3=>'Rab',4=>'Kam',5=>'Jum',6=>'Sab',7=>'Min'];
+        $revenue=[];
+        for($date=$start->copy();$date->lte($today);$date->addDay()){
+            $revenue[]=['date'=>$date->toDateString(),'label'=>$dayNames[$date->dayOfWeekIso],'total'=>(int)DB::table('transactions')->whereDate('created_at',$date)->sum('total')];
+        }
+        $treatments=DB::table('transaction_items')->join('transactions','transactions.id','=','transaction_items.transaction_id')->where('transaction_items.item_type','treatment')->whereBetween('transactions.created_at',[$start->copy()->startOfDay(),$today->copy()->endOfDay()])->select('transaction_items.name',DB::raw('SUM(transaction_items.quantity) as total'))->groupBy('transaction_items.name')->orderByDesc('total')->limit(5)->get()->map(fn($item)=>['name'=>$item->name,'total'=>(float)$item->total])->values();
+        return ['reservations_today'=>$reservationCount,'arrived_today'=>$arrivedCount,'serving_today'=>$servingCount,'arrival_percent'=>$reservationCount?(int)round($arrivedCount/$reservationCount*100):0,'revenue_today'=>$todayRevenue,'revenue_yesterday'=>$yesterdayRevenue,'low_stock_count'=>$lowStockCount,'revenue_last_7_days'=>$revenue,'treatment_last_7_days'=>$treatments,'member_count'=>$memberCount,'new_members_month'=>$newMembersMonth,'active_promotion_count'=>$activePromotionCount,'ending_promotions_month'=>$endingPromotionsMonth,'member_transaction_percent'=>$monthTransactionCount?(int)round($memberTransactionCount/$monthTransactionCount*100):0,'month_income'=>$monthIncome,'month_expense'=>$monthExpense,'month_balance'=>$monthIncome-$monthExpense,'month_transaction_count'=>$monthTransactionCount,'month_transaction_average'=>$monthTransactionCount?(int)round((clone $monthTransactions)->sum('total')/$monthTransactionCount):0];
     }
 
     private function therapistIsBusy(int $therapistId,int $treatmentId,string $date,string $time): bool

@@ -88,4 +88,22 @@ class SalonOperationsTest extends TestCase
         $this->assertDatabaseHas('reservations',['id'=>$early->json('id'),'queue_number'=>'A001']);
         $this->assertDatabaseHas('reservations',['id'=>$late->json('id'),'queue_number'=>'A002']);
     }
+
+    public function test_dashboard_analytics_are_calculated_from_operational_data(): void
+    {
+        $cashier=User::where('email','kasir@gmail.com')->firstOrFail();
+        $admin=User::where('email','admin@gmail.com')->firstOrFail();
+        $reservation=\DB::table('reservations')->join('customers','customers.id','=','reservations.customer_id')->where('customers.is_member',true)->select('reservations.id')->first();
+        $payment=$this->actingAs($cashier)->postJson('/operasional/pembayaran',['reservation_id'=>$reservation->id,'payment_method'=>'Tunai','discount_percent'=>0])->assertCreated();
+
+        $dashboard=$this->actingAs($admin)->getJson('/operasional/data')->assertOk()->json('dashboard');
+
+        $this->assertSame(4,$dashboard['reservations_today']);
+        $this->assertSame(2,$dashboard['arrived_today']);
+        $this->assertSame((int)$payment->json('total'),$dashboard['revenue_today']);
+        $this->assertSame(1,$dashboard['low_stock_count']);
+        $this->assertCount(7,$dashboard['revenue_last_7_days']);
+        $this->assertSame((int)$payment->json('total'),$dashboard['revenue_last_7_days'][6]['total']);
+        $this->assertSame(1,$dashboard['treatment_last_7_days'][0]['total']);
+    }
 }
