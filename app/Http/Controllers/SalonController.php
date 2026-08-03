@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -25,19 +26,34 @@ class SalonController extends Controller
             $customer = DB::table('customers')->where('phone',$data['phone'])->first();
             if ($customer) { DB::table('customers')->where('id',$customer->id)->update(['name'=>$data['name'],'updated_at'=>now()]); $customerId=$customer->id; }
             else $customerId=DB::table('customers')->insertGetId(['name'=>$data['name'],'phone'=>$data['phone'],'created_at'=>now(),'updated_at'=>now()]);
-            $busy=DB::table('reservations')->where('therapist_id',$data['therapist_id'])->where('reservation_date',$data['date'])->where('reservation_time',$data['time'])->whereNotIn('status',['Batal','Selesai'])->exists();
-            abort_if($busy,422,'Terapis sudah memiliki jadwal pada waktu tersebut.');
-            $number='A'.str_pad((string)(DB::table('reservations')->whereDate('reservation_date',$data['date'])->count()+1),3,'0',STR_PAD_LEFT);
+            $busy=$this->therapistIsBusy((int)$data['therapist_id'],(int)$data['treatment_id'],$data['date'],$data['time']);
+            abort_if($busy,422,'Terapis sudah memiliki jadwal yang beririsan dengan waktu tersebut.');
+            $number='TMP-'.str()->uuid();
             $id=DB::table('reservations')->insertGetId(['queue_number'=>$number,'customer_id'=>$customerId,'treatment_id'=>$data['treatment_id'],'therapist_id'=>$data['therapist_id'],'reservation_date'=>$data['date'],'reservation_time'=>$data['time'],'status'=>'Terjadwal','notes'=>$data['notes']??null,'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);
+            $this->reorderQueue($data['date']);
+            $number=DB::table('reservations')->where('id',$id)->value('queue_number');
             $this->log($request,'reservasi.dibuat','reservation',$id,"Membuat reservasi {$number} untuk {$data['name']}"); return $id;
         });
         return response()->json(['message'=>'Reservasi berhasil dibuat','id'=>$reservation],201);
     }
 
+    public function availableTherapists(Request $request): JsonResponse
+    {
+        $data=$request->validate(['date'=>'required|date','time'=>'required','treatment_id'=>'required|exists:treatments,id']);
+        $therapists=DB::table('therapists')->where('active',true)->orderBy('name')->get()->map(function($therapist)use($data){
+            $therapist->available=!$this->therapistIsBusy($therapist->id,(int)$data['treatment_id'],$data['date'],$data['time']);
+            return $therapist;
+        });
+        return response()->json(['therapists'=>$therapists]);
+    }
+
     public function updateReservation(Request $request, int $id): JsonResponse
     {
         $data=$request->validate(['status'=>['required',Rule::in(['Terjadwal','Sudah datang','Sedang dilayani','Selesai','Batal'])]]);
+        $date=DB::table('reservations')->where('id',$id)->value('reservation_date');
+        abort_unless($date,404);
         abort_unless(DB::table('reservations')->where('id',$id)->update(['status'=>$data['status'],'updated_at'=>now()]),404);
+        $this->reorderQueue($date);
         $this->log($request,'reservasi.status','reservation',$id,"Mengubah status reservasi menjadi {$data['status']}");
         return response()->json(['message'=>'Status reservasi diperbarui']);
     }
@@ -95,6 +111,27 @@ class SalonController extends Controller
     private function snapshot(): array
     {
         return ['reservations'=>DB::table('reservations')->join('customers','customers.id','=','reservations.customer_id')->join('treatments','treatments.id','=','reservations.treatment_id')->join('therapists','therapists.id','=','reservations.therapist_id')->select('reservations.*','customers.name as customer_name','customers.phone','customers.is_member','treatments.name as treatment_name','treatments.price','therapists.name as therapist_name')->orderByDesc('reservation_date')->orderBy('reservation_time')->get(),'treatments'=>DB::table('treatments')->where('active',true)->get(),'therapists'=>DB::table('therapists')->where('active',true)->get(),'members'=>DB::table('customers')->where('is_member',true)->get(),'products'=>DB::table('products')->get(),'stock_movements'=>DB::table('stock_movements')->join('products','products.id','=','stock_movements.product_id')->leftJoin('users','users.id','=','stock_movements.created_by')->select('stock_movements.*','products.name as product_name','products.unit','users.name as user_name')->latest('stock_movements.created_at')->limit(30)->get(),'transactions'=>DB::table('transactions')->leftJoin('customers','customers.id','=','transactions.customer_id')->select('transactions.*','customers.name as customer_name')->latest('transactions.created_at')->limit(20)->get(),'payrolls'=>DB::table('payrolls')->get(),'activities'=>DB::table('activity_logs')->leftJoin('users','users.id','=','activity_logs.user_id')->select('activity_logs.*','users.name as user_name')->latest('activity_logs.created_at')->limit(30)->get(),'promotions'=>DB::table('promotions')->where('active',true)->get()];
+    }
+
+    private function therapistIsBusy(int $therapistId,int $treatmentId,string $date,string $time): bool
+    {
+        $duration=(int)DB::table('treatments')->where('id',$treatmentId)->value('duration_minutes');
+        $requestedStart=Carbon::parse("{$date} {$time}");
+        $requestedEnd=$requestedStart->copy()->addMinutes($duration);
+        return DB::table('reservations')->join('treatments','treatments.id','=','reservations.treatment_id')->where('reservations.therapist_id',$therapistId)->whereDate('reservations.reservation_date',$date)->whereNotIn('reservations.status',['Batal','Selesai'])->select('reservations.reservation_time','treatments.duration_minutes')->get()->contains(function($reservation)use($date,$requestedStart,$requestedEnd){
+            $start=Carbon::parse("{$date} {$reservation->reservation_time}");
+            $end=$start->copy()->addMinutes((int)$reservation->duration_minutes);
+            return $start->lt($requestedEnd)&&$end->gt($requestedStart);
+        });
+    }
+
+    private function reorderQueue(string $date): void
+    {
+        $allIds=DB::table('reservations')->whereDate('reservation_date',$date)->pluck('id');
+        foreach($allIds as $id)DB::table('reservations')->where('id',$id)->update(['queue_number'=>'TMP-'.$id]);
+        $activeIds=DB::table('reservations')->whereDate('reservation_date',$date)->where('status','!=','Batal')->orderBy('reservation_time')->orderBy('created_at')->orderBy('id')->pluck('id');
+        foreach($activeIds as $index=>$id)DB::table('reservations')->where('id',$id)->update(['queue_number'=>'A'.str_pad((string)($index+1),3,'0',STR_PAD_LEFT)]);
+        DB::table('reservations')->whereDate('reservation_date',$date)->where('status','Batal')->orderBy('reservation_time')->get()->each(fn($row)=>DB::table('reservations')->where('id',$row->id)->update(['queue_number'=>'B'.str_pad((string)$row->id,3,'0',STR_PAD_LEFT)]));
     }
 
     private function log(Request $request,string $action,string $type,?int $id,string $description): void { DB::table('activity_logs')->insert(['user_id'=>$request->user()?->id,'action'=>$action,'subject_type'=>$type,'subject_id'=>$id,'description'=>$description,'created_at'=>now(),'updated_at'=>now()]); }

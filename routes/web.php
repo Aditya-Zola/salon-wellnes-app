@@ -19,6 +19,7 @@ Route::middleware('auth')->group(function () {
     Route::prefix('operasional')->name('operations.')->group(function () {
         Route::get('/data', [SalonController::class, 'data'])->middleware('permission:dashboard.view')->name('data');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
+        Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view')->name('reservations.therapists');
         Route::patch('/reservasi/{id}', [SalonController::class, 'updateReservation'])->middleware('permission:reservations.update')->name('reservations.update');
         Route::post('/produk', [SalonController::class, 'storeProduct'])->middleware('permission:products.create')->name('products.store');
         Route::patch('/produk/{id}/stok', [SalonController::class, 'adjustStock'])->middleware('permission:products.update')->name('products.stock');
