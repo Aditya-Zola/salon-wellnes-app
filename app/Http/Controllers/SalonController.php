@@ -2,168 +2,513 @@
 
 namespace App\Http\Controllers;
 
-use Carbon\Carbon;
+use App\Http\Exceptions\ReservationConflictException;
+use App\Http\Requests\CheckoutRequest;
+use App\Http\Requests\StoreReservationRequest;
+use App\Http\Requests\UpdateReservationItemStatusRequest;
+use App\Http\Requests\UpdateReservationStatusRequest;
+use App\Http\Services\ActivityLogger;
+use App\Http\Services\CheckoutService;
+use App\Http\Services\ReservationService;
+use App\Http\Services\SalonSnapshotService;
+use App\Http\Support\FixedPoint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class SalonController extends Controller
 {
-    public function dashboard()
+    public function __construct(
+        private readonly ReservationService $reservations,
+        private readonly CheckoutService $checkout,
+        private readonly SalonSnapshotService $snapshots,
+        private readonly ActivityLogger $logger,
+    ) {}
+
+    public function dashboard(Request $request)
     {
-        if (! Schema::hasTable('reservations')) return view('dashboard', ['salonData' => []]);
-        return view('dashboard', ['salonData' => $this->snapshot()]);
+        $salonData = Schema::hasTable('reservations')
+            ? $this->snapshots->forUser($request->user())
+            : [];
+
+        return view('dashboard', compact('salonData'));
     }
 
-    public function data(): JsonResponse { return response()->json($this->snapshot()); }
-
-    public function storeReservation(Request $request): JsonResponse
+    public function data(Request $request): JsonResponse
     {
-        $data = $request->validate(['name'=>'required|string|max:100','phone'=>'required|string|max:30','date'=>'required|date','time'=>'required','treatment_id'=>'required|exists:treatments,id','therapist_id'=>'required|exists:therapists,id','notes'=>'nullable|string|max:1000']);
-        $reservation = DB::transaction(function () use ($data, $request) {
-            $customer = DB::table('customers')->where('phone',$data['phone'])->first();
-            if ($customer) { DB::table('customers')->where('id',$customer->id)->update(['name'=>$data['name'],'updated_at'=>now()]); $customerId=$customer->id; }
-            else $customerId=DB::table('customers')->insertGetId(['name'=>$data['name'],'phone'=>$data['phone'],'created_at'=>now(),'updated_at'=>now()]);
-            $busy=$this->therapistIsBusy((int)$data['therapist_id'],(int)$data['treatment_id'],$data['date'],$data['time']);
-            abort_if($busy,422,'Terapis sudah memiliki jadwal yang beririsan dengan waktu tersebut.');
-            $number='TMP-'.str()->uuid();
-            $id=DB::table('reservations')->insertGetId(['queue_number'=>$number,'customer_id'=>$customerId,'treatment_id'=>$data['treatment_id'],'therapist_id'=>$data['therapist_id'],'reservation_date'=>$data['date'],'reservation_time'=>$data['time'],'status'=>'Terjadwal','notes'=>$data['notes']??null,'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);
-            $this->reorderQueue($data['date']);
-            $number=DB::table('reservations')->where('id',$id)->value('queue_number');
-            $this->log($request,'reservasi.dibuat','reservation',$id,"Membuat reservasi {$number} untuk {$data['name']}"); return $id;
-        });
-        return response()->json(['message'=>'Reservasi berhasil dibuat','id'=>$reservation],201);
+        if (! Schema::hasTable('reservations')) {
+            return response()->json([]);
+        }
+
+        return response()->json($this->snapshots->forUser($request->user()));
+    }
+
+    public function storeReservation(StoreReservationRequest $request): JsonResponse
+    {
+        try {
+            $reservation = $this->reservations->create($request->validated(), $request);
+        } catch (ReservationConflictException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'code' => 'schedule_conflict',
+                'can_override' => $exception->canOverride,
+                'requires_reason' => true,
+                'override_permission' => 'reservations.override_conflict',
+                'conflicts' => $exception->conflicts,
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => 'Reservasi berhasil dibuat.',
+            ...$reservation,
+        ], 201);
     }
 
     public function availableTherapists(Request $request): JsonResponse
     {
-        $data=$request->validate(['date'=>'required|date','time'=>'required','treatment_id'=>'required|exists:treatments,id']);
-        $therapists=DB::table('therapists')->where('active',true)->orderBy('name')->get()->map(function($therapist)use($data){
-            $therapist->available=!$this->therapistIsBusy($therapist->id,(int)$data['treatment_id'],$data['date'],$data['time']);
-            return $therapist;
-        });
-        return response()->json(['therapists'=>$therapists]);
+        if (! $request->filled('start_time') && $request->filled('time')) {
+            $request->merge(['start_time' => $request->input('time')]);
+        }
+
+        $data = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'start_time' => ['required', 'date_format:H:i'],
+            'treatment_id' => ['required', 'integer', 'exists:treatments,id'],
+        ]);
+        $employees = $this->reservations->availability($data['date'], $data['start_time'], (int) $data['treatment_id']);
+
+        return response()->json([
+            'employees' => $employees,
+            'therapists' => $employees,
+        ]);
     }
 
-    public function updateReservation(Request $request, int $id): JsonResponse
+    public function updateReservation(UpdateReservationStatusRequest $request, int $id): JsonResponse
     {
-        $data=$request->validate(['status'=>['required',Rule::in(['Terjadwal','Sudah datang','Sedang dilayani','Selesai','Batal'])]]);
-        $date=DB::table('reservations')->where('id',$id)->value('reservation_date');
-        abort_unless($date,404);
-        abort_unless(DB::table('reservations')->where('id',$id)->update(['status'=>$data['status'],'updated_at'=>now()]),404);
-        $this->reorderQueue($date);
-        $this->log($request,'reservasi.status','reservation',$id,"Mengubah status reservasi menjadi {$data['status']}");
-        return response()->json(['message'=>'Status reservasi diperbarui']);
+        $result = $this->reservations->updateHeaderStatus(
+            $id,
+            $request->validated('status'),
+            $request->validated('reason'),
+            $request,
+        );
+
+        return response()->json(['message' => 'Status reservasi diperbarui.', ...$result]);
+    }
+
+    public function updateReservationItemStatus(
+        UpdateReservationItemStatusRequest $request,
+        int $reservation,
+        int $item,
+    ): JsonResponse {
+        $result = $this->reservations->updateItemStatus(
+            $reservation,
+            $item,
+            $request->validated('status'),
+            $request->validated('reason'),
+            $request,
+        );
+
+        return response()->json(['message' => 'Status pengerjaan diperbarui.', ...$result]);
+    }
+
+    public function storeEmployee(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/', 'unique:employees,code'],
+            'name' => ['required', 'string', 'max:150'],
+            'position' => ['nullable', 'string', 'max:100'],
+            'specialty' => ['nullable', 'string', 'max:150'],
+            'user_id' => ['nullable', 'integer', 'exists:users,id', 'unique:employees,user_id'],
+            'is_service_provider' => ['sometimes', 'boolean'],
+            'active' => ['sometimes', 'boolean'],
+        ]);
+        $now = now();
+        $id = DB::table('employees')->insertGetId([
+            'code' => $data['code'] ?? 'EMP-'.Str::upper(Str::random(8)),
+            'name' => $data['name'],
+            'position' => $data['position'] ?? null,
+            'specialty' => $data['specialty'] ?? null,
+            'user_id' => $data['user_id'] ?? null,
+            'is_service_provider' => (bool) ($data['is_service_provider'] ?? true),
+            'active' => (bool) ($data['active'] ?? true),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $this->logger->log($request, 'employee.created', 'employee', $id, "Menambahkan pegawai {$data['name']}");
+
+        return response()->json(['message' => 'Pegawai berhasil ditambahkan.', 'id' => $id], 201);
+    }
+
+    public function updateEmployee(Request $request, int $id): JsonResponse
+    {
+        abort_unless(DB::table('employees')->where('id', $id)->exists(), 404, 'Pegawai tidak ditemukan.');
+        $data = $request->validate([
+            'code' => ['sometimes', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/', Rule::unique('employees', 'code')->ignore($id)],
+            'name' => ['sometimes', 'string', 'max:150'],
+            'position' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'specialty' => ['sometimes', 'nullable', 'string', 'max:150'],
+            'user_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id', Rule::unique('employees', 'user_id')->ignore($id)],
+            'is_service_provider' => ['sometimes', 'boolean'],
+            'active' => ['sometimes', 'boolean'],
+        ]);
+
+        if ($data === []) {
+            throw ValidationException::withMessages(['employee' => ['Tidak ada perubahan yang dikirim.']]);
+        }
+
+        DB::table('employees')->where('id', $id)->update([...$data, 'updated_at' => now()]);
+        $this->logger->log($request, 'employee.updated', 'employee', $id, 'Memperbarui data pegawai', ['fields' => array_keys($data)]);
+
+        return response()->json(['message' => 'Pegawai berhasil diperbarui.', 'id' => $id]);
     }
 
     public function storeProduct(Request $request): JsonResponse
     {
-        $d=$request->validate(['name'=>'required|string|max:150','category'=>'required|string|max:50','stock'=>'required|numeric|min:0','unit'=>'required|string|max:20','minimum_stock'=>'required|numeric|min:0','selling_price'=>'required|integer|min:0']);
-        $id=DB::table('products')->insertGetId([...$d,'created_at'=>now(),'updated_at'=>now()]);
-        if($d['stock']>0) DB::table('stock_movements')->insert(['product_id'=>$id,'type'=>'masuk','quantity'=>$d['stock'],'source'=>'Stok awal','created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);
-        $this->log($request,'produk.dibuat','product',$id,"Menambahkan produk {$d['name']}");
-        return response()->json(['message'=>'Produk berhasil ditambahkan','id'=>$id],201);
+        if (! $request->has('current_stock') && $request->has('stock')) {
+            $request->merge(['current_stock' => $request->input('stock')]);
+        }
+
+        if ($request->filled('unit') && ! $request->filled('usage_unit_id')) {
+            $unitId = DB::table('units')
+                ->whereRaw('LOWER(code) = ?', [mb_strtolower((string) $request->input('unit'))])
+                ->orWhereRaw('LOWER(name) = ?', [mb_strtolower((string) $request->input('unit'))])
+                ->value('id');
+            if ($unitId) {
+                $request->merge(['usage_unit_id' => $unitId, 'purchase_unit_id' => $unitId]);
+            }
+        }
+
+        if (! $request->filled('purchase_unit_id') && $request->filled('usage_unit_id')) {
+            $request->merge(['purchase_unit_id' => $request->input('usage_unit_id')]);
+        }
+
+        $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/', 'unique:products,code'],
+            'name' => ['required', 'string', 'max:150'],
+            'category' => ['nullable', 'string', 'max:100'],
+            'purchase_unit_id' => ['required', 'integer', 'exists:units,id'],
+            'usage_unit_id' => ['required', 'integer', 'exists:units,id'],
+            'purchase_to_usage_factor' => ['nullable', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+            'current_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+            'minimum_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+            'selling_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'description' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $stock = FixedPoint::parse($data['current_stock'], FixedPoint::STOCK_SCALE);
+        $conversionFactor = FixedPoint::parse($data['purchase_to_usage_factor'] ?? '1', FixedPoint::STOCK_SCALE);
+        abort_if($conversionFactor === 0, 422, 'Faktor konversi satuan harus lebih dari nol.');
+        $now = now();
+
+        $id = DB::transaction(function () use ($data, $stock, $conversionFactor, $request, $now): int {
+            $id = DB::table('products')->insertGetId([
+                'code' => $data['code'] ?? 'PRD-'.Str::upper(Str::random(8)),
+                'name' => $data['name'],
+                'category' => $data['category'] ?? null,
+                'purchase_unit_id' => $data['purchase_unit_id'],
+                'usage_unit_id' => $data['usage_unit_id'],
+                'purchase_to_usage_factor' => FixedPoint::format($conversionFactor, FixedPoint::STOCK_SCALE),
+                'current_stock' => FixedPoint::format($stock, FixedPoint::STOCK_SCALE),
+                'minimum_stock' => FixedPoint::format(
+                    FixedPoint::parse($data['minimum_stock'], FixedPoint::STOCK_SCALE),
+                    FixedPoint::STOCK_SCALE,
+                ),
+                'selling_price' => $data['selling_price'],
+                'is_active' => true,
+                'description' => $data['description'] ?? null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            if ($stock > 0) {
+                DB::table('stock_movements')->insert([
+                    'product_id' => $id,
+                    'unit_id' => $data['usage_unit_id'],
+                    'type' => 'in',
+                    'quantity' => FixedPoint::format($stock, FixedPoint::STOCK_SCALE),
+                    'stock_before' => FixedPoint::format(0, FixedPoint::STOCK_SCALE),
+                    'stock_after' => FixedPoint::format($stock, FixedPoint::STOCK_SCALE),
+                    'source_type' => 'opening_stock',
+                    'reference' => null,
+                    'notes' => 'Stok awal',
+                    'occurred_at' => $now,
+                    'created_by' => $request->user()?->id,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+
+            $this->logger->log($request, 'product.created', 'product', $id, "Menambahkan produk {$data['name']}");
+
+            return $id;
+        }, 3);
+
+        return response()->json(['message' => 'Produk berhasil ditambahkan.', 'id' => $id], 201);
     }
 
     public function adjustStock(Request $request, int $id): JsonResponse
     {
-        $d=$request->validate(['type'=>['required',Rule::in(['masuk','keluar','opname'])],'quantity'=>'required|numeric|min:0','source'=>'required|string|max:150']);
-        DB::transaction(function()use($d,$id,$request){$p=DB::table('products')->lockForUpdate()->find($id);abort_unless($p,404);$new=$d['type']==='opname'?$d['quantity']:$p->stock+($d['type']==='masuk'?$d['quantity']:-$d['quantity']);abort_if($new<0,422,'Stok tidak mencukupi.');DB::table('products')->where('id',$id)->update(['stock'=>$new,'updated_at'=>now()]);DB::table('stock_movements')->insert(['product_id'=>$id,'type'=>$d['type'],'quantity'=>$d['type']==='opname'?abs($new-$p->stock):$d['quantity'],'source'=>$d['source'],'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);$this->log($request,'stok.diubah','product',$id,"Stok {$p->name} menjadi {$new} {$p->unit}");});
-        return response()->json(['message'=>'Stok berhasil diperbarui']);
+        $aliases = ['masuk' => 'in', 'keluar' => 'out', 'opname' => 'adjustment'];
+        $request->merge(['type' => $aliases[$request->input('type')] ?? $request->input('type')]);
+        $data = $request->validate([
+            'type' => ['required', Rule::in(['in', 'out', 'adjustment'])],
+            'quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+            'source' => ['required', 'string', 'max:150'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($data, $id, $request): void {
+            $product = DB::table('products')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($product, 404, 'Produk tidak ditemukan.');
+            $before = FixedPoint::parse((string) $product->current_stock, FixedPoint::STOCK_SCALE);
+            $quantity = FixedPoint::parse($data['quantity'], FixedPoint::STOCK_SCALE);
+            abort_if($quantity === 0, 422, 'Jumlah perubahan stok harus lebih dari nol.');
+
+            $after = match ($data['type']) {
+                'in' => $before + $quantity,
+                'out' => $before - $quantity,
+                'adjustment' => $quantity,
+            };
+            abort_if($after < 0, 422, 'Stok tidak mencukupi.');
+            $movementQuantity = $data['type'] === 'adjustment' ? abs($after - $before) : $quantity;
+            $now = now();
+
+            DB::table('products')->where('id', $id)->update([
+                'current_stock' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'updated_at' => $now,
+            ]);
+            DB::table('stock_movements')->insert([
+                'product_id' => $id,
+                'unit_id' => $product->usage_unit_id,
+                'type' => $data['type'],
+                'quantity' => FixedPoint::format($movementQuantity, FixedPoint::STOCK_SCALE),
+                'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
+                'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'source_type' => 'manual_adjustment',
+                'reference' => null,
+                'notes' => trim($data['source'].($data['notes'] ?? '' ? ' · '.$data['notes'] : '')),
+                'occurred_at' => $now,
+                'created_by' => $request->user()?->id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $this->logger->log(
+                $request,
+                'stock.adjusted',
+                'product',
+                $id,
+                "Stok {$product->name} diperbarui",
+                ['type' => $data['type'], 'before' => FixedPoint::format($before, 4), 'after' => FixedPoint::format($after, 4)],
+            );
+        }, 3);
+
+        return response()->json(['message' => 'Stok berhasil diperbarui.']);
     }
 
     public function storeTreatment(Request $request): JsonResponse
     {
-        $d=$request->validate(['name'=>'required|string|max:150','category'=>'required|string|max:80','duration_minutes'=>'required|integer|min:1','price'=>'required|integer|min:0','commission_percent'=>'required|numeric|min:0|max:100']);
-        $id=DB::table('treatments')->insertGetId([...$d,'active'=>true,'created_at'=>now(),'updated_at'=>now()]);$this->log($request,'treatment.dibuat','treatment',$id,"Menambahkan treatment {$d['name']}");return response()->json(['message'=>'Treatment berhasil ditambahkan','id'=>$id],201);
-    }
+        if (! $request->has('normal_price') && $request->has('price')) {
+            $request->merge(['normal_price' => $request->input('price')]);
+        }
+        if (! $request->has('default_commission_percent') && $request->has('commission_percent')) {
+            $request->merge(['default_commission_percent' => $request->input('commission_percent')]);
+        }
 
-    public function storeMember(Request $request): JsonResponse
-    {
-        $d=$request->validate(['name'=>'required|string|max:100','phone'=>'required|string|max:30']);$existing=DB::table('customers')->where('phone',$d['phone'])->first();
-        if($existing){DB::table('customers')->where('id',$existing->id)->update(['name'=>$d['name'],'is_member'=>true,'member_since'=>$existing->member_since?:today(),'updated_at'=>now()]);$id=$existing->id;}else{$id=DB::table('customers')->insertGetId([...$d,'is_member'=>true,'member_since'=>today(),'created_at'=>now(),'updated_at'=>now()]);}
-        $this->log($request,'member.diaktifkan','customer',$id,"Mengaktifkan membership {$d['name']}");return response()->json(['message'=>'Membership berhasil diaktifkan','id'=>$id],201);
+        $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/', 'unique:treatments,code'],
+            'name' => ['required', 'string', 'max:150'],
+            'category_id' => ['nullable', 'integer', 'exists:treatment_categories,id'],
+            'category' => ['required_without:category_id', 'string', 'max:100'],
+            'duration_minutes' => ['required', 'integer', 'min:1', 'max:1440'],
+            'normal_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'default_commission_percent' => ['required', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
+            'description' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $commission = FixedPoint::parse($data['default_commission_percent'], FixedPoint::PERCENT_SCALE);
+        abort_if($commission > 100 * (10 ** FixedPoint::PERCENT_SCALE), 422, 'Persentase komisi tidak boleh lebih dari 100.');
+
+        $id = DB::transaction(function () use ($data, $request): int {
+            $categoryId = $data['category_id'] ?? $this->resolveOrCreateTreatmentCategory($data['category']);
+            $id = DB::table('treatments')->insertGetId([
+                'category_id' => $categoryId,
+                'code' => $data['code'] ?? 'TRT-'.Str::upper(Str::random(8)),
+                'name' => $data['name'],
+                'duration_minutes' => $data['duration_minutes'],
+                'normal_price' => $data['normal_price'],
+                'default_commission_percent' => FixedPoint::normalizePercent($data['default_commission_percent']),
+                'is_active' => true,
+                'description' => $data['description'] ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->logger->log($request, 'treatment.created', 'treatment', $id, "Menambahkan treatment {$data['name']}");
+
+            return $id;
+        }, 3);
+
+        return response()->json(['message' => 'Treatment berhasil ditambahkan.', 'id' => $id], 201);
     }
 
     public function updateRecipe(Request $request, int $id): JsonResponse
     {
-        abort_unless(DB::table('treatments')->where('id',$id)->exists(),404);
-        $d=$request->validate(['product_id'=>'required|exists:products,id','quantity'=>'required|numeric|min:0.01']);
-        DB::table('treatment_product')->updateOrInsert(['treatment_id'=>$id,'product_id'=>$d['product_id']],['quantity'=>$d['quantity']]);
-        $this->log($request,'resep.diubah','treatment',$id,'Memperbarui komposisi produk treatment');
-        return response()->json(['message'=>'Resep treatment berhasil diperbarui']);
+        abort_unless(DB::table('treatments')->where('id', $id)->exists(), 404, 'Treatment tidak ditemukan.');
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'unit_id' => ['nullable', 'integer', 'exists:units,id'],
+            'quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+        ]);
+        abort_if(FixedPoint::parse($data['quantity'], FixedPoint::STOCK_SCALE) === 0, 422, 'Jumlah resep harus lebih dari nol.');
+        $product = DB::table('products')->where('id', $data['product_id'])->first();
+        $unitId = (int) ($data['unit_id'] ?? $product->usage_unit_id);
+
+        if (! in_array($unitId, [(int) $product->purchase_unit_id, (int) $product->usage_unit_id], true)) {
+            throw ValidationException::withMessages([
+                'unit_id' => ['Satuan resep harus sama dengan satuan pembelian atau satuan pemakaian produk.'],
+            ]);
+        }
+        $identity = ['treatment_id' => $id, 'product_id' => $data['product_id']];
+        $values = [
+            'unit_id' => $unitId,
+            'quantity' => FixedPoint::format(FixedPoint::parse($data['quantity'], 4), 4),
+            'updated_at' => now(),
+        ];
+        DB::table('treatment_product_recipes')->upsert(
+            [[...$identity, ...$values, 'created_at' => now()]],
+            ['treatment_id', 'product_id'],
+            ['unit_id', 'quantity', 'updated_at'],
+        );
+        $this->logger->log($request, 'treatment.recipe_updated', 'treatment', $id, 'Memperbarui komposisi produk treatment');
+
+        return response()->json(['message' => 'Resep treatment berhasil diperbarui.']);
     }
 
-    public function storePayment(Request $request): JsonResponse
+    public function storeMember(Request $request): JsonResponse
     {
-        $d=$request->validate(['reservation_id'=>'required|exists:reservations,id','payment_method'=>['required',Rule::in(['Tunai','QRIS','Transfer','Kartu'])],'discount_percent'=>'nullable|numeric|min:0|max:100']);
-        $transaction=DB::transaction(function()use($d,$request){$r=DB::table('reservations')->join('treatments','treatments.id','=','reservations.treatment_id')->join('customers','customers.id','=','reservations.customer_id')->where('reservations.id',$d['reservation_id'])->select('reservations.*','treatments.name as treatment_name','treatments.price','customers.is_member')->lockForUpdate()->first();abort_if($r->status==='Selesai',422,'Reservasi ini sudah dibayar.');$discount=(float)($d['discount_percent']??0);abort_if($discount>0&&!$r->is_member,422,'Diskon hanya dapat digunakan oleh member.');$amount=(int)round($r->price*$discount/100);$total=$r->price-$amount;$number='TRX-'.now()->format('Ymd').'-'.str_pad((string)(DB::table('transactions')->whereDate('created_at',today())->count()+1),3,'0',STR_PAD_LEFT);$id=DB::table('transactions')->insertGetId(['number'=>$number,'reservation_id'=>$r->id,'customer_id'=>$r->customer_id,'subtotal'=>$r->price,'discount_percent'=>$discount,'discount_amount'=>$amount,'total'=>$total,'payment_method'=>$d['payment_method'],'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);DB::table('transaction_items')->insert(['transaction_id'=>$id,'item_type'=>'treatment','item_id'=>$r->treatment_id,'name'=>$r->treatment_name,'quantity'=>1,'price'=>$r->price,'total'=>$r->price]);$recipes=DB::table('treatment_product')->join('products','products.id','=','treatment_product.product_id')->where('treatment_id',$r->treatment_id)->select('products.*','treatment_product.quantity as used')->get();foreach($recipes as $p){abort_if($p->stock<$p->used,422,"Stok {$p->name} tidak mencukupi.");DB::table('products')->where('id',$p->id)->decrement('stock',$p->used);DB::table('stock_movements')->insert(['product_id'=>$p->id,'type'=>'keluar','quantity'=>$p->used,'source'=>'Treatment','reference'=>$number,'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);}DB::table('reservations')->where('id',$r->id)->update(['status'=>'Selesai','updated_at'=>now()]);DB::table('customers')->where('id',$r->customer_id)->increment('visit_count');DB::table('cash_entries')->insert(['type'=>'masuk','category'=>'Penjualan','description'=>$number,'amount'=>$total,'entry_date'=>today(),'created_by'=>$request->user()->id,'created_at'=>now(),'updated_at'=>now()]);$this->log($request,'transaksi.selesai','transaction',$id,"Menyelesaikan transaksi {$number}");return ['id'=>$id,'number'=>$number,'total'=>$total];});
-        return response()->json(['message'=>'Pembayaran berhasil diproses',...$transaction],201);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'phone' => ['required', 'string', 'max:30'],
+            'email' => ['nullable', 'email', 'max:255'],
+        ]);
+        $id = DB::transaction(function () use ($data, $request): int {
+            if (! empty($data['email'])) {
+                $emailOwner = DB::table('customers')
+                    ->where('email', $data['email'])
+                    ->where('phone', '!=', $data['phone'])
+                    ->exists();
+
+                if ($emailOwner) {
+                    throw ValidationException::withMessages(['email' => ['Email sudah digunakan pelanggan lain.']]);
+                }
+            }
+
+            $now = now();
+            $updateColumns = ['name', 'is_member', 'is_active', 'updated_at'];
+            if (array_key_exists('email', $data)) {
+                $updateColumns[] = 'email';
+            }
+            DB::table('customers')->upsert([[
+                'code' => 'CUS-'.Str::upper((string) Str::ulid()),
+                'name' => $data['name'],
+                'phone' => $data['phone'],
+                'email' => $data['email'] ?? null,
+                'is_member' => true,
+                'member_since' => today(),
+                'visit_count' => 0,
+                'is_active' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]], ['phone'], $updateColumns);
+            $id = (int) DB::table('customers')->where('phone', $data['phone'])->lockForUpdate()->value('id');
+
+            $this->logger->log($request, 'membership.activated', 'customer', $id, "Mengaktifkan membership {$data['name']}");
+
+            return $id;
+        }, 3);
+
+        return response()->json(['message' => 'Membership berhasil diaktifkan.', 'id' => $id], 201);
+    }
+
+    public function storePayment(CheckoutRequest $request): JsonResponse
+    {
+        $transaction = $this->checkout->checkout($request->validated(), $request);
+        $status = $transaction['idempotent_replay'] ? 200 : 201;
+
+        return response()->json([
+            'message' => $transaction['idempotent_replay']
+                ? 'Pembayaran sudah pernah diproses.'
+                : 'Pembayaran berhasil diproses.',
+            ...$transaction,
+        ], $status);
     }
 
     public function updatePayroll(Request $request, int $id): JsonResponse
     {
-        $d=$request->validate(['base_salary'=>'required|integer|min:0','bonus'=>'required|integer|min:0','late_deduction'=>'required|integer|min:0','late_duration'=>'nullable|string|max:50']);abort_unless(DB::table('payrolls')->where('id',$id)->update([...$d,'updated_at'=>now()]),404);$this->log($request,'gaji.diubah','payroll',$id,'Memperbarui komponen gaji karyawan');return response()->json(['message'=>'Data gaji berhasil diperbarui']);
+        $data = $request->validate([
+            'base_salary' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'bonus' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'overtime' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'commission' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'late_deduction' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'other_deduction' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'late_duration_minutes' => ['nullable', 'integer', 'min:0', 'max:999999'],
+        ]);
+
+        DB::transaction(function () use ($id, $data, $request): void {
+            $payroll = DB::table('payrolls')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($payroll, 404, 'Data penggajian tidak ditemukan.');
+            abort_if($payroll->status !== 'draft', 422, 'Penggajian yang sudah difinalisasi tidak dapat diubah.');
+
+            $overtime = (int) ($data['overtime'] ?? $payroll->overtime);
+            $commission = (int) ($data['commission'] ?? $payroll->commission);
+            $otherDeduction = (int) ($data['other_deduction'] ?? $payroll->other_deduction);
+            $gross = (int) $data['base_salary'] + (int) $data['bonus'] + $overtime + $commission;
+            $deductions = (int) $data['late_deduction'] + $otherDeduction;
+            abort_if($deductions > $gross, 422, 'Total potongan tidak boleh melebihi pendapatan.');
+
+            DB::table('payrolls')->where('id', $id)->update([
+                'base_salary' => $data['base_salary'],
+                'bonus' => $data['bonus'],
+                'overtime' => $overtime,
+                'commission' => $commission,
+                'late_deduction' => $data['late_deduction'],
+                'other_deduction' => $otherDeduction,
+                'net_salary' => $gross - $deductions,
+                'late_duration_minutes' => $data['late_duration_minutes'] ?? $payroll->late_duration_minutes,
+                'updated_at' => now(),
+            ]);
+            $this->logger->log($request, 'payroll.updated', 'payroll', $id, 'Memperbarui komponen gaji pegawai');
+        }, 3);
+
+        return response()->json(['message' => 'Data gaji berhasil diperbarui.']);
     }
 
-    private function snapshot(): array
+    private function resolveOrCreateTreatmentCategory(string $name): int
     {
-        return ['dashboard'=>$this->dashboardAnalytics(),'reservations'=>DB::table('reservations')->join('customers','customers.id','=','reservations.customer_id')->join('treatments','treatments.id','=','reservations.treatment_id')->join('therapists','therapists.id','=','reservations.therapist_id')->select('reservations.*','customers.name as customer_name','customers.phone','customers.is_member','treatments.name as treatment_name','treatments.price','therapists.name as therapist_name')->orderByDesc('reservation_date')->orderBy('reservation_time')->get(),'treatments'=>DB::table('treatments')->where('active',true)->get(),'therapists'=>DB::table('therapists')->where('active',true)->get(),'members'=>DB::table('customers')->where('is_member',true)->get(),'products'=>DB::table('products')->get(),'stock_movements'=>DB::table('stock_movements')->join('products','products.id','=','stock_movements.product_id')->leftJoin('users','users.id','=','stock_movements.created_by')->select('stock_movements.*','products.name as product_name','products.unit','users.name as user_name')->latest('stock_movements.created_at')->limit(30)->get(),'transactions'=>DB::table('transactions')->leftJoin('customers','customers.id','=','transactions.customer_id')->select('transactions.*','customers.name as customer_name','customers.is_member')->latest('transactions.created_at')->limit(20)->get(),'payrolls'=>DB::table('payrolls')->get(),'activities'=>DB::table('activity_logs')->leftJoin('users','users.id','=','activity_logs.user_id')->select('activity_logs.*','users.name as user_name')->latest('activity_logs.created_at')->limit(30)->get(),'promotions'=>DB::table('promotions')->where('active',true)->whereDate('starts_at','<=',today())->whereDate('ends_at','>=',today())->get()];
-    }
+        $now = now();
+        $existing = DB::table('treatment_categories')
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+            ->value('id');
 
-    private function dashboardAnalytics(): array
-    {
-        $today=Carbon::today();
-        $start=$today->copy()->subDays(6);
-        $activeReservations=DB::table('reservations')->whereDate('reservation_date',$today)->where('status','!=','Batal');
-        $reservationCount=(clone $activeReservations)->count();
-        $arrivedCount=(clone $activeReservations)->whereIn('status',['Sudah datang','Sedang dilayani','Selesai'])->count();
-        $servingCount=(clone $activeReservations)->where('status','Sedang dilayani')->count();
-        $todayRevenue=(int)DB::table('transactions')->whereDate('created_at',$today)->sum('total');
-        $yesterdayRevenue=(int)DB::table('transactions')->whereDate('created_at',$today->copy()->subDay())->sum('total');
-        $lowStockCount=DB::table('products')->whereColumn('stock','<=','minimum_stock')->count();
-        $monthStart=$today->copy()->startOfMonth();
-        $monthEnd=$today->copy()->endOfDay();
-        $memberCount=DB::table('customers')->where('is_member',true)->count();
-        $newMembersMonth=DB::table('customers')->where('is_member',true)->whereBetween('member_since',[$monthStart->toDateString(),$today->toDateString()])->count();
-        $activePromotionCount=DB::table('promotions')->where('active',true)->whereDate('starts_at','<=',$today)->whereDate('ends_at','>=',$today)->count();
-        $endingPromotionsMonth=DB::table('promotions')->where('active',true)->whereBetween('ends_at',[$today->toDateString(),$today->copy()->endOfMonth()->toDateString()])->count();
-        $monthTransactions=DB::table('transactions')->whereBetween('transactions.created_at',[$monthStart,$monthEnd]);
-        $monthTransactionCount=(clone $monthTransactions)->count();
-        $memberTransactionCount=(clone $monthTransactions)->join('customers','customers.id','=','transactions.customer_id')->where('customers.is_member',true)->count();
-        $monthIncome=(int)DB::table('cash_entries')->where('type','masuk')->whereBetween('entry_date',[$monthStart->toDateString(),$today->toDateString()])->sum('amount');
-        $monthExpense=(int)DB::table('cash_entries')->where('type','keluar')->whereBetween('entry_date',[$monthStart->toDateString(),$today->toDateString()])->sum('amount');
-        $dayNames=[1=>'Sen',2=>'Sel',3=>'Rab',4=>'Kam',5=>'Jum',6=>'Sab',7=>'Min'];
-        $revenue=[];
-        for($date=$start->copy();$date->lte($today);$date->addDay()){
-            $revenue[]=['date'=>$date->toDateString(),'label'=>$dayNames[$date->dayOfWeekIso],'total'=>(int)DB::table('transactions')->whereDate('created_at',$date)->sum('total')];
+        if ($existing) {
+            DB::table('treatment_categories')->where('id', $existing)->update(['is_active' => true, 'updated_at' => $now]);
+
+            return (int) $existing;
         }
-        $treatments=DB::table('transaction_items')->join('transactions','transactions.id','=','transaction_items.transaction_id')->where('transaction_items.item_type','treatment')->whereBetween('transactions.created_at',[$start->copy()->startOfDay(),$today->copy()->endOfDay()])->select('transaction_items.name',DB::raw('SUM(transaction_items.quantity) as total'))->groupBy('transaction_items.name')->orderByDesc('total')->limit(5)->get()->map(fn($item)=>['name'=>$item->name,'total'=>(float)$item->total])->values();
-        return ['reservations_today'=>$reservationCount,'arrived_today'=>$arrivedCount,'serving_today'=>$servingCount,'arrival_percent'=>$reservationCount?(int)round($arrivedCount/$reservationCount*100):0,'revenue_today'=>$todayRevenue,'revenue_yesterday'=>$yesterdayRevenue,'low_stock_count'=>$lowStockCount,'revenue_last_7_days'=>$revenue,'treatment_last_7_days'=>$treatments,'member_count'=>$memberCount,'new_members_month'=>$newMembersMonth,'active_promotion_count'=>$activePromotionCount,'ending_promotions_month'=>$endingPromotionsMonth,'member_transaction_percent'=>$monthTransactionCount?(int)round($memberTransactionCount/$monthTransactionCount*100):0,'month_income'=>$monthIncome,'month_expense'=>$monthExpense,'month_balance'=>$monthIncome-$monthExpense,'month_transaction_count'=>$monthTransactionCount,'month_transaction_average'=>$monthTransactionCount?(int)round((clone $monthTransactions)->sum('total')/$monthTransactionCount):0];
-    }
 
-    private function therapistIsBusy(int $therapistId,int $treatmentId,string $date,string $time): bool
-    {
-        $duration=(int)DB::table('treatments')->where('id',$treatmentId)->value('duration_minutes');
-        $requestedStart=Carbon::parse("{$date} {$time}");
-        $requestedEnd=$requestedStart->copy()->addMinutes($duration);
-        return DB::table('reservations')->join('treatments','treatments.id','=','reservations.treatment_id')->where('reservations.therapist_id',$therapistId)->whereDate('reservations.reservation_date',$date)->whereNotIn('reservations.status',['Batal','Selesai'])->select('reservations.reservation_time','treatments.duration_minutes')->get()->contains(function($reservation)use($date,$requestedStart,$requestedEnd){
-            $start=Carbon::parse("{$date} {$reservation->reservation_time}");
-            $end=$start->copy()->addMinutes((int)$reservation->duration_minutes);
-            return $start->lt($requestedEnd)&&$end->gt($requestedStart);
-        });
-    }
+        DB::table('treatment_categories')->upsert([[
+            'code' => 'CAT-'.Str::upper(Str::random(8)),
+            'name' => $name,
+            'sort_order' => 0,
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]], ['name'], ['is_active', 'updated_at']);
 
-    private function reorderQueue(string $date): void
-    {
-        $allIds=DB::table('reservations')->whereDate('reservation_date',$date)->pluck('id');
-        foreach($allIds as $id)DB::table('reservations')->where('id',$id)->update(['queue_number'=>'TMP-'.$id]);
-        $activeIds=DB::table('reservations')->whereDate('reservation_date',$date)->where('status','!=','Batal')->orderBy('reservation_time')->orderBy('created_at')->orderBy('id')->pluck('id');
-        foreach($activeIds as $index=>$id)DB::table('reservations')->where('id',$id)->update(['queue_number'=>'A'.str_pad((string)($index+1),3,'0',STR_PAD_LEFT)]);
-        DB::table('reservations')->whereDate('reservation_date',$date)->where('status','Batal')->orderBy('reservation_time')->get()->each(fn($row)=>DB::table('reservations')->where('id',$row->id)->update(['queue_number'=>'B'.str_pad((string)$row->id,3,'0',STR_PAD_LEFT)]));
+        return (int) DB::table('treatment_categories')
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+            ->value('id');
     }
-
-    private function log(Request $request,string $action,string $type,?int $id,string $description): void { DB::table('activity_logs')->insert(['user_id'=>$request->user()?->id,'action'=>$action,'subject_type'=>$type,'subject_id'=>$id,'description'=>$description,'created_at'=>now(),'updated_at'=>now()]); }
 }

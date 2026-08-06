@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
     <style>
         @cannot('reservations.view') #reservasi,.go-reservation{display:none!important} @endcannot
+        @cannot('employees.view') #pegawai{display:none!important} @endcannot
         @cannot('cashier.view') #kasir{display:none!important} @endcannot
         @cannot('treatments.view') #treatment{display:none!important} @endcannot
         @cannot('memberships.view') #membership{display:none!important} @endcannot
@@ -23,6 +24,7 @@
         @cannot('payroll.view') #penggajian{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
         @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
+        @cannot('employees.create') #open-employee{display:none!important} @endcannot
         @cannot('cashier.process') #open-payment{display:none!important} @endcannot
         @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
         @cannot('memberships.manage') #membership .card-head>.primary{display:none!important} @endcannot
@@ -30,6 +32,7 @@
         @cannot('products.stocktake') #stok .toolbar .secondary{display:none!important} @endcannot
         @cannot('payroll.manage') #penggajian .toolbar>.primary{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
+        @cannot('employees.update') .employee-edit{display:none!important} @endcannot
         @cannot('treatments.update') .recipe-button{display:none!important} @endcannot
         @cannot('products.update') .stock-edit{display:none!important} @endcannot
         @cannot('payroll.manage') .payroll-edit{display:none!important} @endcannot
@@ -60,7 +63,9 @@
             </div>
         </section>
 
-        <section class="page" id="reservasi"><div class="toolbar"><div class="tabs"><button class="active">Hari ini <b>8</b></button><button>Mendatang</button><button>Riwayat</button></div><button class="primary open-reservation">＋ Reservasi baru</button></div><div class="card"><div class="filters"><input type="date" value="2026-08-01"><select><option>Semua terapis</option><option>Dita</option><option>Rani</option><option>Maya</option></select><select><option>Semua status</option><option>Terjadwal</option><option>Sudah datang</option><option>Selesai</option></select></div><div class="table reservation-table"><div class="tr th"><span>ANTREAN</span><span>PELANGGAN</span><span>TREATMENT</span><span>TERAPIS</span><span>STATUS</span><span>AKSI</span></div><div id="queue-table"></div></div></div></section>
+        <section class="page" id="reservasi"><div class="toolbar"><div class="tabs"><button class="active">Hari ini <b>0</b></button><button>Mendatang</button><button>Riwayat</button></div><button class="primary open-reservation">＋ Reservasi baru</button></div><div class="card"><div class="filters"><input type="date"><select id="reservation-filter-employee"><option value="">Semua terapis</option></select><select><option value="">Semua status</option><option value="scheduled">Terjadwal</option><option value="arrived">Sudah datang</option><option value="in_service">Sedang dilayani</option><option value="completed">Selesai</option><option value="cancelled">Batal</option></select></div><div class="table reservation-table"><div class="tr th"><span>ANTREAN</span><span>PELANGGAN</span><span>TREATMENT</span><span>TERAPIS</span><span>STATUS</span><span>AKSI</span></div><div id="queue-table"></div></div></div></section>
+
+        <section class="page" id="pegawai"><div class="toolbar"><div><h3>Master pegawai</h3><p>Data pegawai dan therapist operasional</p></div><button class="primary" id="open-employee">＋ Tambah pegawai</button></div><div class="card"><div class="table employee-table" id="employee-table"></div></div></section>
 
         <section class="page" id="kasir"><div class="cashier-grid"><div class="card"><div class="card-head"><div><h3>Pilih antrean</h3><p>Pelanggan yang siap diproses</p></div></div><div id="cashier-queue"></div></div><div class="card receipt empty" id="cashier-receipt"><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih antrean terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled>＋ Tambah produk</button><div class="promo"><b>◇</b><span><strong>Diskon membership</strong><small>Event tersedia untuk member</small></span><select id="discount" disabled><option value="0">Tidak menggunakan diskon</option></select></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon member</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div></div></section>
 
@@ -79,36 +84,34 @@
 </div>
 
 <div class="modal" id="reservation-modal">
-    <div class="modal-box">
-        <div class="modal-head"><div><h2>Reservasi baru</h2><p>Nomor antrean dibuat otomatis sesuai tanggal</p></div><button class="close-modal">×</button></div>
+    <div class="modal-box reservation-modal-box">
+        <div class="modal-head"><div><h2>Reservasi baru</h2><p>Satu kunjungan dapat memuat beberapa treatment dan therapist</p></div><button type="button" class="close-modal">×</button></div>
         <form id="reservation-form">
             <div class="form-grid">
                 <label>Nama pelanggan<input required name="name" placeholder="Masukkan nama"></label>
                 <label>Nomor telepon<input required name="phone" placeholder="08xx xxxx xxxx"></label>
                 <label>Tanggal<input required id="reservation-date" name="date" type="date"></label>
-                <label class="time-field">Jam
-                    <select required id="reservation-time" name="time" aria-describedby="reservation-time-help">
-                        @for ($minutes = 480; $minutes <= 1260; $minutes += 30)
-                            @php($timeValue = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60))
-                            <option value="{{ $timeValue }}" @selected($timeValue === '14:00')>{{ str_replace(':', '.', $timeValue) }}</option>
-                        @endfor
-                    </select>
-                    <small id="reservation-time-help">Pilih slot setiap 30 menit</small>
-                </label>
-                <label>Treatment<select required id="reservation-treatment" name="treatment_id"></select></label>
-                <label>Terapis tersedia<select required id="reservation-therapist" name="therapist_id"></select></label>
+                <label>Sumber booking<select name="source"><option value="walk_in">Walk-in</option><option value="whatsapp">WhatsApp</option><option value="phone">Telepon</option><option value="other">Lainnya</option></select></label>
             </div>
-            <label>Catatan<textarea name="notes" placeholder="Permintaan pelanggan"></textarea></label>
+            <div class="reservation-items-head"><div><h3>Daftar treatment</h3><p>Atur waktu dan pembagian therapist untuk setiap treatment.</p></div><button type="button" class="secondary" id="add-reservation-item">＋ Tambah treatment</button></div>
+            <div id="reservation-items"></div>
+            <label>Catatan kunjungan<textarea name="notes" placeholder="Permintaan atau catatan umum pelanggan"></textarea></label>
+            <div class="conflict-panel hidden" id="reservation-conflict" role="alert"></div>
             <footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan reservasi</button></footer>
         </form>
     </div>
 </div>
 
-<div class="modal" id="payment-modal"><div class="modal-box small"><div class="modal-head"><div><h2>Pembayaran</h2><p id="payment-description">Pilih transaksi</p></div><button class="close-modal">×</button></div><div class="payment-total"><small>Total pembayaran</small><strong id="payment-total">Rp0</strong></div><div class="payment-methods"><button class="active">Tunai</button><button>QRIS</button><button>Transfer</button><button>Kartu</button></div><div class="stock-impact"><b>Stok akan berkurang otomatis</b><p>Sesuai resep produk pada treatment yang dipilih.</p></div><footer><button class="secondary close-modal">Batal</button><button class="primary" id="complete-payment">Bayar & cetak struk</button></footer></div></div>
+<div class="modal" id="payment-modal"><div class="modal-box"><div class="modal-head"><div><h2>Pembayaran</h2><p id="payment-description">Pilih transaksi</p></div><button type="button" class="close-modal">×</button></div><div class="payment-total"><small>Total invoice</small><strong id="payment-total">Rp0</strong></div><div class="split-payment-head"><div><h3>Metode pembayaran</h3><p>Pembayaran dicatat manual tanpa payment gateway.</p></div><button type="button" class="secondary" id="add-payment-row">＋ Split payment</button></div><div id="payment-rows"></div><div class="payment-reconciliation"><span>Total dicatat <b id="payment-entered">Rp0</b></span><span>Selisih <b id="payment-difference">Rp0</b></span></div><div class="stock-impact"><b>Stok akan berkurang otomatis</b><p>Sesuai resep seluruh treatment pada kunjungan ini.</p></div><footer><button type="button" class="secondary close-modal">Batal</button><button type="button" class="primary" id="complete-payment">Konfirmasi pembayaran</button></footer></div></div>
 
 <div class="modal" id="product-modal"><div class="modal-box"><div class="modal-head"><div><h2>Tambah produk baru</h2><p>Produk dapat digunakan dalam resep treatment</p></div><button class="close-modal">×</button></div><form id="product-form"><div class="form-grid"><label>Nama produk<input required placeholder="Contoh: Hair Spa L'Oréal"></label><label>Kategori<select><option>Hair</option><option>Facial</option><option>Spa</option><option>Nail</option><option>Konsumsi</option></select></label><label>Stok awal<input type="number" value="500"></label><label>Satuan<select><option>ml</option><option>gr</option><option>pcs</option><option>sachet</option></select></label><label>Batas minimum<input type="number" value="100"></label><label>Harga jual<input type="number" value="0"></label></div><footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan produk</button></footer></form></div></div>
 <div id="toast"></div>
-<script>window.SALON_DATA = @json($salonData ?? []);</script>
+<script>
+window.SALON_DATA = @json($salonData ?? []);
+window.SALON_CAPABILITIES = @json([
+    'override_price' => auth()->user()->can('reservations.override_price'),
+]);
+</script>
 <script src="{{ asset('js/salon.js') }}?v={{ filemtime(public_path('js/salon.js')) }}"></script>
 </body>
 </html>

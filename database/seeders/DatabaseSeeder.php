@@ -17,12 +17,6 @@ class DatabaseSeeder extends Seeder
     {
         $this->call(AccessControlSeeder::class);
 
-        User::whereIn('email', [
-            'owner@selesa.test', 'admin@selesa.test',
-            'marketing@selesa.test', 'kasir@selesa.test',
-            'admin@gmail.com',
-        ])->delete();
-
         $accounts = [
             ['name' => 'Owner Selesa', 'email' => 'superadmin@gmail.com', 'role' => 'super_admin'],
             ['name' => 'Admin Selesa', 'email' => 'admin@gmail.com', 'role' => 'admin'],
@@ -31,14 +25,17 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($accounts as $account) {
-            $user = User::updateOrCreate(
+            $user = User::firstOrCreate(
                 ['email' => $account['email']],
                 [
                     'name' => $account['name'],
-                    'email' => $account['email'],
                     'password' => 'password',
                 ]
             );
+
+            if ($user->name !== $account['name']) {
+                $user->update(['name' => $account['name']]);
+            }
 
             $user->syncRoles($account['role'] === 'super_admin' ? 'super-admin' : $account['role']);
         }

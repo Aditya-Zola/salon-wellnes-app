@@ -4,52 +4,366 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
-        Schema::create('therapists', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->string('specialty')->nullable(); $table->boolean('active')->default(true); $table->timestamps();
+        Schema::create('employees', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')->nullable()->unique()->constrained()->nullOnDelete();
+            $table->string('code', 30)->unique();
+            $table->string('name');
+            $table->string('position', 100)->nullable();
+            $table->string('specialty')->nullable();
+            $table->boolean('is_service_provider')->default(false);
+            $table->boolean('active')->default(true);
+            $table->timestamps();
+
+            $table->index(['active', 'is_service_provider']);
         });
+
+        Schema::create('treatment_categories', function (Blueprint $table) {
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name')->unique();
+            $table->text('description')->nullable();
+            $table->unsignedSmallInteger('sort_order')->default(0);
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
+
         Schema::create('treatments', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->string('category'); $table->unsignedInteger('duration_minutes'); $table->unsignedBigInteger('price'); $table->decimal('commission_percent', 5, 2)->default(0); $table->boolean('active')->default(true); $table->timestamps();
+            $table->id();
+            $table->foreignId('category_id')->constrained('treatment_categories');
+            $table->string('code', 30)->unique();
+            $table->string('name');
+            $table->unsignedSmallInteger('duration_minutes');
+            $table->unsignedBigInteger('normal_price');
+            $table->decimal('default_commission_percent', 7, 4)->default(0);
+            $table->boolean('is_active')->default(true);
+            $table->text('description')->nullable();
+            $table->timestamps();
+
+            $table->index(['category_id', 'is_active']);
         });
+
+        Schema::create('units', function (Blueprint $table) {
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name')->unique();
+            $table->unsignedSmallInteger('decimal_places')->default(0);
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
+
         Schema::create('products', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->string('category'); $table->decimal('stock', 12, 2)->default(0); $table->string('unit', 20); $table->decimal('minimum_stock', 12, 2)->default(0); $table->unsignedBigInteger('selling_price')->default(0); $table->timestamps();
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name');
+            $table->string('category', 100)->nullable();
+            $table->foreignId('purchase_unit_id')->constrained('units');
+            $table->foreignId('usage_unit_id')->constrained('units');
+            $table->decimal('purchase_to_usage_factor', 18, 4)->default(1);
+            $table->decimal('current_stock', 18, 4)->default(0);
+            $table->decimal('minimum_stock', 18, 4)->default(0);
+            $table->unsignedBigInteger('selling_price')->default(0);
+            $table->boolean('is_active')->default(true);
+            $table->text('description')->nullable();
+            $table->timestamps();
+
+            $table->index(['is_active', 'category']);
         });
-        Schema::create('treatment_product', function (Blueprint $table) {
-            $table->id(); $table->foreignId('treatment_id')->constrained()->cascadeOnDelete(); $table->foreignId('product_id')->constrained()->cascadeOnDelete(); $table->decimal('quantity', 12, 2); $table->unique(['treatment_id','product_id']);
+
+        Schema::create('treatment_product_recipes', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('treatment_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('product_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('unit_id')->constrained('units');
+            $table->decimal('quantity', 18, 4);
+            $table->timestamps();
+
+            $table->unique(['treatment_id', 'product_id'], 'treatment_product_recipe_unique');
         });
+
         Schema::create('customers', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->string('phone')->unique(); $table->boolean('is_member')->default(false); $table->date('member_since')->nullable(); $table->unsignedInteger('visit_count')->default(0); $table->timestamps();
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name');
+            $table->string('phone', 30)->nullable()->unique();
+            $table->string('email')->nullable()->unique();
+            $table->date('birth_date')->nullable();
+            $table->text('address')->nullable();
+            $table->boolean('is_member')->default(false);
+            $table->date('member_since')->nullable();
+            $table->unsignedInteger('visit_count')->default(0);
+            $table->text('notes')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+
+            $table->index(['is_active', 'is_member']);
         });
+
         Schema::create('promotions', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->decimal('discount_percent', 5, 2); $table->date('starts_at'); $table->date('ends_at'); $table->boolean('members_only')->default(true); $table->boolean('active')->default(true); $table->timestamps();
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name');
+            $table->string('discount_type', 20)->default('percent');
+            $table->decimal('discount_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('discount_amount')->default(0);
+            $table->date('starts_at');
+            $table->date('ends_at');
+            $table->boolean('members_only')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->text('description')->nullable();
+            $table->timestamps();
+
+            $table->index(['is_active', 'starts_at', 'ends_at']);
         });
+
         Schema::create('reservations', function (Blueprint $table) {
-            $table->id(); $table->string('queue_number'); $table->foreignId('customer_id')->constrained(); $table->foreignId('treatment_id')->constrained(); $table->foreignId('therapist_id')->constrained(); $table->date('reservation_date'); $table->time('reservation_time'); $table->string('status')->default('Terjadwal'); $table->text('notes')->nullable(); $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete(); $table->timestamps(); $table->unique(['reservation_date','queue_number']);
+            $table->id();
+            $table->string('booking_code', 40)->unique();
+            $table->string('queue_number', 20);
+            $table->foreignId('customer_id')->constrained();
+            $table->date('reservation_date');
+            $table->time('reservation_time');
+            $table->string('source', 30)->default('walk_in');
+            $table->string('status', 30)->default('scheduled');
+            $table->text('general_notes')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('cancelled_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('cancelled_at')->nullable();
+            $table->text('cancellation_reason')->nullable();
+            $table->timestamps();
+
+            $table->unique(['reservation_date', 'queue_number']);
+            $table->index(['reservation_date', 'status']);
+            $table->index(['customer_id', 'reservation_date']);
         });
+
+        Schema::create('reservation_items', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('reservation_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('treatment_id')->constrained();
+            $table->string('treatment_name');
+            $table->unsignedSmallInteger('duration_minutes');
+            $table->unsignedBigInteger('normal_price');
+            $table->unsignedBigInteger('unit_price');
+            $table->decimal('discount_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('discount_amount')->default(0);
+            $table->unsignedBigInteger('net_price');
+            $table->decimal('commission_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('commission_amount')->default(0);
+            $table->timestamp('scheduled_start_at');
+            $table->timestamp('scheduled_end_at');
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('finished_at')->nullable();
+            $table->timestamp('ready_at')->nullable();
+            $table->timestamp('continued_at')->nullable();
+            $table->timestamp('overtime_at')->nullable();
+            $table->timestamp('cancelled_at')->nullable();
+            $table->string('work_status', 30)->default('waiting');
+            $table->text('notes')->nullable();
+            $table->unsignedSmallInteger('sort_order')->default(0);
+            $table->timestamps();
+
+            $table->index(['scheduled_start_at', 'scheduled_end_at'], 'reservation_items_schedule_index');
+            $table->index(['reservation_id', 'sort_order']);
+            $table->index('work_status');
+        });
+
+        Schema::create('reservation_item_staff', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('reservation_item_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('employee_id')->constrained();
+            $table->string('role', 30)->default('primary');
+            $table->decimal('commission_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('commission_amount')->default(0);
+            $table->text('conflict_override_reason')->nullable();
+            $table->foreignId('conflict_overridden_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('conflict_overridden_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(['reservation_item_id', 'employee_id'], 'reservation_item_staff_unique');
+            $table->index(['employee_id', 'role']);
+        });
+
+        Schema::create('payment_methods', function (Blueprint $table) {
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name')->unique();
+            $table->string('type', 30);
+            $table->boolean('is_cash')->default(false);
+            $table->boolean('requires_reference')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->unsignedSmallInteger('sort_order')->default(0);
+            $table->timestamps();
+        });
+
         Schema::create('transactions', function (Blueprint $table) {
-            $table->id(); $table->string('number')->unique(); $table->foreignId('reservation_id')->nullable()->constrained()->nullOnDelete(); $table->foreignId('customer_id')->nullable()->constrained()->nullOnDelete(); $table->unsignedBigInteger('subtotal'); $table->decimal('discount_percent', 5, 2)->default(0); $table->unsignedBigInteger('discount_amount')->default(0); $table->unsignedBigInteger('total'); $table->string('payment_method'); $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete(); $table->timestamps();
+            $table->id();
+            $table->string('number', 50)->unique();
+            $table->foreignId('reservation_id')->unique()->constrained();
+            $table->foreignId('customer_id')->constrained();
+            $table->string('status', 30)->default('draft');
+            $table->timestamp('transacted_at')->nullable();
+            $table->unsignedBigInteger('subtotal')->default(0);
+            $table->decimal('discount_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('discount_amount')->default(0);
+            $table->unsignedBigInteger('total')->default(0);
+            $table->unsignedBigInteger('paid_amount')->default(0);
+            $table->unsignedBigInteger('change_amount')->default(0);
+            $table->string('idempotency_key', 100)->nullable()->unique();
+            $table->text('notes')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('finalized_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('finalized_at')->nullable();
+            $table->foreignId('voided_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('voided_at')->nullable();
+            $table->text('void_reason')->nullable();
+            $table->timestamps();
+
+            $table->index(['status', 'transacted_at']);
+            $table->index(['customer_id', 'transacted_at']);
         });
+
         Schema::create('transaction_items', function (Blueprint $table) {
-            $table->id(); $table->foreignId('transaction_id')->constrained()->cascadeOnDelete(); $table->string('item_type'); $table->unsignedBigInteger('item_id')->nullable(); $table->string('name'); $table->decimal('quantity', 12, 2)->default(1); $table->unsignedBigInteger('price'); $table->unsignedBigInteger('total');
+            $table->id();
+            $table->foreignId('transaction_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('reservation_item_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('item_type', 30);
+            $table->unsignedBigInteger('item_id')->nullable();
+            $table->string('name');
+            $table->decimal('quantity', 18, 4)->default(1);
+            $table->unsignedBigInteger('unit_price');
+            $table->unsignedBigInteger('gross_amount');
+            $table->decimal('discount_percent', 7, 4)->default(0);
+            $table->unsignedBigInteger('discount_amount')->default(0);
+            $table->unsignedBigInteger('total_amount');
+            $table->unsignedSmallInteger('sort_order')->default(0);
+            $table->timestamps();
+
+            $table->index(['item_type', 'item_id']);
+            $table->index(['transaction_id', 'sort_order']);
         });
+
+        Schema::create('transaction_payments', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('transaction_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('payment_method_id')->constrained();
+            $table->unsignedBigInteger('amount');
+            $table->string('reference_number', 100)->nullable();
+            $table->timestamp('paid_at');
+            $table->string('status', 30)->default('confirmed');
+            $table->text('notes')->nullable();
+            $table->foreignId('received_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamps();
+
+            $table->index(['transaction_id', 'status']);
+            $table->index(['payment_method_id', 'paid_at']);
+        });
+
         Schema::create('stock_movements', function (Blueprint $table) {
-            $table->id(); $table->foreignId('product_id')->constrained(); $table->string('type'); $table->decimal('quantity', 12, 2); $table->string('source'); $table->string('reference')->nullable(); $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete(); $table->timestamps();
+            $table->id();
+            $table->foreignId('product_id')->constrained();
+            $table->foreignId('unit_id')->constrained('units');
+            $table->string('type', 30);
+            $table->decimal('quantity', 18, 4);
+            $table->decimal('stock_before', 18, 4);
+            $table->decimal('stock_after', 18, 4);
+            $table->unsignedBigInteger('unit_cost')->nullable();
+            $table->string('source_type', 50);
+            $table->unsignedBigInteger('source_id')->nullable();
+            $table->string('reference', 100)->nullable();
+            $table->text('notes')->nullable();
+            $table->timestamp('occurred_at');
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamps();
+
+            $table->index(['source_type', 'source_id']);
+            $table->index(['product_id', 'occurred_at']);
+            $table->index(['type', 'occurred_at']);
         });
+
         Schema::create('cash_entries', function (Blueprint $table) {
-            $table->id(); $table->string('type'); $table->string('category'); $table->text('description'); $table->unsignedBigInteger('amount'); $table->date('entry_date'); $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete(); $table->timestamps();
+            $table->id();
+            $table->foreignId('transaction_payment_id')->nullable()->unique()->constrained()->nullOnDelete();
+            $table->string('type', 20);
+            $table->string('category', 100);
+            $table->text('description');
+            $table->unsignedBigInteger('amount');
+            $table->date('entry_date');
+            $table->string('status', 30)->default('posted');
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('approved_at')->nullable();
+            $table->timestamps();
+
+            $table->index(['entry_date', 'type']);
+            $table->index(['status', 'entry_date']);
         });
+
         Schema::create('payrolls', function (Blueprint $table) {
-            $table->id(); $table->string('employee_name'); $table->string('position'); $table->string('period', 7); $table->unsignedBigInteger('base_salary'); $table->unsignedBigInteger('bonus')->default(0); $table->unsignedBigInteger('late_deduction')->default(0); $table->unsignedBigInteger('commission')->default(0); $table->string('late_duration')->nullable(); $table->timestamps(); $table->unique(['employee_name','period']);
+            $table->id();
+            $table->foreignId('employee_id')->constrained();
+            $table->string('period', 7);
+            $table->string('employee_name');
+            $table->string('position')->nullable();
+            $table->unsignedBigInteger('base_salary')->default(0);
+            $table->unsignedBigInteger('bonus')->default(0);
+            $table->unsignedBigInteger('overtime')->default(0);
+            $table->unsignedBigInteger('commission')->default(0);
+            $table->unsignedBigInteger('late_deduction')->default(0);
+            $table->unsignedBigInteger('other_deduction')->default(0);
+            $table->unsignedBigInteger('net_salary')->default(0);
+            $table->unsignedInteger('late_duration_minutes')->default(0);
+            $table->string('status', 30)->default('draft');
+            $table->foreignId('finalized_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('finalized_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(['employee_id', 'period']);
+            $table->index(['period', 'status']);
         });
+
         Schema::create('activity_logs', function (Blueprint $table) {
-            $table->id(); $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete(); $table->string('action'); $table->string('subject_type'); $table->unsignedBigInteger('subject_id')->nullable(); $table->text('description'); $table->json('metadata')->nullable(); $table->timestamps();
+            $table->id();
+            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('action', 100);
+            $table->string('subject_type');
+            $table->unsignedBigInteger('subject_id')->nullable();
+            $table->text('description');
+            $table->json('metadata')->nullable();
+            $table->ipAddress('ip_address')->nullable();
+            $table->text('user_agent')->nullable();
+            $table->timestamps();
+
+            $table->index(['subject_type', 'subject_id']);
+            $table->index(['action', 'created_at']);
         });
     }
 
     public function down(): void
     {
-        foreach (['activity_logs','payrolls','cash_entries','stock_movements','transaction_items','transactions','reservations','promotions','customers','treatment_product','products','treatments','therapists'] as $table) Schema::dropIfExists($table);
+        Schema::dropIfExists('activity_logs');
+        Schema::dropIfExists('payrolls');
+        Schema::dropIfExists('cash_entries');
+        Schema::dropIfExists('stock_movements');
+        Schema::dropIfExists('transaction_payments');
+        Schema::dropIfExists('transaction_items');
+        Schema::dropIfExists('transactions');
+        Schema::dropIfExists('payment_methods');
+        Schema::dropIfExists('reservation_item_staff');
+        Schema::dropIfExists('reservation_items');
+        Schema::dropIfExists('reservations');
+        Schema::dropIfExists('promotions');
+        Schema::dropIfExists('customers');
+        Schema::dropIfExists('treatment_product_recipes');
+        Schema::dropIfExists('products');
+        Schema::dropIfExists('units');
+        Schema::dropIfExists('treatments');
+        Schema::dropIfExists('treatment_categories');
+        Schema::dropIfExists('employees');
     }
 };
