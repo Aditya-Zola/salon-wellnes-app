@@ -20,7 +20,14 @@ class AccessControlSeeder extends Seeder
             'reservations.view' => 'Lihat reservasi',
             'reservations.create' => 'Tambah reservasi',
             'reservations.update' => 'Ubah reservasi',
+            'reservations.override_conflict' => 'Override benturan jadwal',
+            'reservations.override_price' => 'Override harga reservasi',
             'reservations.delete' => 'Hapus reservasi',
+        ],
+        'Pegawai' => [
+            'employees.view' => 'Lihat data pegawai',
+            'employees.create' => 'Tambah pegawai',
+            'employees.update' => 'Ubah pegawai',
         ],
         'Kasir' => [
             'cashier.view' => 'Lihat kasir',
@@ -103,6 +110,7 @@ class AccessControlSeeder extends Seeder
         )));
         Role::findByName('marketing')->syncPermissions([
             'dashboard.view',
+            'employees.view',
             'reservations.view',
             'reservations.create',
             'reservations.update',

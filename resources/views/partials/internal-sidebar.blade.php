@@ -4,6 +4,7 @@
     $modules = [
         ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard', 'permission' => 'dashboard.view'],
         ['page' => 'reservasi', 'label' => 'Reservasi', 'icon' => 'calendar_month', 'permission' => 'reservations.view'],
+        ['page' => 'pegawai', 'label' => 'Pegawai', 'icon' => 'manage_accounts', 'permission' => 'employees.view'],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
         ['page' => 'membership', 'label' => 'Membership', 'icon' => 'groups', 'permission' => 'memberships.view'],
