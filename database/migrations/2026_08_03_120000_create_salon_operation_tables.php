@@ -6,9 +6,16 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    private function createTableIfMissing(string $tableName, \Closure $definition): void
+    {
+        if (! Schema::hasTable($tableName)) {
+            Schema::create($tableName, $definition);
+        }
+    }
+
     public function up(): void
     {
-        Schema::create('employees', function (Blueprint $table) {
+        $this->createTableIfMissing('employees', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->nullable()->unique()->constrained()->nullOnDelete();
             $table->string('code', 30)->unique();
@@ -22,7 +29,7 @@ return new class extends Migration
             $table->index(['active', 'is_service_provider']);
         });
 
-        Schema::create('treatment_categories', function (Blueprint $table) {
+        $this->createTableIfMissing('treatment_categories', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name')->unique();
@@ -32,7 +39,7 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        Schema::create('treatments', function (Blueprint $table) {
+        $this->createTableIfMissing('treatments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('category_id')->constrained('treatment_categories');
             $table->string('code', 30)->unique();
@@ -47,7 +54,7 @@ return new class extends Migration
             $table->index(['category_id', 'is_active']);
         });
 
-        Schema::create('units', function (Blueprint $table) {
+        $this->createTableIfMissing('units', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name')->unique();
@@ -56,7 +63,7 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        Schema::create('products', function (Blueprint $table) {
+        $this->createTableIfMissing('products', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name');
@@ -74,7 +81,7 @@ return new class extends Migration
             $table->index(['is_active', 'category']);
         });
 
-        Schema::create('treatment_product_recipes', function (Blueprint $table) {
+        $this->createTableIfMissing('treatment_product_recipes', function (Blueprint $table) {
             $table->id();
             $table->foreignId('treatment_id')->constrained()->cascadeOnDelete();
             $table->foreignId('product_id')->constrained()->cascadeOnDelete();
@@ -85,7 +92,7 @@ return new class extends Migration
             $table->unique(['treatment_id', 'product_id'], 'treatment_product_recipe_unique');
         });
 
-        Schema::create('customers', function (Blueprint $table) {
+        $this->createTableIfMissing('customers', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name');
@@ -103,7 +110,7 @@ return new class extends Migration
             $table->index(['is_active', 'is_member']);
         });
 
-        Schema::create('promotions', function (Blueprint $table) {
+        $this->createTableIfMissing('promotions', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name');
@@ -120,7 +127,7 @@ return new class extends Migration
             $table->index(['is_active', 'starts_at', 'ends_at']);
         });
 
-        Schema::create('reservations', function (Blueprint $table) {
+        $this->createTableIfMissing('reservations', function (Blueprint $table) {
             $table->id();
             $table->string('booking_code', 40)->unique();
             $table->string('queue_number', 20);
@@ -133,7 +140,7 @@ return new class extends Migration
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('cancelled_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('cancelled_at')->nullable();
+            $table->dateTime('cancelled_at')->nullable();
             $table->text('cancellation_reason')->nullable();
             $table->timestamps();
 
@@ -142,7 +149,7 @@ return new class extends Migration
             $table->index(['customer_id', 'reservation_date']);
         });
 
-        Schema::create('reservation_items', function (Blueprint $table) {
+        $this->createTableIfMissing('reservation_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('reservation_id')->constrained()->cascadeOnDelete();
             $table->foreignId('treatment_id')->constrained();
@@ -155,14 +162,14 @@ return new class extends Migration
             $table->unsignedBigInteger('net_price');
             $table->decimal('commission_percent', 7, 4)->default(0);
             $table->unsignedBigInteger('commission_amount')->default(0);
-            $table->timestamp('scheduled_start_at');
-            $table->timestamp('scheduled_end_at');
-            $table->timestamp('started_at')->nullable();
-            $table->timestamp('finished_at')->nullable();
-            $table->timestamp('ready_at')->nullable();
-            $table->timestamp('continued_at')->nullable();
-            $table->timestamp('overtime_at')->nullable();
-            $table->timestamp('cancelled_at')->nullable();
+            $table->dateTime('scheduled_start_at');
+            $table->dateTime('scheduled_end_at');
+            $table->dateTime('started_at')->nullable();
+            $table->dateTime('finished_at')->nullable();
+            $table->dateTime('ready_at')->nullable();
+            $table->dateTime('continued_at')->nullable();
+            $table->dateTime('overtime_at')->nullable();
+            $table->dateTime('cancelled_at')->nullable();
             $table->string('work_status', 30)->default('waiting');
             $table->text('notes')->nullable();
             $table->unsignedSmallInteger('sort_order')->default(0);
@@ -173,7 +180,7 @@ return new class extends Migration
             $table->index('work_status');
         });
 
-        Schema::create('reservation_item_staff', function (Blueprint $table) {
+        $this->createTableIfMissing('reservation_item_staff', function (Blueprint $table) {
             $table->id();
             $table->foreignId('reservation_item_id')->constrained()->cascadeOnDelete();
             $table->foreignId('employee_id')->constrained();
@@ -182,14 +189,14 @@ return new class extends Migration
             $table->unsignedBigInteger('commission_amount')->default(0);
             $table->text('conflict_override_reason')->nullable();
             $table->foreignId('conflict_overridden_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('conflict_overridden_at')->nullable();
+            $table->dateTime('conflict_overridden_at')->nullable();
             $table->timestamps();
 
             $table->unique(['reservation_item_id', 'employee_id'], 'reservation_item_staff_unique');
             $table->index(['employee_id', 'role']);
         });
 
-        Schema::create('payment_methods', function (Blueprint $table) {
+        $this->createTableIfMissing('payment_methods', function (Blueprint $table) {
             $table->id();
             $table->string('code', 30)->unique();
             $table->string('name')->unique();
@@ -201,13 +208,13 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        Schema::create('transactions', function (Blueprint $table) {
+        $this->createTableIfMissing('transactions', function (Blueprint $table) {
             $table->id();
             $table->string('number', 50)->unique();
             $table->foreignId('reservation_id')->unique()->constrained();
             $table->foreignId('customer_id')->constrained();
             $table->string('status', 30)->default('draft');
-            $table->timestamp('transacted_at')->nullable();
+            $table->dateTime('transacted_at')->nullable();
             $table->unsignedBigInteger('subtotal')->default(0);
             $table->decimal('discount_percent', 7, 4)->default(0);
             $table->unsignedBigInteger('discount_amount')->default(0);
@@ -218,9 +225,9 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('finalized_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('finalized_at')->nullable();
+            $table->dateTime('finalized_at')->nullable();
             $table->foreignId('voided_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('voided_at')->nullable();
+            $table->dateTime('voided_at')->nullable();
             $table->text('void_reason')->nullable();
             $table->timestamps();
 
@@ -228,7 +235,7 @@ return new class extends Migration
             $table->index(['customer_id', 'transacted_at']);
         });
 
-        Schema::create('transaction_items', function (Blueprint $table) {
+        $this->createTableIfMissing('transaction_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('transaction_id')->constrained()->cascadeOnDelete();
             $table->foreignId('reservation_item_id')->nullable()->constrained()->nullOnDelete();
@@ -248,13 +255,13 @@ return new class extends Migration
             $table->index(['transaction_id', 'sort_order']);
         });
 
-        Schema::create('transaction_payments', function (Blueprint $table) {
+        $this->createTableIfMissing('transaction_payments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('transaction_id')->constrained()->cascadeOnDelete();
             $table->foreignId('payment_method_id')->constrained();
             $table->unsignedBigInteger('amount');
             $table->string('reference_number', 100)->nullable();
-            $table->timestamp('paid_at');
+            $table->dateTime('paid_at');
             $table->string('status', 30)->default('confirmed');
             $table->text('notes')->nullable();
             $table->foreignId('received_by')->nullable()->constrained('users')->nullOnDelete();
@@ -264,7 +271,7 @@ return new class extends Migration
             $table->index(['payment_method_id', 'paid_at']);
         });
 
-        Schema::create('stock_movements', function (Blueprint $table) {
+        $this->createTableIfMissing('stock_movements', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_id')->constrained();
             $table->foreignId('unit_id')->constrained('units');
@@ -277,7 +284,7 @@ return new class extends Migration
             $table->unsignedBigInteger('source_id')->nullable();
             $table->string('reference', 100)->nullable();
             $table->text('notes')->nullable();
-            $table->timestamp('occurred_at');
+            $table->dateTime('occurred_at');
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
@@ -286,7 +293,7 @@ return new class extends Migration
             $table->index(['type', 'occurred_at']);
         });
 
-        Schema::create('cash_entries', function (Blueprint $table) {
+        $this->createTableIfMissing('cash_entries', function (Blueprint $table) {
             $table->id();
             $table->foreignId('transaction_payment_id')->nullable()->unique()->constrained()->nullOnDelete();
             $table->string('type', 20);
@@ -297,14 +304,14 @@ return new class extends Migration
             $table->string('status', 30)->default('posted');
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('approved_at')->nullable();
+            $table->dateTime('approved_at')->nullable();
             $table->timestamps();
 
             $table->index(['entry_date', 'type']);
             $table->index(['status', 'entry_date']);
         });
 
-        Schema::create('payrolls', function (Blueprint $table) {
+        $this->createTableIfMissing('payrolls', function (Blueprint $table) {
             $table->id();
             $table->foreignId('employee_id')->constrained();
             $table->string('period', 7);
@@ -320,14 +327,14 @@ return new class extends Migration
             $table->unsignedInteger('late_duration_minutes')->default(0);
             $table->string('status', 30)->default('draft');
             $table->foreignId('finalized_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('finalized_at')->nullable();
+            $table->dateTime('finalized_at')->nullable();
             $table->timestamps();
 
             $table->unique(['employee_id', 'period']);
             $table->index(['period', 'status']);
         });
 
-        Schema::create('activity_logs', function (Blueprint $table) {
+        $this->createTableIfMissing('activity_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
             $table->string('action', 100);
