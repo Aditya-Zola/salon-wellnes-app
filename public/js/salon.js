@@ -404,15 +404,56 @@ function renderReservations() {
             return `<div class="calendar-hour">${slot % 2 === 0 ? `${String(hour).padStart(2, '0')}.00` : ''}</div>`;
         }).join('');
         const dayColumns = Array.from({ length: 7 }, () => `<div class="calendar-day-column">${slots.map(() => '<div class="calendar-slot"></div>').join('')}</div>`).join('');
-        const events = rows.map((reservation) => {
+        const calendarReservations = rows.map((reservation) => {
             const date = reservationDate(reservation);
             const day = Math.round((new Date(`${date}T12:00:00`) - weekStart) / 86400000);
             const item = reservationItems(reservation)[0] || {};
             const [hour = 9, minute = 0] = reservationTime(reservation).split(':').map(Number);
             const row = Math.max(1, ((hour - 9) * 2) + (minute >= 30 ? 2 : 1));
-            const span = Math.max(2, Math.ceil(Number(item.duration_minutes || 60) / 30));
+            const span = Math.max(2, Math.min(25 - row, Math.ceil(Number(item.duration_minutes || 60) / 30)));
+
+            return { reservation, day, row, span, end: row + span };
+        });
+
+        // Reservasi yang waktunya beririsan ditempatkan pada jalur horizontal berbeda.
+        const positionedReservations = [];
+        Array.from({ length: 7 }, (_, day) => day).forEach((day) => {
+            const dayReservations = calendarReservations
+                .filter((entry) => entry.day === day)
+                .sort((left, right) => left.row - right.row || right.span - left.span || Number(left.reservation.id) - Number(right.reservation.id));
+            let group = [];
+            let groupEnd = 0;
+            const positionGroup = () => {
+                if (!group.length) return;
+                const laneEnds = [];
+                const positionedGroup = group.map((entry) => {
+                    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= entry.row);
+                    if (lane === -1) {
+                        lane = laneEnds.length;
+                        laneEnds.push(entry.end);
+                    } else {
+                        laneEnds[lane] = entry.end;
+                    }
+                    return { ...entry, lane };
+                });
+                positionedGroup.forEach((entry) => positionedReservations.push({ ...entry, lanes: laneEnds.length }));
+                group = [];
+                groupEnd = 0;
+            };
+
+            dayReservations.forEach((entry) => {
+                if (group.length && entry.row >= groupEnd) positionGroup();
+                group.push(entry);
+                groupEnd = Math.max(groupEnd, entry.end);
+            });
+            positionGroup();
+        });
+
+        const events = positionedReservations.map(({ reservation, day, row, span, lane, lanes }) => {
             const status = reservationStatus(reservation);
-            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" style="grid-column:${day + 1};grid-row:${row}/span ${span}">
+            const width = 100 / lanes;
+            const left = lane * width;
+            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" style="grid-column:${day + 1};grid-row:${row}/span ${span};left:${left}%;width:calc(${width}% - 6px);margin:3px 0">
                 <time>${escapeHtml(reservationTime(reservation))}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em>${escapeHtml(statusLabel(status))}</em>
             </button>`;
         }).join('');
