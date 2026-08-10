@@ -66,10 +66,14 @@
         <section class="page" id="reservasi">
             <div class="reservation-calendar-toolbar">
                 <div>
-                    <h2>Jadwal reservasi</h2>
-                    <p>Lihat slot therapist dan jadwal treatment dalam satu tampilan.</p>
+                    <h2>Reservasi</h2>
+                    <p>Kelola antrean pelanggan dan jadwal treatment.</p>
                 </div>
                 <button class="primary open-reservation">＋ Reservasi baru</button>
+            </div>
+            <div class="reservation-view-tabs" role="tablist" aria-label="Tampilan reservasi">
+                <button type="button" class="active" data-reservation-view="queue" role="tab">Antrean hari ini</button>
+                <button type="button" data-reservation-view="calendar" role="tab">Kalender</button>
             </div>
             <div class="calendar-controls card">
                 <div class="calendar-period">
@@ -84,9 +88,11 @@
                     <select id="reservation-filter-status"><option value="">Semua status</option><option value="scheduled">Terjadwal</option><option value="arrived">Sudah datang</option><option value="in_service">Sedang dilayani</option><option value="completed">Selesai</option><option value="cancelled">Batal</option></select>
                 </div>
             </div>
-            <div class="reservation-calendar-layout">
+            <div id="reservation-queue-view" class="reservation-view">
+                <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
+            </div>
+            <div id="reservation-calendar-view" class="reservation-view hidden">
                 <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar"></div></div>
-                <aside class="today-queue card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="calendar-today-queue"></div></aside>
             </div>
         </section>
 

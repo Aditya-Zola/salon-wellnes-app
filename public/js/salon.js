@@ -61,6 +61,7 @@ let state = window.SALON_DATA || {};
 let selectedReservation = null;
 let reservationMode = 'today';
 let reservationStatusGroup = null;
+let reservationView = 'queue';
 let pendingReservationPayload = null;
 let paymentIdempotencyKey = null;
 let toastTimer;
@@ -417,7 +418,7 @@ function renderReservations() {
         calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}</div>${dayColumns}<div class="calendar-events">${events}</div></div></div>`;
     }
 
-    const queue = document.getElementById('calendar-today-queue');
+    const queue = document.getElementById('reservation-queue-list');
     const queueDate = document.getElementById('today-queue-date');
     if (queueDate) queueDate.textContent = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
     if (queue) queue.innerHTML = todayRows.map((reservation) => {
@@ -1222,6 +1223,24 @@ function initReservationControls() {
         date.value = localDate();
         reservationStatusGroup = null;
         renderReservations();
+    });
+
+    const setReservationView = (view) => {
+        reservationView = view;
+        document.querySelectorAll('[data-reservation-view]').forEach((item) => {
+            const active = item.dataset.reservationView === reservationView;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        document.getElementById('reservation-queue-view')?.classList.toggle('hidden', reservationView !== 'queue');
+        document.getElementById('reservation-calendar-view')?.classList.toggle('hidden', reservationView !== 'calendar');
+        section?.querySelector('.calendar-controls')?.classList.toggle('hidden', reservationView !== 'calendar');
+    };
+    setReservationView(reservationView);
+    document.querySelectorAll('[data-reservation-view]').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            setReservationView(tab.dataset.reservationView);
+        });
     });
 }
 
