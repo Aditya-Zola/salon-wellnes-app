@@ -346,6 +346,60 @@ class SalonOperationsTest extends TestCase
         $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'completed']);
     }
 
+    public function test_checkout_can_add_sold_product_and_decrease_its_stock(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $employee = $this->employee('EMP-SARI');
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->first();
+        $cash = $this->paymentMethod('CASH');
+        $this->assertNotNull($product);
+
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '15:00', [
+                ['employee_id' => $employee->id, 'role' => 'primary'],
+            ]),
+        ], ['phone' => '081290000070'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+        \DB::table('reservation_items')->where('reservation_id', $reservationId)->update([
+            'work_status' => 'finished',
+            'finished_at' => now(),
+        ]);
+
+        $quantity = '2.0000';
+        $total = (int) $treatment->normal_price + ((int) $product->selling_price * 2);
+        $checkout = $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'idempotency_key' => 'checkout-product-sale-test',
+            'product_items' => [[
+                'product_id' => $product->id,
+                'quantity' => $quantity,
+            ]],
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'amount' => $total,
+            ]],
+        ])->assertCreated()->assertJsonPath('total', $total);
+
+        $transactionId = (int) $checkout->json('id');
+        $this->assertDatabaseHas('transaction_items', [
+            'transaction_id' => $transactionId,
+            'item_type' => 'product',
+            'item_id' => $product->id,
+            'quantity' => $quantity,
+            'unit_price' => $product->selling_price,
+            'total_amount' => (int) $product->selling_price * 2,
+        ]);
+        $this->assertSame(
+            (float) $product->current_stock - 2,
+            (float) \DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'source_type' => 'transaction_sale',
+            'source_id' => $transactionId,
+        ]);
+    }
+
     public function test_repeated_checkout_replays_existing_invoice_without_duplicate_side_effects(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');

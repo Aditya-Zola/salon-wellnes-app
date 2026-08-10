@@ -42,8 +42,11 @@ class SalonSnapshotService
             $snapshot['members'] = $this->members();
         }
 
-        if ($this->can($user, 'products.view')) {
+        if ($this->canAny($user, ['products.view', 'cashier.view', 'cashier.process'])) {
             $snapshot['products'] = $this->products();
+        }
+
+        if ($this->can($user, 'products.view')) {
             $snapshot['stock_movements'] = $this->stockMovements();
         }
 

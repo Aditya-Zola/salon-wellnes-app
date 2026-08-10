@@ -51,8 +51,11 @@ class CheckoutService
             $customer = DB::table('customers')->where('id', $reservation->customer_id)->lockForUpdate()->first();
             abort_unless($customer, 422, 'Data pelanggan reservasi tidak ditemukan.');
 
-            $subtotal = $this->sumMoney($billableItems->map(fn (object $item): int => (int) $item->unit_price));
-            [$discountPercent, $discountAmount, $promotionId, $discountType] = $this->resolveDiscount($data, $customer, $subtotal);
+            $serviceSubtotal = $this->sumMoney($billableItems->map(fn (object $item): int => (int) $item->unit_price));
+            $productLines = $this->resolveProductItems($data);
+            $productSubtotal = $this->sumMoney($productLines->map(fn (array $line): int => $line['gross_amount']));
+            $subtotal = $this->safeAdd($serviceSubtotal, $productSubtotal);
+            [$discountPercent, $discountAmount, $promotionId, $discountType] = $this->resolveDiscount($data, $customer, $serviceSubtotal);
             $total = $subtotal - $discountAmount;
 
             abort_if($total <= 0, 422, 'Transaksi tanpa nilai pembayaran belum didukung.');
@@ -121,7 +124,27 @@ class CheckoutService
                 ]);
             }
 
+            foreach ($productLines as $index => $line) {
+                DB::table('transaction_items')->insert([
+                    'transaction_id' => $transactionId,
+                    'reservation_item_id' => null,
+                    'item_type' => 'product',
+                    'item_id' => $line['product']->id,
+                    'name' => $line['product']->name,
+                    'quantity' => FixedPoint::format($line['quantity'], FixedPoint::STOCK_SCALE),
+                    'unit_price' => $line['unit_price'],
+                    'gross_amount' => $line['gross_amount'],
+                    'discount_percent' => FixedPoint::normalizePercent(0),
+                    'discount_amount' => 0,
+                    'total_amount' => $line['gross_amount'],
+                    'sort_order' => $billableItems->count() + $index,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+
             $this->deductRecipeStock($billableItems, $transactionId, $number, $request, $now);
+            $this->deductSoldProductStock($productLines, $transactionId, $number, $request, $now);
 
             foreach ($payments as $payment) {
                 $paymentId = DB::table('transaction_payments')->insertGetId([
@@ -170,6 +193,7 @@ class CheckoutService
                     'reservation_id' => $reservationId,
                     'promotion_id' => $promotionId,
                     'subtotal' => $subtotal,
+                    'product_item_ids' => $productLines->map(fn (array $line): int => (int) $line['product']->id)->all(),
                     'discount_amount' => $discountAmount,
                     'total' => $total,
                     'payment_method_ids' => collect($payments)->pluck('method.id')->all(),
@@ -185,6 +209,54 @@ class CheckoutService
                 'idempotent_replay' => false,
             ];
         }, 3);
+    }
+
+    private function resolveProductItems(array $data): Collection
+    {
+        $inputs = collect($data['product_items'] ?? []);
+
+        if ($inputs->isEmpty()) {
+            return collect();
+        }
+
+        $productIds = $inputs->pluck('product_id')->map(fn ($id): int => (int) $id)->sort()->values();
+        $products = DB::table('products')
+            ->whereIn('id', $productIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        return $inputs->map(function (array $input, int $index) use ($products): array {
+            $product = $products->get((int) $input['product_id']);
+
+            if (! $product || ! $product->is_active) {
+                throw ValidationException::withMessages([
+                    "product_items.{$index}.product_id" => ['Produk tidak tersedia.'],
+                ]);
+            }
+
+            $quantity = FixedPoint::parse((string) $input['quantity'], FixedPoint::STOCK_SCALE);
+            if ($quantity <= 0) {
+                throw ValidationException::withMessages([
+                    "product_items.{$index}.quantity" => ['Jumlah produk harus lebih dari nol.'],
+                ]);
+            }
+
+            $unitPrice = (int) $product->selling_price;
+            if ($unitPrice <= 0) {
+                throw ValidationException::withMessages([
+                    "product_items.{$index}.product_id" => ["Harga jual {$product->name} belum diatur."],
+                ]);
+            }
+
+            return [
+                'product' => $product,
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'gross_amount' => FixedPoint::multiply($unitPrice, $quantity, FixedPoint::STOCK_SCALE),
+            ];
+        });
     }
 
     private function resolveDiscount(array $data, object $customer, int $subtotal): array
@@ -421,6 +493,52 @@ class CheckoutService
                 'source_id' => $transactionId,
                 'reference' => $number,
                 'notes' => 'Pemakaian resep treatment',
+                'occurred_at' => $now,
+                'created_by' => $request->user()?->id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+    }
+
+    private function deductSoldProductStock(
+        Collection $productLines,
+        int $transactionId,
+        string $number,
+        Request $request,
+        mixed $now,
+    ): void {
+        foreach ($productLines as $line) {
+            $product = DB::table('products')
+                ->where('id', $line['product']->id)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($product && $product->is_active, 422, 'Produk tidak tersedia.');
+            $quantity = $line['quantity'];
+            $before = FixedPoint::parse((string) $product->current_stock, FixedPoint::STOCK_SCALE);
+
+            if ($before < $quantity) {
+                throw ValidationException::withMessages([
+                    'product_items' => ["Stok {$product->name} tidak mencukupi."],
+                ]);
+            }
+
+            $after = $before - $quantity;
+            DB::table('products')->where('id', $product->id)->update([
+                'current_stock' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'updated_at' => $now,
+            ]);
+            DB::table('stock_movements')->insert([
+                'product_id' => $product->id,
+                'unit_id' => $product->usage_unit_id,
+                'type' => 'out',
+                'quantity' => FixedPoint::format($quantity, FixedPoint::STOCK_SCALE),
+                'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
+                'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'source_type' => 'transaction_sale',
+                'source_id' => $transactionId,
+                'reference' => $number,
+                'notes' => 'Penjualan produk melalui kasir',
                 'occurred_at' => $now,
                 'created_by' => $request->user()?->id,
                 'created_at' => $now,
