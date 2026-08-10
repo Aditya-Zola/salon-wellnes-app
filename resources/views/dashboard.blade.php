@@ -63,7 +63,38 @@
             </div>
         </section>
 
-        <section class="page" id="reservasi"><div class="toolbar"><div class="tabs"><button class="active">Hari ini <b>0</b></button><button>Mendatang</button><button>Riwayat</button></div><button class="primary open-reservation">＋ Reservasi baru</button></div><div class="card"><div class="filters"><input type="date"><select id="reservation-filter-employee"><option value="">Semua terapis</option></select><select><option value="">Semua status</option><option value="scheduled">Terjadwal</option><option value="arrived">Sudah datang</option><option value="in_service">Sedang dilayani</option><option value="completed">Selesai</option><option value="cancelled">Batal</option></select></div><div class="table reservation-table"><div class="tr th"><span>ANTREAN</span><span>PELANGGAN</span><span>TREATMENT</span><span>TERAPIS</span><span>STATUS</span><span>AKSI</span></div><div id="queue-table"></div></div></div></section>
+        <section class="page" id="reservasi">
+            <div class="reservation-calendar-toolbar">
+                <div>
+                    <h2>Reservasi</h2>
+                    <p>Kelola antrean pelanggan dan jadwal treatment.</p>
+                </div>
+                <button class="primary open-reservation">＋ Reservasi baru</button>
+            </div>
+            <div class="reservation-view-tabs" role="tablist" aria-label="Tampilan reservasi">
+                <button type="button" class="active" data-reservation-view="queue" role="tab">Antrean hari ini</button>
+                <button type="button" data-reservation-view="calendar" role="tab">Kalender</button>
+            </div>
+            <div class="calendar-controls card">
+                <div class="calendar-period">
+                    <button type="button" class="calendar-nav" id="calendar-prev" aria-label="Minggu sebelumnya">‹</button>
+                    <button type="button" class="secondary calendar-today" id="calendar-today">Hari ini</button>
+                    <strong id="calendar-period-label">Minggu ini</strong>
+                    <button type="button" class="calendar-nav" id="calendar-next" aria-label="Minggu berikutnya">›</button>
+                </div>
+                <div class="filters calendar-filters">
+                    <input id="reservation-calendar-date" type="date" aria-label="Pilih tanggal kalender">
+                    <select id="reservation-filter-employee"><option value="">Semua therapist</option></select>
+                    <select id="reservation-filter-status"><option value="">Semua status</option><option value="scheduled">Terjadwal</option><option value="arrived">Sudah datang</option><option value="in_service">Sedang dilayani</option><option value="completed">Selesai</option><option value="cancelled">Batal</option></select>
+                </div>
+            </div>
+            <div id="reservation-queue-view" class="reservation-view">
+                <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
+            </div>
+            <div id="reservation-calendar-view" class="reservation-view hidden">
+                <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar"></div></div>
+            </div>
+        </section>
 
         <section class="page" id="pegawai"><div class="toolbar"><div><h3>Master pegawai</h3><p>Data pegawai dan therapist operasional</p></div><button class="primary" id="open-employee">＋ Tambah pegawai</button></div><div class="card"><div class="table employee-table" id="employee-table"></div></div></section>
 
