@@ -999,6 +999,17 @@ function addStaffRow(container, role = 'primary') {
     };
 }
 
+function reservationTimeOptions(selected = '09:00') {
+    selected = String(selected).slice(0, 5);
+    return Array.from({ length: 23 }, (_, index) => {
+        const totalMinutes = (9 * 60) + (index * 30);
+        const hour = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+        const minute = String(totalMinutes % 60).padStart(2, '0');
+        const value = `${hour}:${minute}`;
+        return `<option value="${value}" ${value === selected ? 'selected' : ''}>${value}</option>`;
+    }).join('');
+}
+
 function addReservationItem(values = {}) {
     const container = document.getElementById('reservation-items');
     if (!container) return;
@@ -1008,7 +1019,7 @@ function addReservationItem(values = {}) {
     card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="link remove-reservation-item">Hapus</button></div>
         <div class="reservation-item-grid">
             <label>Treatment<select class="item-treatment" required><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select></label>
-            <label>Jam mulai<input class="item-time" type="time" required value="${escapeHtml(values.start_time || '09:00')}"></label>
+            <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 30 menit</small></label>
             ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : '<span class="reservation-price-note"><small>Harga</small><b>Mengikuti harga normal</b></span>'}
         </div>
         <label class="item-notes">Catatan treatment<textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label>
