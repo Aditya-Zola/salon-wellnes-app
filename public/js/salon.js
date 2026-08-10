@@ -59,6 +59,7 @@ const workStatusTransitions = {
 
 let state = window.SALON_DATA || {};
 let selectedReservation = null;
+let cashierProductItems = [];
 let reservationMode = 'today';
 let reservationStatusGroup = null;
 let pendingReservationPayload = null;
@@ -499,6 +500,7 @@ function openReservationDetail(reservation) {
 
 function resetCashier() {
     selectedReservation = null;
+    cashierProductItems = [];
     document.getElementById('cashier-receipt')?.classList.add('empty');
     document.getElementById('receipt-number').textContent = '—';
     document.getElementById('receipt-name').textContent = 'Pilih antrean terlebih dahulu';
@@ -521,8 +523,9 @@ function selectedDiscount() {
 function selectedTotal() {
     const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
     if (!reservation) return 0;
-    const subtotal = reservationSubtotal(reservation);
-    return Math.round(subtotal - (subtotal * selectedDiscount() / 100));
+    const serviceSubtotal = reservationSubtotal(reservation);
+    const productSubtotal = cashierProductItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
+    return Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal);
 }
 
 function renderCashier() {
@@ -555,6 +558,9 @@ function renderCashier() {
 }
 
 function selectCashier(id) {
+    if (selectedReservation && Number(selectedReservation) !== Number(id)) {
+        cashierProductItems = [];
+    }
     selectedReservation = id;
     document.querySelectorAll('.cashier-item').forEach((element) => {
         element.classList.toggle('active', Number(element.dataset.id) === Number(id));
@@ -569,27 +575,92 @@ function selectCashier(id) {
     const discountSelect = document.getElementById('discount');
     if (!reservation.is_member && discountSelect) discountSelect.value = '0';
     const items = reservationItems(reservation).filter((item) => item.work_status !== 'cancelled');
-    const subtotal = reservationSubtotal(reservation);
+    const serviceSubtotal = reservationSubtotal(reservation);
+    const productSubtotal = cashierProductItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
+    const subtotal = serviceSubtotal + productSubtotal;
     const discount = selectedDiscount();
-    const discountAmount = Math.round(subtotal * discount / 100);
+    const discountAmount = Math.round(serviceSubtotal * discount / 100);
     const total = subtotal - discountAmount;
 
     document.getElementById('cashier-receipt')?.classList.remove('empty');
     document.getElementById('receipt-number').textContent = reservation.queue_number || reservation.booking_code;
     document.getElementById('receipt-name').textContent = reservationCustomerName(reservation);
     document.querySelector('.receipt .member').textContent = reservation.is_member ? '· MEMBER' : '· NON-MEMBER';
-    document.getElementById('receipt-items').innerHTML = items.map((item) => `<div class="receipt-line">
+    const treatmentLines = items.map((item) => `<div class="receipt-line">
         <i class="material-symbols-rounded">spa</i>
         <span><b>${escapeHtml(itemTreatmentName(item))}</b><small>Therapist: ${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</small></span>
         <strong>${money(itemPrice(item))}</strong>
     </div>`).join('');
+    const productLines = cashierProductItems.map((item) => `<div class="receipt-line receipt-product-line">
+        <i class="material-symbols-rounded">inventory_2</i>
+        <span><b>${escapeHtml(item.name)}</b><small>${Number(item.quantity)} ${escapeHtml(item.unit || 'pcs')} × ${money(item.unit_price)}</small></span>
+        <strong>${money(Number(item.unit_price) * Number(item.quantity))}</strong>
+        <button type="button" class="link remove-cashier-product" data-id="${Number(item.product_id)}" aria-label="Hapus produk">×</button>
+    </div>`).join('');
+    document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
     document.getElementById('discount').disabled = !reservation.is_member;
     document.getElementById('open-payment').disabled = !allItemsFinished(reservation);
+    document.getElementById('add-extra').disabled = !array(state.products).some((product) => (
+        Number(product.is_active ?? 1) === 1 && Number(product.selling_price || 0) > 0 && productStock(product) > 0
+    ));
     document.getElementById('subtotal').textContent = money(subtotal);
     document.getElementById('discount-value').textContent = `-${money(discountAmount)}`;
     document.getElementById('grand-total').textContent = money(total);
     document.getElementById('payment-total').textContent = money(total);
     document.getElementById('payment-description').textContent = `${reservation.queue_number || reservation.booking_code} · ${reservationCustomerName(reservation)}`;
+}
+
+function openCashierProductPicker() {
+    if (!selectedReservation) {
+        toast('Pilih antrean terlebih dahulu.', true);
+        return;
+    }
+
+    const products = array(state.products).filter((product) => (
+        Number(product.is_active ?? 1) === 1 && Number(product.selling_price || 0) > 0 && productStock(product) > 0
+    ));
+    if (!products.length) {
+        toast('Tidak ada produk aktif dengan stok dan harga jual yang tersedia.', true);
+        return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close">×</button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Tambah</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    const select = wrapper.querySelector('select[name="product_id"]');
+    const quantity = wrapper.querySelector('input[name="quantity"]');
+    const stockLabel = wrapper.querySelector('#product-picker-stock');
+    const syncStock = () => {
+        const product = products.find((item) => Number(item.id) === Number(select.value));
+        stockLabel.textContent = product ? `Stok tersedia: ${productStock(product)} ${productUnit(product)} · Harga jual: ${money(product.selling_price)}` : '';
+        quantity.max = product ? productStock(product) : '';
+    };
+    syncStock();
+    select.onchange = syncStock;
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = (event) => {
+        event.preventDefault();
+        const product = products.find((item) => Number(item.id) === Number(select.value));
+        const amount = Number(quantity.value || 0);
+        if (!product || amount <= 0 || amount > productStock(product)) {
+            toast('Jumlah produk melebihi stok yang tersedia.', true);
+            return;
+        }
+        const existing = cashierProductItems.find((item) => Number(item.product_id) === Number(product.id));
+        if (existing) {
+            if (Number(existing.quantity) + amount > productStock(product)) {
+                toast('Jumlah total produk melebihi stok yang tersedia.', true);
+                return;
+            }
+            existing.quantity = Number(existing.quantity) + amount;
+        } else {
+            cashierProductItems.push({ product_id: Number(product.id), name: product.name, unit: productUnit(product), unit_price: Number(product.selling_price), quantity: amount });
+        }
+        wrapper.remove();
+        selectCashier(selectedReservation);
+        toast('Produk ditambahkan ke transaksi.');
+    };
 }
 
 function renderTreatments() {
@@ -1275,6 +1346,13 @@ document.querySelectorAll('.stock-tab').forEach((button) => {
 document.getElementById('discount')?.addEventListener('change', () => {
     if (selectedReservation) selectCashier(selectedReservation);
 });
+document.getElementById('add-extra')?.addEventListener('click', openCashierProductPicker);
+document.addEventListener('click', (event) => {
+    const button = event.target.closest('.remove-cashier-product');
+    if (!button) return;
+    cashierProductItems = cashierProductItems.filter((item) => Number(item.product_id) !== Number(button.dataset.id));
+    if (selectedReservation) selectCashier(selectedReservation);
+});
 
 document.getElementById('reservation-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1333,6 +1411,10 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
             body: JSON.stringify({
                 reservation_id: selectedReservation,
                 discount_percent: String(selectedDiscount()),
+                product_items: cashierProductItems.map((item) => ({
+                    product_id: Number(item.product_id),
+                    quantity: String(item.quantity),
+                })),
                 payments,
                 idempotency_key: paymentIdempotencyKey,
             }),
