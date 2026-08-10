@@ -340,16 +340,21 @@ function renderReservations() {
     ));
     const today = localDate();
     const section = document.getElementById('reservasi');
-    const filters = section?.querySelectorAll('.filters input,.filters select');
-    const selectedDate = filters?.[0]?.value || today;
-    const selectedEmployee = Number(filters?.[1]?.value || 0);
-    const selectedStatus = filters?.[2]?.value || '';
+    const selectedDate = document.getElementById('reservation-calendar-date')?.value || today;
+    const selectedEmployee = Number(document.getElementById('reservation-filter-employee')?.value || 0);
+    const selectedStatus = document.getElementById('reservation-filter-status')?.value || '';
+    const selected = new Date(`${selectedDate}T12:00:00`);
+    const weekStart = new Date(selected);
+    weekStart.setDate(selected.getDate() - ((selected.getDay() + 6) % 7));
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const weekStartKey = dateKey(weekStart);
+    const weekEndKey = dateKey(weekEnd);
 
     let rows = all.filter((reservation) => {
         const date = reservationDate(reservation);
-        if (reservationMode === 'today') return date === selectedDate;
-        if (reservationMode === 'upcoming') return date > today;
-        return date < today || ['completed', 'cancelled', 'no_show'].includes(reservationStatus(reservation));
+        return date >= weekStartKey && date <= weekEndKey;
     });
 
     if (selectedEmployee) {
@@ -361,7 +366,7 @@ function renderReservations() {
         rows = rows.filter((reservation) => reservationStatus(reservation) === selectedStatus);
     }
 
-    const todayRows = all.filter((reservation) => reservationDate(reservation) === today);
+    const todayRows = all.filter((reservation) => reservationDate(reservation) === selectedDate);
     const short = document.getElementById('queue-short');
     if (short) {
         short.innerHTML = todayRows.slice(0, 5).map((reservation) => {
@@ -376,58 +381,53 @@ function renderReservations() {
         }).join('') || '<p class="empty-state">Belum ada reservasi hari ini.</p>';
     }
 
-    const tabs = section?.querySelectorAll('.tabs button');
-    if (tabs?.[0]) tabs[0].innerHTML = `Hari ini <b>${todayRows.length}</b>`;
-
-    const table = document.getElementById('queue-table');
-    if (table) {
-        table.innerHTML = rows.map((reservation) => {
-            const status = reservationStatus(reservation);
-            const persistedStatus = reservation.status || 'scheduled';
-            const choices = [...new Set([persistedStatus, ...(headerStatusTransitions[persistedStatus] || [])])];
-            return `<div class="tr">
-                <span><b>${escapeHtml(reservation.queue_number || reservation.booking_code)}</b><small>${escapeHtml(reservationTime(reservation))}</small></span>
-                <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationPhone(reservation) || '-')}</small></span>
-                <span>${escapeHtml(reservationTreatmentSummary(reservation))}</span>
-                <span>${escapeHtml(reservationStaffSummary(reservation))}</span>
-                <span><select class="status-select" data-id="${Number(reservation.id)}" ${['completed', 'waiting_payment'].includes(status) ? 'disabled' : ''}>${choices.map((choice) => `<option value="${escapeHtml(choice)}" ${choice === status ? 'selected' : ''}>${escapeHtml(statusLabel(choice))}</option>`).join('')}</select></span>
-                <button class="link reservation-detail" data-id="${Number(reservation.id)}">Detail</button>
-            </div>`;
-        }).join('') || '<p class="empty-state">Tidak ada reservasi untuk filter ini.</p>';
+    const period = document.getElementById('calendar-period-label');
+    if (period) {
+        const dateFormat = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+        period.textContent = `${dateFormat.format(weekStart)} – ${dateFormat.format(weekEnd)}`;
     }
 
-    document.querySelectorAll('.status-select').forEach((select) => {
-        select.onchange = async () => {
-            const previous = select.dataset.previous || '';
-            let reason = null;
-            if (select.value === 'cancelled') {
-                reason = window.prompt('Tuliskan alasan pembatalan reservasi:')?.trim() || '';
-                if (!reason) {
-                    select.value = previous;
-                    toast('Alasan pembatalan wajib diisi.', true);
-                    return;
-                }
-            }
-            select.disabled = true;
-            try {
-                const result = await api(`/operasional/reservasi/${select.dataset.id}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: select.value, reason }),
-                });
-                toast(result.message);
-                await refresh();
-            } catch (error) {
-                if (previous) select.value = previous;
-                select.disabled = false;
-                toast(error.message, true);
-            }
-        };
-        select.dataset.previous = select.value;
-    });
+    const calendar = document.getElementById('reservation-calendar');
+    if (calendar) {
+        const dayFormat = new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short' });
+        const slots = Array.from({ length: 24 }, (_, index) => index);
+        const headers = Array.from({ length: 7 }, (_, index) => {
+            const day = new Date(weekStart);
+            day.setDate(weekStart.getDate() + index);
+            const active = dateKey(day) === today ? ' is-today' : '';
+            return `<div class="calendar-day-head${active}">${escapeHtml(dayFormat.format(day))}</div>`;
+        }).join('');
+        const timeColumn = slots.map((slot) => {
+            const hour = 9 + Math.floor(slot / 2);
+            return `<div class="calendar-hour">${slot % 2 === 0 ? `${String(hour).padStart(2, '0')}.00` : ''}</div>`;
+        }).join('');
+        const dayColumns = Array.from({ length: 7 }, () => `<div class="calendar-day-column">${slots.map(() => '<div class="calendar-slot"></div>').join('')}</div>`).join('');
+        const events = rows.map((reservation) => {
+            const date = reservationDate(reservation);
+            const day = Math.round((new Date(`${date}T12:00:00`) - weekStart) / 86400000);
+            const item = reservationItems(reservation)[0] || {};
+            const [hour = 9, minute = 0] = reservationTime(reservation).split(':').map(Number);
+            const row = Math.max(1, ((hour - 9) * 2) + (minute >= 30 ? 2 : 1));
+            const span = Math.max(2, Math.ceil(Number(item.duration_minutes || 60) / 30));
+            const status = reservationStatus(reservation);
+            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" style="grid-column:${day + 1};grid-row:${row}/span ${span}">
+                <time>${escapeHtml(reservationTime(reservation))}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em>${escapeHtml(statusLabel(status))}</em>
+            </button>`;
+        }).join('');
+        calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}</div>${dayColumns}<div class="calendar-events">${events}</div></div></div>`;
+    }
+
+    const queue = document.getElementById('calendar-today-queue');
+    const queueDate = document.getElementById('today-queue-date');
+    if (queueDate) queueDate.textContent = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
+    if (queue) queue.innerHTML = todayRows.map((reservation) => {
+        const status = reservationStatus(reservation);
+        return `<button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>`;
+    }).join('') || '<p class="empty-state">Belum ada reservasi pada tanggal ini.</p>';
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
         button.onclick = () => {
-            const reservation = rows.find((item) => Number(item.id) === Number(button.dataset.id));
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
             if (reservation) openReservationDetail(reservation);
         };
     });
@@ -1198,24 +1198,30 @@ function populateSelects() {
 
 function initReservationControls() {
     const section = document.getElementById('reservasi');
-    const filters = section?.querySelectorAll('.filters input,.filters select');
-    const tabs = section?.querySelectorAll('.tabs button');
-    if (filters?.[0]) {
-        filters[0].value = localDate();
-        filters.forEach((filter) => filter.addEventListener('change', () => {
-            reservationStatusGroup = null;
-            renderReservations();
-        }));
-    }
-    tabs?.forEach((tab, index) => {
-        tab.onclick = () => {
-            reservationMode = ['today', 'upcoming', 'history'][index];
-            reservationStatusGroup = null;
-            tabs.forEach((item) => item.classList.remove('active'));
-            tab.classList.add('active');
-            if (index === 0 && filters?.[0]) filters[0].value = localDate();
-            renderReservations();
-        };
+    const date = document.getElementById('reservation-calendar-date');
+    const employee = document.getElementById('reservation-filter-employee');
+    const status = document.getElementById('reservation-filter-status');
+    if (date) date.value = localDate();
+    [date, employee, status].filter(Boolean).forEach((filter) => filter.addEventListener('change', () => {
+        reservationStatusGroup = null;
+        renderReservations();
+    }));
+
+    const moveWeek = (direction) => {
+        if (!date?.value) return;
+        const selected = new Date(`${date.value}T12:00:00`);
+        selected.setDate(selected.getDate() + (direction * 7));
+        date.value = `${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, '0')}-${String(selected.getDate()).padStart(2, '0')}`;
+        reservationStatusGroup = null;
+        renderReservations();
+    };
+    document.getElementById('calendar-prev')?.addEventListener('click', () => moveWeek(-1));
+    document.getElementById('calendar-next')?.addEventListener('click', () => moveWeek(1));
+    document.getElementById('calendar-today')?.addEventListener('click', () => {
+        if (!date) return;
+        date.value = localDate();
+        reservationStatusGroup = null;
+        renderReservations();
     });
 }
 
