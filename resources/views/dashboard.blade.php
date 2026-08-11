@@ -35,7 +35,7 @@
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
         @cannot('employees.update') .employee-edit{display:none!important} @endcannot
         @cannot('treatments.update') .recipe-button{display:none!important} @endcannot
-        @cannot('products.update') .stock-edit{display:none!important} @endcannot
+        @cannot('products.update') .stock-edit,.product-price-edit{display:none!important} @endcannot
         @cannot('payroll.manage') .payroll-edit{display:none!important} @endcannot
     </style>
 </head>

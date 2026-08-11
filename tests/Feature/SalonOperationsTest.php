@@ -447,6 +447,26 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_update_product_selling_price(): void
+    {
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$product->id}/harga", ['selling_price' => 15000])
+            ->assertOk()
+            ->assertJsonPath('selling_price', 15000);
+
+        $this->assertDatabaseHas('products', [
+            'id' => $product->id,
+            'selling_price' => 15000,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'product.price_updated',
+            'subject_type' => 'product',
+            'subject_id' => $product->id,
+        ]);
+    }
+
     public function test_repeated_checkout_replays_existing_invoice_without_duplicate_side_effects(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');

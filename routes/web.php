@@ -25,6 +25,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/pegawai', [SalonController::class, 'storeEmployee'])->middleware('permission:employees.create')->name('employees.store');
         Route::patch('/pegawai/{id}', [SalonController::class, 'updateEmployee'])->middleware('permission:employees.update')->name('employees.update');
         Route::post('/produk', [SalonController::class, 'storeProduct'])->middleware('permission:products.create')->name('products.store');
+        Route::patch('/produk/{id}/harga', [SalonController::class, 'updateProductPrice'])->middleware('permission:products.update')->name('products.price');
         Route::patch('/produk/{id}/stok', [SalonController::class, 'adjustStock'])->middleware('permission:products.update')->name('products.stock');
         Route::post('/treatment', [SalonController::class, 'storeTreatment'])->middleware('permission:treatments.create')->name('treatments.store');
         Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');

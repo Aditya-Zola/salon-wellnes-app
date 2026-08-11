@@ -249,6 +249,36 @@ class SalonController extends Controller
         return response()->json(['message' => 'Produk berhasil ditambahkan.', 'id' => $id], 201);
     }
 
+    public function updateProductPrice(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'selling_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+        ]);
+
+        $price = (int) $data['selling_price'];
+        DB::transaction(function () use ($id, $price, $request): void {
+            $product = DB::table('products')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($product, 404, 'Produk tidak ditemukan.');
+
+            $before = (int) $product->selling_price;
+            DB::table('products')->where('id', $id)->update([
+                'selling_price' => $price,
+                'updated_at' => now(),
+            ]);
+
+            $this->logger->log(
+                $request,
+                'product.price_updated',
+                'product',
+                $id,
+                "Harga jual {$product->name} diperbarui",
+                ['before' => $before, 'after' => $price],
+            );
+        }, 3);
+
+        return response()->json(['message' => 'Harga jual berhasil diperbarui.', 'selling_price' => $price]);
+    }
+
     public function adjustStock(Request $request, int $id): JsonResponse
     {
         $aliases = ['masuk' => 'in', 'keluar' => 'out', 'opname' => 'adjustment'];

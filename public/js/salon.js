@@ -847,7 +847,7 @@ function selectCashier(id) {
     document.getElementById('discount').disabled = !reservation.is_member;
     document.getElementById('open-payment').disabled = false;
     document.getElementById('add-extra').disabled = !array(state.products).some((product) => (
-        Number(product.is_active ?? 1) === 1 && Number(product.selling_price || 0) > 0 && productStock(product) > 0
+        Number(product.is_active ?? 1) === 1 && productStock(product) > 0
     ));
     document.getElementById('subtotal').textContent = money(subtotal);
     document.getElementById('discount-value').textContent = `-${money(discountAmount)}`;
@@ -863,10 +863,11 @@ function openCashierProductPicker() {
     }
 
     const products = array(state.products).filter((product) => (
-        Number(product.is_active ?? 1) === 1 && Number(product.selling_price || 0) > 0 && productStock(product) > 0
+        Number(product.is_active ?? 1) === 1 && productStock(product) > 0
     ));
+    const sellableProducts = products.filter((product) => Number(product.selling_price || 0) > 0);
     if (!products.length) {
-        toast('Tidak ada produk aktif dengan stok dan harga jual yang tersedia.', true);
+        toast('Tidak ada produk aktif dengan stok yang tersedia.', true);
         return;
     }
 
@@ -877,10 +878,22 @@ function openCashierProductPicker() {
     const select = wrapper.querySelector('select[name="product_id"]');
     const quantity = wrapper.querySelector('input[name="quantity"]');
     const stockLabel = wrapper.querySelector('#product-picker-stock');
+    const submitButton = wrapper.querySelector('button.primary');
+    select.innerHTML = products.map((product) => {
+        const sellable = Number(product.selling_price || 0) > 0;
+        return `<option value="${Number(product.id)}" ${sellable ? '' : 'disabled'}>${escapeHtml(product.name)} · ${sellable ? money(product.selling_price) : 'Harga jual belum diatur'}</option>`;
+    }).join('');
+    submitButton.disabled = !sellableProducts.length;
     const syncStock = () => {
         const product = products.find((item) => Number(item.id) === Number(select.value));
         stockLabel.textContent = product ? `Stok tersedia: ${productStock(product)} ${productUnit(product)} · Harga jual: ${money(product.selling_price)}` : '';
         quantity.max = product ? productStock(product) : '';
+        if (product && Number(product.selling_price || 0) <= 0) {
+            stockLabel.textContent = `Stok tersedia: ${productStock(product)} ${productUnit(product)} · Harga jual belum diatur oleh admin.`;
+        }
+        if (!sellableProducts.length) {
+            stockLabel.textContent = 'Semua produk memiliki stok, tetapi harga jualnya belum diatur oleh admin.';
+        }
     };
     syncStock();
     select.onchange = syncStock;
@@ -889,6 +902,10 @@ function openCashierProductPicker() {
         event.preventDefault();
         const product = products.find((item) => Number(item.id) === Number(select.value));
         const amount = Number(quantity.value || 0);
+        if (!product || Number(product.selling_price || 0) <= 0) {
+            toast('Produk ini belum memiliki harga jual. Minta Admin untuk mengaturnya terlebih dahulu.', true);
+            return;
+        }
         if (!product || amount <= 0 || amount > productStock(product)) {
             toast('Jumlah produk melebihi stok yang tersedia.', true);
             return;
@@ -1101,13 +1118,14 @@ function renderStock() {
     if (count) count.textContent = products.length;
 
     if (box) {
-        box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
+        box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>HARGA JUAL</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
             const stock = productStock(product);
             const minimum = productMinimum(product);
             const unit = productUnit(product);
             return `<div class="tr">
                 <span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || '-')}</small></span>
                 <span><b>${stock} ${escapeHtml(unit)}</b></span><span>${minimum} ${escapeHtml(unit)}</span>
+                <span class="product-price"><b>${money(product.selling_price)}</b><button class="link product-price-edit" data-id="${Number(product.id)}">Ubah harga</button></span>
                 <span><div class="progress"><i style="width:${Math.min(100, stock / Math.max(1, minimum) * 50)}%"></i></div></span>
                 <em class="pill">${stock <= minimum ? 'Menipis' : 'Aman'}</em>
                 <button class="link stock-edit" data-id="${Number(product.id)}">Ubah stok</button>
@@ -1132,6 +1150,17 @@ function renderStock() {
             ['quantity', 'Jumlah', 'number'],
             ['source', 'Sumber / catatan', 'text'],
         ], (data) => api(`/operasional/produk/${button.dataset.id}/stok`, {
+            method: 'PATCH',
+            body: JSON.stringify(data),
+        }));
+    });
+
+    document.querySelectorAll('.product-price-edit').forEach((button) => {
+        const product = products.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (!product) return;
+        button.onclick = () => quickForm(`Ubah harga jual: ${product.name}`, [
+            ['selling_price', 'Harga jual (Rp)', 'number', null, Number(product.selling_price || 0)],
+        ], (data) => api(`/operasional/produk/${button.dataset.id}/harga`, {
             method: 'PATCH',
             body: JSON.stringify(data),
         }));
@@ -1913,3 +1942,7 @@ initReservationControls();
 initActivityControls();
 resetReservationForm();
 renderAll();
+
+// Ambil snapshot terbaru setelah halaman siap agar data operasional tidak
+// bergantung pada data awal yang mungkin sudah berubah saat halaman dimuat.
+refresh().catch((error) => toast(error.message || 'Data operasional gagal dimuat.', true));
