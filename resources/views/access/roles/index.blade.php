@@ -5,31 +5,17 @@
 @section('subtitle', 'Buat peran dan tentukan menu serta tindakan yang dapat digunakan.')
 
 @section('header-action')
-    <a class="access-button secondary" href="{{ route('dashboard') }}">Kembali ke halaman utama</a>
+    <div style="display: flex; gap: 9px; margin-left: auto;">
+        @can('access.roles.manage')
+            <button type="button" class="access-button primary" id="open-role-modal">＋ Input peran baru</button>
+        @endcan
+        <a class="access-button secondary" href="{{ route('dashboard') }}">Kembali ke halaman utama</a>
+    </div>
 @endsection
 
 @section('content')
-    <div class="access-grid access-grid-sidebar">
-        @can('access.roles.manage')
-            <section class="access-card form-card">
-                <div class="access-card-head">
-                    <div>
-                        <h2>Tambah peran</h2>
-                        <p>Contoh: Terapis, Supervisor, atau Finance.</p>
-                    </div>
-                </div>
-                <form method="POST" action="{{ route('access.roles.store') }}" class="access-form">
-                    @csrf
-                    <label>
-                        Nama peran
-                        <input name="display_name" value="{{ old('display_name') }}" placeholder="Contoh: Terapis" required maxlength="80">
-                    </label>
-                    <button class="access-button primary" type="submit">Buat peran</button>
-                </form>
-            </section>
-        @endcan
-
-        <section class="access-card {{ auth()->user()->cannot('access.roles.manage') ? 'wide-card' : '' }}">
+    <div class="access-grid">
+        <section class="access-card">
             <div class="access-card-head">
                 <div>
                     <h2>Daftar peran</h2>
@@ -77,4 +63,39 @@
             </div>
         </section>
     </div>
+
+    @can('access.roles.manage')
+        <div class="modal {{ $errors->any() ? 'open' : '' }}" id="role-modal" role="dialog" aria-modal="true" aria-labelledby="role-modal-title">
+            <div class="modal-box small">
+                <div class="modal-head">
+                    <div><h2 id="role-modal-title">Input peran baru</h2><p>Contoh: Terapis, Supervisor, atau Finance.</p></div>
+                    <button type="button" class="role-modal-close" aria-label="Tutup">×</button>
+                </div>
+                <form method="POST" action="{{ route('access.roles.store') }}" class="access-form">
+                    @csrf
+                    <label>
+                        Nama peran
+                        <input name="display_name" value="{{ old('display_name') }}" placeholder="Contoh: Terapis" required maxlength="80" autofocus>
+                    </label>
+                    <footer>
+                        <button type="button" class="access-button secondary role-modal-close">Batal</button>
+                        <button class="access-button primary" type="submit">Simpan peran</button>
+                    </footer>
+                </form>
+            </div>
+        </div>
+    @endcan
 @endsection
+
+@push('scripts')
+    <script>
+        const roleModal = document.getElementById('role-modal');
+        const closeRoleModal = () => roleModal?.classList.remove('open');
+
+        document.getElementById('open-role-modal')?.addEventListener('click', () => roleModal?.classList.add('open'));
+        document.querySelectorAll('.role-modal-close').forEach((button) => button.addEventListener('click', closeRoleModal));
+        roleModal?.addEventListener('click', (event) => {
+            if (event.target === roleModal) closeRoleModal();
+        });
+    </script>
+@endpush

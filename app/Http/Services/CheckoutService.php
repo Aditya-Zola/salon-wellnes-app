@@ -41,12 +41,9 @@ class CheckoutService
             $billableItems = $items->where('work_status', '!=', 'cancelled')->values();
 
             abort_if($billableItems->isEmpty(), 422, 'Reservasi tidak memiliki item yang dapat ditagihkan.');
-
-            if ($billableItems->contains(fn (object $item): bool => $item->work_status !== 'finished')) {
-                throw ValidationException::withMessages([
-                    'reservation_id' => ['Semua item layanan harus berstatus finished sebelum pembayaran.'],
-                ]);
-            }
+            $allBillableItemsFinished = $billableItems->every(
+                fn (object $item): bool => $item->work_status === 'finished',
+            );
 
             $customer = DB::table('customers')->where('id', $reservation->customer_id)->lockForUpdate()->first();
             abort_unless($customer, 422, 'Data pelanggan reservasi tidak ditemukan.');
@@ -176,12 +173,16 @@ class CheckoutService
                 ]);
             }
 
-            DB::table('reservations')->where('id', $reservationId)->update([
-                'status' => 'completed',
-                'updated_by' => $request->user()?->id,
-                'updated_at' => $now,
-            ]);
-            DB::table('customers')->where('id', $customer->id)->increment('visit_count');
+            // Pembayaran dapat dilakukan saat pelanggan datang, sebelum treatment
+            // dikerjakan. Status kunjungan hanya ditutup ketika seluruh item selesai.
+            if ($allBillableItemsFinished) {
+                DB::table('reservations')->where('id', $reservationId)->update([
+                    'status' => 'completed',
+                    'updated_by' => $request->user()?->id,
+                    'updated_at' => $now,
+                ]);
+                DB::table('customers')->where('id', $customer->id)->increment('visit_count');
+            }
 
             $this->logger->log(
                 $request,

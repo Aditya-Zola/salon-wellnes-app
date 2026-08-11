@@ -27,12 +27,12 @@ class AccessControlTest extends TestCase
 
         $this->actingAs($user)->get(route('access.roles.index'))
             ->assertOk()
-            ->assertSee('Tambah peran')
+            ->assertSee('Input peran baru')
             ->assertSee('Pengguna');
 
         $this->actingAs($user)->get(route('access.users.index'))
             ->assertOk()
-            ->assertSee('Tambah pengguna');
+            ->assertSee('Input pengguna baru');
     }
 
     public function test_marketing_cannot_open_access_control_pages(): void
@@ -90,6 +90,40 @@ class AccessControlTest extends TestCase
         $created = User::query()->where('email', 'marketing.baru@selesa.test')->firstOrFail();
         $this->assertTrue($created->hasRole('marketing'));
         $this->assertCount(1, $created->roles);
+    }
+
+    public function test_super_admin_can_grant_a_personal_action_permission_to_a_user(): void
+    {
+        $actor = User::factory()->create();
+        $actor->syncRoles('super-admin');
+
+        $role = Role::create([
+            'name' => 'viewer-produk',
+            'display_name' => 'Viewer Produk',
+            'guard_name' => 'web',
+        ]);
+        $role->syncPermissions(['dashboard.view', 'products.view']);
+
+        $user = User::factory()->create();
+        $user->syncRoles($role);
+        $productCreate = Permission::findByName('products.create');
+
+        $this->actingAs($actor)->get(route('access.users.edit', $user))
+            ->assertOk()
+            ->assertSee('Akses tambahan per pengguna')
+            ->assertSee('Tambah produk');
+
+        $this->actingAs($actor)->put(route('access.users.update', $user), [
+            'name' => $user->name,
+            'email' => $user->email,
+            'role_id' => $role->id,
+            'permissions' => [$productCreate->id],
+        ])->assertRedirect(route('access.users.index'));
+
+        $user->refresh();
+        $this->assertTrue($user->hasDirectPermission('products.create'));
+        $this->assertTrue($user->can('products.create'));
+        $this->assertFalse($user->getPermissionsViaRoles()->contains('name', 'products.create'));
     }
 
     public function test_sidebar_only_shows_modules_allowed_for_the_role(): void

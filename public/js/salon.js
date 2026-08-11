@@ -21,7 +21,9 @@ const localDate = () => {
 
 const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
 const capabilities = window.SALON_CAPABILITIES || {};
+const canCreateReservations = Boolean(capabilities.create_reservation);
 const headerStatusLabels = {
+    paid: 'Lunas',
     scheduled: 'Terjadwal',
     arrived: 'Sudah datang',
     in_service: 'Sedang dilayani',
@@ -66,6 +68,9 @@ let reservationView = 'queue';
 let pendingReservationPayload = null;
 let paymentIdempotencyKey = null;
 let toastTimer;
+let reservationCalendarTooltipTimer;
+let reservationCalendarTooltipListenersBound = false;
+let reservationCalendarTooltipAnchor = null;
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
@@ -239,6 +244,59 @@ function itemStartTime(item, reservation) {
     return String(value).slice(11, 16);
 }
 
+function itemEndTime(item, reservation) {
+    const value = item?.scheduled_end_at || item?.end_at || item?.end_time;
+    if (!value) {
+        const [hour = 0, minute = 0] = itemStartTime(item, reservation).split(':').map(Number);
+        const total = (hour * 60) + minute + Math.max(0, Number(item?.duration_minutes || 0));
+
+        return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    }
+    if (/^\d{2}:\d{2}/.test(value)) return value.slice(0, 5);
+
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+        return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+    }
+
+    return String(value).slice(11, 16);
+}
+
+function clockMinutes(value) {
+    const match = String(value || '').match(/(\d{1,2})[:.](\d{2})/);
+    if (!match) return null;
+
+    return (Number(match[1]) * 60) + Number(match[2]);
+}
+
+function reservationItemTiming(item, reservation) {
+    const startLabel = itemStartTime(item, reservation) || '09:00';
+    const startMinutes = clockMinutes(startLabel) ?? (9 * 60);
+    const fallbackDuration = Math.max(15, Number(item?.duration_minutes || 30));
+    let endLabel = itemEndTime(item, reservation);
+    let endMinutes = clockMinutes(endLabel);
+
+    if (endMinutes === null || endMinutes <= startMinutes) {
+        endMinutes = startMinutes + fallbackDuration;
+        endLabel = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+    }
+
+    return {
+        startLabel,
+        endLabel,
+        startMinutes,
+        endMinutes,
+        durationMinutes: Math.max(15, endMinutes - startMinutes),
+    };
+}
+
+function reservationItemDate(item, reservation) {
+    const value = item?.scheduled_start_at || item?.start_at || reservationDate(reservation);
+    const match = String(value || '').match(/^\d{4}-\d{2}-\d{2}/);
+
+    return match?.[0] || reservationDate(reservation);
+}
+
 function reservationTime(reservation) {
     const first = reservationItems(reservation)[0];
     return itemStartTime(first, reservation) || String(reservation?.reservation_time || '').slice(0, 5);
@@ -274,9 +332,118 @@ function reservationSubtotal(reservation) {
         .reduce((total, item) => total + itemPrice(item), 0);
 }
 
-function allItemsFinished(reservation) {
-    const items = reservationItems(reservation).filter((item) => item.work_status !== 'cancelled');
-    return items.length > 0 && items.every((item) => item.work_status === 'finished');
+function ensureReservationCalendarTooltip() {
+    let tooltip = document.getElementById('reservation-calendar-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'reservation-calendar-tooltip';
+        tooltip.className = 'reservation-calendar-tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.hidden = true;
+        document.body.appendChild(tooltip);
+    }
+
+    if (!reservationCalendarTooltipListenersBound) {
+        reservationCalendarTooltipListenersBound = true;
+        window.addEventListener('resize', hideReservationCalendarTooltip);
+        window.addEventListener('scroll', hideReservationCalendarTooltip, true);
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') hideReservationCalendarTooltip();
+        });
+    }
+
+    return tooltip;
+}
+
+function hideReservationCalendarTooltip() {
+    clearTimeout(reservationCalendarTooltipTimer);
+    const tooltip = document.getElementById('reservation-calendar-tooltip');
+    if (tooltip) tooltip.hidden = true;
+    reservationCalendarTooltipAnchor?.removeAttribute('aria-describedby');
+    reservationCalendarTooltipAnchor = null;
+}
+
+function positionReservationCalendarTooltip(anchor, tooltip) {
+    const anchorRect = anchor.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const gap = 10;
+    const edge = 12;
+    let left = anchorRect.right + gap;
+
+    if (left + tooltipRect.width > window.innerWidth - edge) {
+        left = anchorRect.left - tooltipRect.width - gap;
+    }
+    left = Math.max(edge, Math.min(left, window.innerWidth - tooltipRect.width - edge));
+
+    let top = anchorRect.top + ((anchorRect.height - tooltipRect.height) / 2);
+    top = Math.max(edge, Math.min(top, window.innerHeight - tooltipRect.height - edge));
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showReservationCalendarTooltip(anchor, reservation, item) {
+    clearTimeout(reservationCalendarTooltipTimer);
+    const tooltip = ensureReservationCalendarTooltip();
+    const timing = reservationItemTiming(item, reservation);
+    const serviceStatus = reservationStatus(reservation);
+    const status = reservationCalendarStatus(reservation);
+    const paymentLabel = isAlreadyPaid(reservation) ? 'Lunas' : 'Belum dibayar';
+    const staff = itemStaff(item).map(employeeName).join(', ') || '-';
+    const workStatus = workStatusLabels[item?.work_status] || item?.work_status || '-';
+    const scheduleDate = reservationItemDate(item, reservation);
+    const date = new Date(`${scheduleDate}T12:00:00`);
+    const dateLabel = Number.isNaN(date.getTime())
+        ? scheduleDate
+        : new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short' }).format(date);
+
+    tooltip.innerHTML = `<div class="reservation-calendar-tooltip-head">
+        <span>${escapeHtml(reservation.queue_number || reservation.booking_code || 'Reservasi')}</span>
+        <em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em>
+    </div>
+    <strong>${escapeHtml(reservationCustomerName(reservation))}</strong>
+    <p class="reservation-calendar-tooltip-time">${escapeHtml(dateLabel)} · ${escapeHtml(timing.startLabel)}–${escapeHtml(timing.endLabel)}</p>
+    <dl>
+        <div><dt>Treatment</dt><dd>${escapeHtml(itemTreatmentName(item))}</dd></div>
+        <div><dt>Therapist</dt><dd>${escapeHtml(staff)}</dd></div>
+        <div><dt>Status pekerjaan</dt><dd>${escapeHtml(workStatus)}</dd></div>
+        <div><dt>Status layanan</dt><dd>${escapeHtml(statusLabel(serviceStatus))}</dd></div>
+        <div><dt>Pembayaran</dt><dd>${escapeHtml(paymentLabel)}</dd></div>
+    </dl>
+    <small>Klik untuk membuka detail lengkap</small>`;
+    tooltip.hidden = false;
+    reservationCalendarTooltipAnchor?.removeAttribute('aria-describedby');
+    reservationCalendarTooltipAnchor = anchor;
+    anchor.setAttribute('aria-describedby', tooltip.id);
+    positionReservationCalendarTooltip(anchor, tooltip);
+}
+
+function bindReservationCalendarTooltips(calendar, reservations) {
+    calendar.querySelectorAll('.calendar-event').forEach((button) => {
+        const reservation = reservations.find((item) => Number(item.id) === Number(button.dataset.id));
+        const item = reservationItems(reservation)[Number(button.dataset.itemIndex)] || reservationItems(reservation)[0];
+        if (!reservation || !item) return;
+
+        button.addEventListener('mouseenter', () => {
+            clearTimeout(reservationCalendarTooltipTimer);
+            reservationCalendarTooltipTimer = setTimeout(() => {
+                showReservationCalendarTooltip(button, reservation, item);
+            }, 100);
+        });
+        button.addEventListener('mouseleave', hideReservationCalendarTooltip);
+        button.addEventListener('focus', () => showReservationCalendarTooltip(button, reservation, item));
+        button.addEventListener('blur', hideReservationCalendarTooltip);
+    });
+}
+
+function bindReservationCalendarCreateSlots(calendar) {
+    calendar.querySelectorAll('.calendar-create-slot').forEach((button) => {
+        button.addEventListener('click', () => {
+            openReservationForm({
+                date: button.dataset.date,
+                startTime: button.dataset.time,
+            });
+        });
+    });
 }
 
 function isAlreadyPaid(reservation) {
@@ -286,6 +453,12 @@ function isAlreadyPaid(reservation) {
         || reservation?.transaction?.id
         || reservation?.transaction_status === 'paid',
     );
+}
+
+// Pembayaran dan pengerjaan treatment adalah dua hal yang berbeda. Kalender
+// menampilkan keduanya tanpa mengubah status layanan saat kasir menutup tagihan.
+function reservationCalendarStatus(reservation) {
+    return isAlreadyPaid(reservation) ? 'paid' : reservationStatus(reservation);
 }
 
 function statusClass(status) {
@@ -335,6 +508,7 @@ function openDashboardMetric(card) {
 }
 
 function renderReservations() {
+    hideReservationCalendarTooltip();
     const all = [...array(state.reservations)].sort((left, right) => (
         reservationDate(left).localeCompare(reservationDate(right))
         || reservationTime(left).localeCompare(reservationTime(right))
@@ -391,43 +565,62 @@ function renderReservations() {
 
     const calendar = document.getElementById('reservation-calendar');
     if (calendar) {
+        const openingMinutes = 9 * 60;
+        const closingMinutes = 22 * 60;
+        const visibleMinutes = closingMinutes - openingMinutes;
         const dayFormat = new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short' });
-        const slots = Array.from({ length: 24 }, (_, index) => index);
+        const slots = Array.from({ length: visibleMinutes / 30 }, (_, index) => index);
         const headers = Array.from({ length: 7 }, (_, index) => {
             const day = new Date(weekStart);
             day.setDate(weekStart.getDate() + index);
             const active = dateKey(day) === today ? ' is-today' : '';
-            return `<div class="calendar-day-head${active}">${escapeHtml(dayFormat.format(day))}</div>`;
+            const selectedDay = dateKey(day) === selectedDate ? ' is-selected' : '';
+            return `<div class="calendar-day-head${active}${selectedDay}">${escapeHtml(dayFormat.format(day))}</div>`;
         }).join('');
         const timeColumn = slots.map((slot) => {
             const hour = 9 + Math.floor(slot / 2);
             return `<div class="calendar-hour">${slot % 2 === 0 ? `${String(hour).padStart(2, '0')}.00` : ''}</div>`;
         }).join('');
-        const dayColumns = Array.from({ length: 7 }, () => `<div class="calendar-day-column">${slots.map(() => '<div class="calendar-slot"></div>').join('')}</div>`).join('');
-        const calendarReservations = rows.map((reservation) => {
-            const date = reservationDate(reservation);
-            const day = Math.round((new Date(`${date}T12:00:00`) - weekStart) / 86400000);
-            const item = reservationItems(reservation)[0] || {};
-            const [hour = 9, minute = 0] = reservationTime(reservation).split(':').map(Number);
-            const row = Math.max(1, ((hour - 9) * 2) + (minute >= 30 ? 2 : 1));
-            const span = Math.max(2, Math.min(25 - row, Math.ceil(Number(item.duration_minutes || 60) / 30)));
+        const dayColumns = Array.from({ length: 7 }, () => `<div class="calendar-day-column">${slots.map((slot) => `<div class="calendar-slot ${slot % 2 === 0 ? 'is-half-hour' : 'is-hour'}"></div>`).join('')}</div>`).join('');
+        const createSlots = canCreateReservations ? Array.from({ length: 7 }, (_, dayIndex) => slots.map((slot) => {
+            const day = new Date(weekStart);
+            day.setDate(weekStart.getDate() + dayIndex);
+            const minutes = openingMinutes + (slot * 30);
+            const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+            const label = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long' }).format(day);
+            return `<button type="button" class="calendar-create-slot" data-date="${dateKey(day)}" data-time="${time}" aria-label="Buat reservasi ${escapeHtml(label)} pukul ${time}" style="grid-column:${dayIndex + 1};grid-row:${slot + 1}"></button>`;
+        }).join('')).join('') : '';
+        const calendarReservations = rows.flatMap((reservation) => reservationItems(reservation).map((item, itemIndex) => {
+            if (selectedEmployee) {
+                const assigned = itemStaff(item).some((staff) => Number(
+                    staff.employee_id ?? staff.employee?.id ?? staff.id,
+                ) === selectedEmployee);
+                if (!assigned) return null;
+            }
 
-            return { reservation, day, row, span, end: row + span };
-        });
+            const date = reservationItemDate(item, reservation);
+            const day = Math.round((new Date(`${date}T12:00:00`) - weekStart) / 86400000);
+            const timing = reservationItemTiming(item, reservation);
+            const start = Math.max(openingMinutes, timing.startMinutes);
+            const end = Math.min(closingMinutes, timing.endMinutes);
+            if (day < 0 || day > 6 || end <= openingMinutes || start >= closingMinutes || end <= start) return null;
+
+            return { reservation, item, itemIndex, timing, day, start, end };
+        })).filter(Boolean);
 
         // Reservasi yang waktunya beririsan ditempatkan pada jalur horizontal berbeda.
         const positionedReservations = [];
         Array.from({ length: 7 }, (_, day) => day).forEach((day) => {
             const dayReservations = calendarReservations
                 .filter((entry) => entry.day === day)
-                .sort((left, right) => left.row - right.row || right.span - left.span || Number(left.reservation.id) - Number(right.reservation.id));
+                .sort((left, right) => left.start - right.start || right.end - left.end || Number(left.reservation.id) - Number(right.reservation.id));
             let group = [];
             let groupEnd = 0;
             const positionGroup = () => {
                 if (!group.length) return;
                 const laneEnds = [];
                 const positionedGroup = group.map((entry) => {
-                    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= entry.row);
+                    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= entry.start);
                     if (lane === -1) {
                         lane = laneEnds.length;
                         laneEnds.push(entry.end);
@@ -442,34 +635,46 @@ function renderReservations() {
             };
 
             dayReservations.forEach((entry) => {
-                if (group.length && entry.row >= groupEnd) positionGroup();
+                if (group.length && entry.start >= groupEnd) positionGroup();
                 group.push(entry);
                 groupEnd = Math.max(groupEnd, entry.end);
             });
             positionGroup();
         });
 
-        const events = positionedReservations.map(({ reservation, day, row, span, lane, lanes }) => {
-            const status = reservationStatus(reservation);
-            const width = 100 / lanes;
-            const left = lane * width;
-            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" style="grid-column:${day + 1};grid-row:${row}/span ${span};left:${left}%;width:calc(${width}% - 6px);margin:3px 0">
-                <time>${escapeHtml(reservationTime(reservation))}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em>${escapeHtml(statusLabel(status))}</em>
+        const events = positionedReservations.map(({ reservation, item, itemIndex, timing, day, start, end, lane, lanes }) => {
+            const serviceStatus = reservationStatus(reservation);
+            const status = reservationCalendarStatus(reservation);
+            const paymentLabel = isAlreadyPaid(reservation) ? 'Lunas' : 'Belum dibayar';
+            const dayWidth = 100 / 7;
+            const width = dayWidth / lanes;
+            const left = (day * dayWidth) + (lane * width);
+            const top = ((start - openingMinutes) / visibleMinutes) * 100;
+            const height = ((end - start) / visibleMinutes) * 100;
+            const compact = (end - start) <= 30 || lanes > 1 ? ' is-compact' : '';
+            const staff = itemStaff(item).map(employeeName).join(', ') || '-';
+            const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staff}, pembayaran ${paymentLabel}, layanan ${statusLabel(serviceStatus)}`;
+            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail${compact}" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="top:calc(${top}% + 1px);height:calc(${height}% - 2px);left:calc(${left}% + 2px);width:calc(${width}% - 4px)">
+                <span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span>
+                <small>${escapeHtml(itemTreatmentName(item))}</small>
             </button>`;
         }).join('');
-        calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}</div>${dayColumns}<div class="calendar-events">${events}</div></div></div>`;
+        calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner" aria-hidden="true"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}<span class="calendar-close-time">22.00</span></div>${dayColumns}<div class="calendar-events"><div class="calendar-empty-slots">${createSlots}</div>${events}</div></div></div>`;
+        bindReservationCalendarTooltips(calendar, all);
+        bindReservationCalendarCreateSlots(calendar);
     }
 
     const queue = document.getElementById('reservation-queue-list');
     const queueDate = document.getElementById('today-queue-date');
     if (queueDate) queueDate.textContent = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
     if (queue) queue.innerHTML = todayRows.map((reservation) => {
-        const status = reservationStatus(reservation);
+        const status = reservationCalendarStatus(reservation);
         return `<button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>`;
     }).join('') || '<p class="empty-state">Belum ada reservasi pada tanggal ini.</p>';
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
         button.onclick = () => {
+            hideReservationCalendarTooltip();
             const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
             if (reservation) openReservationDetail(reservation);
         };
@@ -572,8 +777,7 @@ function selectedTotal() {
 
 function renderCashier() {
     const rows = array(state.reservations).filter((reservation) => (
-        allItemsFinished(reservation)
-        && !isAlreadyPaid(reservation)
+        !isAlreadyPaid(reservation)
         && reservationStatus(reservation) !== 'cancelled'
     ));
     const box = document.getElementById('cashier-queue');
@@ -583,7 +787,7 @@ function renderCashier() {
         <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
         <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
         <i class="material-symbols-rounded row-action">chevron_right</i>
-    </button>`).join('') || '<p class="empty-state">Belum ada antrean yang seluruh treatment-nya selesai.</p>';
+    </button>`).join('') || '<p class="empty-state">Belum ada reservasi aktif yang menunggu pembayaran.</p>';
 
     document.querySelectorAll('.cashier-item').forEach((button) => {
         button.onclick = () => selectCashier(Number(button.dataset.id));
@@ -641,7 +845,7 @@ function selectCashier(id) {
     </div>`).join('');
     document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
     document.getElementById('discount').disabled = !reservation.is_member;
-    document.getElementById('open-payment').disabled = !allItemsFinished(reservation);
+    document.getElementById('open-payment').disabled = false;
     document.getElementById('add-extra').disabled = !array(state.products).some((product) => (
         Number(product.is_active ?? 1) === 1 && Number(product.selling_price || 0) > 0 && productStock(product) > 0
     ));
@@ -712,25 +916,112 @@ function renderTreatments() {
     if (count) count.textContent = treatments.length;
     if (!box) return;
 
-    box.innerHTML = treatments.map((treatment) => `<article class="treatment-card">
+    box.innerHTML = treatments.map((treatment) => {
+        const recipeCount = array(treatment.recipes).length;
+        return `<article class="treatment-card">
         <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
         <h3>${escapeHtml(treatment.name)}</h3>
         <p><span><i class="material-symbols-rounded">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-rounded">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-        <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><button class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></div>
-    </article>`).join('') || '<p class="empty-state">Belum ada treatment.</p>';
+        <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions">${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
+    </article>`;
+    }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
 
     document.querySelectorAll('.recipe-button').forEach((button) => {
-        button.onclick = () => quickForm('Atur resep produk', [
-            ['product_id', 'Produk', 'select', array(state.products).map((product) => `${product.id}|${product.name}`)],
-            ['quantity', 'Jumlah pemakaian', 'number'],
-        ], (data) => {
-            data.product_id = data.product_id.split('|')[0];
-            return api(`/operasional/treatment/${button.dataset.id}/resep`, {
-                method: 'PUT',
-                body: JSON.stringify(data),
-            });
+        const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
+        button.onclick = () => openRecipeChecklist(treatment);
+    });
+    document.querySelectorAll('.recipe-info-button').forEach((button) => {
+        const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
+        button.onclick = () => openRecipeInfo(treatment);
+    });
+}
+
+function openRecipeInfo(treatment) {
+    const recipes = array(treatment?.recipes);
+    if (!treatment || !recipes.length) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box recipe-info-modal">
+        <div class="modal-head"><div><h2>Resep produk</h2><p>${escapeHtml(treatment.name)}</p></div><button type="button" class="quick-close" aria-label="Tutup">×</button></div>
+        <ul class="recipe-summary">${recipes.map((recipe) => `<li><span>${escapeHtml(recipe.product_name || recipe.product?.name || 'Produk')}</span><b>${escapeHtml(Number(recipe.quantity))} ${escapeHtml(recipe.unit || recipe.product?.unit || '')}</b></li>`).join('')}</ul>
+        <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+    </div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => {
+        button.onclick = () => wrapper.remove();
+    });
+}
+
+function openRecipeChecklist(treatment) {
+    if (!treatment) return;
+
+    const products = array(state.products).filter((product) => Number(product.is_active ?? 1) === 1);
+    if (!products.length) {
+        toast('Tambahkan produk aktif terlebih dahulu sebelum mengatur resep.', true);
+        return;
+    }
+
+    const recipes = new Map(array(treatment.recipes).map((recipe) => [Number(recipe.product_id), recipe]));
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box recipe-modal">
+        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close">×</button></div>
+        <form>
+            <div class="recipe-checklist">${products.map((product) => {
+                const recipe = recipes.get(Number(product.id));
+                const checked = Boolean(recipe);
+                const quantity = recipe ? String(Number(recipe.quantity)) : '';
+                return `<label class="recipe-product${checked ? ' selected' : ''}">
+                    <input class="recipe-product-toggle" type="checkbox" data-id="${Number(product.id)}" ${checked ? 'checked' : ''}>
+                    <span class="recipe-product-info"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || 'Produk')} · stok ${escapeHtml(productStock(product))} ${escapeHtml(productUnit(product))}</small></span>
+                    <span class="recipe-product-quantity"><input class="recipe-product-quantity-input" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Jumlah" value="${escapeHtml(quantity)}" ${checked ? 'required' : 'disabled'}><small>${escapeHtml(productUnit(product))}</small></span>
+                </label>`;
+            }).join('')}</div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" type="submit">Simpan resep</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    wrapper.querySelectorAll('.quick-close').forEach((button) => {
+        button.onclick = () => wrapper.remove();
+    });
+    wrapper.querySelectorAll('.recipe-product-toggle').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            const row = checkbox.closest('.recipe-product');
+            const quantity = row?.querySelector('.recipe-product-quantity-input');
+            row?.classList.toggle('selected', checkbox.checked);
+            if (!quantity) return;
+            quantity.disabled = !checkbox.checked;
+            quantity.required = checkbox.checked;
+            if (checkbox.checked) quantity.focus();
         });
     });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        const items = [...wrapper.querySelectorAll('.recipe-product')]
+            .filter((row) => row.querySelector('.recipe-product-toggle').checked)
+            .map((row) => ({
+                product_id: Number(row.querySelector('.recipe-product-toggle').dataset.id),
+                quantity: row.querySelector('.recipe-product-quantity-input').value,
+            }));
+        const submit = event.currentTarget.querySelector('button[type="submit"]');
+
+        if (!items.length && recipes.size && !window.confirm('Simpan tanpa produk? Resep treatment ini akan dikosongkan.')) return;
+        submit.disabled = true;
+        try {
+            const result = await api(`/operasional/treatment/${treatment.id}/resep`, {
+                method: 'PUT',
+                body: JSON.stringify({ items }),
+            });
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            submit.disabled = false;
+            toast(error.message, true);
+        }
+    };
 }
 
 function renderEmployees() {
@@ -910,11 +1201,35 @@ function renderPayroll() {
 function renderActivity() {
     const box = document.getElementById('activity-list');
     if (!box) return;
-    box.innerHTML = array(state.activities).map((activity) => `<div class="activity">
+    const activities = array(state.activities);
+    const dateFilter = document.getElementById('activity-filter-date');
+    const userFilter = document.getElementById('activity-filter-user');
+    const actionFilter = document.getElementById('activity-filter-action');
+    const users = [...new Set(activities.map((activity) => activity.user_name || 'Sistem'))].sort((a, b) => a.localeCompare(b, 'id'));
+    const actions = [...new Set(activities.map((activity) => activity.action).filter(Boolean))].sort();
+
+    if (userFilter) {
+        const selected = userFilter.value;
+        userFilter.innerHTML = `<option value="">Semua pengguna</option>${users.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+        userFilter.value = users.includes(selected) ? selected : '';
+    }
+    if (actionFilter) {
+        const selected = actionFilter.value;
+        actionFilter.innerHTML = `<option value="">Semua jenis aktivitas</option>${actions.map((action) => `<option value="${escapeHtml(action)}">${escapeHtml(action.replaceAll('.', ' · '))}</option>`).join('')}`;
+        actionFilter.value = actions.includes(selected) ? selected : '';
+    }
+
+    const rows = activities.filter((activity) => (
+        (!dateFilter?.value || String(activity.created_at || '').slice(0, 10) === dateFilter.value)
+        && (!userFilter?.value || (activity.user_name || 'Sistem') === userFilter.value)
+        && (!actionFilter?.value || activity.action === actionFilter.value)
+    ));
+
+    box.innerHTML = rows.map((activity) => `<div class="activity">
         <time>${new Date(activity.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
         <i class="material-symbols-rounded">work_history</i>
         <span><b>${escapeHtml(activity.description)}</b><p>${escapeHtml(activity.action)}</p><small>${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small></span>
-    </div>`).join('') || '<p class="empty-state">Belum ada aktivitas.</p>';
+    </div>`).join('') || '<p class="empty-state">Tidak ada aktivitas yang sesuai filter.</p>';
 }
 
 function compactMoney(value) {
@@ -1042,7 +1357,7 @@ function addStaffRow(container, role = 'primary') {
 
 function reservationTimeOptions(selected = '09:00') {
     selected = String(selected).slice(0, 5);
-    return Array.from({ length: 23 }, (_, index) => {
+    return Array.from({ length: 26 }, (_, index) => {
         const totalMinutes = (9 * 60) + (index * 30);
         const hour = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
         const minute = String(totalMinutes % 60).padStart(2, '0');
@@ -1101,6 +1416,20 @@ function resetReservationForm() {
     addReservationItem();
     hideConflictPanel();
     pendingReservationPayload = null;
+}
+
+function openReservationForm(values = {}) {
+    hideReservationCalendarTooltip();
+    resetReservationForm();
+
+    const date = document.getElementById('reservation-date');
+    if (date && values.date) date.value = values.date;
+
+    const startTime = document.querySelector('#reservation-items .item-time');
+    if (startTime && values.startTime) startTime.value = values.startTime;
+
+    modal('reservation-modal');
+    requestAnimationFrame(() => document.querySelector('#reservation-form [name="name"]')?.focus());
 }
 
 function collectReservationPayload(form) {
@@ -1367,11 +1696,23 @@ function initReservationControls() {
     });
 }
 
+function initActivityControls() {
+    ['activity-filter-date', 'activity-filter-user', 'activity-filter-action'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', renderActivity);
+    });
+}
+
 document.querySelectorAll('#navigation [data-page]').forEach((button) => {
     button.onclick = () => openPage(button.dataset.page);
 });
 document.querySelectorAll('.go-reservation').forEach((button) => {
     button.onclick = () => openPage('reservasi');
+});
+document.querySelectorAll('.go-stock').forEach((button) => {
+    button.onclick = () => {
+        openPage('stok');
+        document.querySelector('.stock-tab[data-stock="list"]')?.click();
+    };
 });
 if (location.hash) openPage(location.hash.slice(1));
 
@@ -1387,8 +1728,7 @@ document.querySelectorAll('.dashboard-metric').forEach((card) => {
 
 document.querySelectorAll('.open-reservation').forEach((button) => {
     button.onclick = () => {
-        resetReservationForm();
-        modal('reservation-modal');
+        openReservationForm();
     };
 });
 document.getElementById('add-reservation-item')?.addEventListener('click', () => addReservationItem());
@@ -1501,7 +1841,7 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
     }
 });
 
-const treatmentAdd = document.querySelector('#treatment .toolbar>.primary');
+const treatmentAdd = document.getElementById('open-treatment');
 if (treatmentAdd) {
     treatmentAdd.onclick = () => quickForm('Tambah treatment', [
         ['name', 'Nama', 'text'],
@@ -1526,7 +1866,7 @@ document.getElementById('open-employee')?.addEventListener('click', () => quickF
     }),
 })));
 
-const memberAdd = document.querySelector('#membership .card-head>.primary');
+const memberAdd = document.getElementById('open-member');
 if (memberAdd) {
     memberAdd.onclick = () => quickForm('Member baru', [
         ['name', 'Nama pelanggan', 'text'],
@@ -1547,13 +1887,11 @@ document.getElementById('open-stocktake')?.addEventListener('click', () => quick
 
 document.addEventListener('click', (event) => {
     if (event.target.closest('.stock-mini .link')) openPage('stok');
-    const button = event.target.closest('.show-toast');
-    if (button) toast(button.dataset.message || 'Aksi berhasil dijalankan.');
 });
 
 document.querySelector('.search input')?.addEventListener('input', (event) => {
     const query = event.target.value.toLowerCase();
-    document.querySelectorAll('.queue-row,.member-row,.treatment-card,.stock-table .tr:not(.th)').forEach((element) => {
+    document.querySelectorAll('.queue-row,.member-row,.treatment-card,.stock-table .tr:not(.th),.activity').forEach((element) => {
         element.style.display = element.textContent.toLowerCase().includes(query) ? '' : 'none';
     });
 });
@@ -1564,5 +1902,6 @@ document.addEventListener('keydown', (event) => {
 
 populateSelects();
 initReservationControls();
+initActivityControls();
 resetReservationForm();
 renderAll();

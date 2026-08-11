@@ -354,6 +354,10 @@ class SalonController extends Controller
 
     public function updateRecipe(Request $request, int $id): JsonResponse
     {
+        if ($request->has('items')) {
+            return $this->replaceRecipe($request, $id);
+        }
+
         abort_unless(DB::table('treatments')->where('id', $id)->exists(), 404, 'Treatment tidak ditemukan.');
         $data = $request->validate([
             'product_id' => ['required', 'integer', 'exists:products,id'],
@@ -483,6 +487,75 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Data gaji berhasil diperbarui.']);
+    }
+
+    private function replaceRecipe(Request $request, int $id): JsonResponse
+    {
+        abort_unless(DB::table('treatments')->where('id', $id)->exists(), 404, 'Treatment tidak ditemukan.');
+
+        $data = $request->validate([
+            'items' => ['present', 'array', 'max:100'],
+            'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
+            'items.*.quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+        ]);
+        $items = collect($data['items']);
+        $productIds = $items->pluck('product_id')->map(fn ($productId) => (int) $productId);
+
+        if ($productIds->unique()->count() !== $productIds->count()) {
+            throw ValidationException::withMessages([
+                'items' => ['Setiap produk hanya boleh dipilih satu kali dalam resep.'],
+            ]);
+        }
+
+        $now = now();
+
+        DB::transaction(function () use ($id, $items, $productIds, $now): void {
+            DB::table('treatments')->where('id', $id)->lockForUpdate()->firstOrFail();
+            $products = DB::table('products')
+                ->whereIn('id', $productIds)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->get(['id', 'usage_unit_id'])
+                ->keyBy('id');
+
+            if ($products->count() !== $productIds->count()) {
+                throw ValidationException::withMessages([
+                    'items' => ['Satu atau lebih produk tidak aktif atau tidak ditemukan.'],
+                ]);
+            }
+
+            $rows = $items->map(function (array $item) use ($id, $products, $now): array {
+                $quantity = FixedPoint::parse($item['quantity'], FixedPoint::STOCK_SCALE);
+                abort_if($quantity === 0, 422, 'Jumlah pemakaian resep harus lebih dari nol.');
+                $product = $products->get((int) $item['product_id']);
+
+                return [
+                    'treatment_id' => $id,
+                    'product_id' => (int) $item['product_id'],
+                    'unit_id' => $product->usage_unit_id,
+                    'quantity' => FixedPoint::format($quantity, FixedPoint::STOCK_SCALE),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            })->all();
+
+            DB::table('treatment_product_recipes')->where('treatment_id', $id)->delete();
+
+            if ($rows !== []) {
+                DB::table('treatment_product_recipes')->insert($rows);
+            }
+        }, 3);
+
+        $this->logger->log(
+            $request,
+            'treatment.recipe_updated',
+            'treatment',
+            $id,
+            'Memperbarui komposisi produk treatment',
+            ['product_count' => $items->count()],
+        );
+
+        return response()->json(['message' => 'Resep treatment berhasil diperbarui.']);
     }
 
     private function resolveOrCreateTreatmentCategory(string $name): int

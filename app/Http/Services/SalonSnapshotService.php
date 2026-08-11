@@ -34,15 +34,17 @@ class SalonSnapshotService
             }
         }
 
+        $mayManageTreatmentRecipes = $this->can($user, 'treatments.update');
+
         if ($this->canAny($user, ['treatments.view', 'reservations.create', 'cashier.view'])) {
-            $snapshot['treatments'] = $this->treatments();
+            $snapshot['treatments'] = $this->treatments($mayManageTreatmentRecipes);
         }
 
         if ($this->canAny($user, ['memberships.view', 'memberships.manage'])) {
             $snapshot['members'] = $this->members();
         }
 
-        if ($this->canAny($user, ['products.view', 'cashier.view', 'cashier.process'])) {
+        if ($this->canAny($user, ['products.view', 'cashier.view', 'cashier.process', 'treatments.update'])) {
             $snapshot['products'] = $this->products();
         }
 
@@ -319,9 +321,9 @@ class SalonSnapshotService
             ->get(['id', 'code', 'name', 'position', 'specialty', 'is_service_provider', 'active']);
     }
 
-    private function treatments(): mixed
+    private function treatments(bool $withRecipes = false): mixed
     {
-        return DB::table('treatments as treatment')
+        $treatments = DB::table('treatments as treatment')
             ->join('treatment_categories as category', 'category.id', '=', 'treatment.category_id')
             ->where('treatment.is_active', true)
             ->orderBy('category.sort_order')
@@ -338,6 +340,30 @@ class SalonSnapshotService
                 'treatment.default_commission_percent',
                 'treatment.description',
             ]);
+
+        if (! $withRecipes || $treatments->isEmpty()) {
+            return $treatments;
+        }
+
+        $recipesByTreatment = DB::table('treatment_product_recipes as recipe')
+            ->join('products as product', 'product.id', '=', 'recipe.product_id')
+            ->join('units as unit', 'unit.id', '=', 'recipe.unit_id')
+            ->whereIn('recipe.treatment_id', $treatments->pluck('id')->all())
+            ->orderBy('product.name')
+            ->get([
+                'recipe.treatment_id',
+                'recipe.product_id',
+                'recipe.quantity',
+                'product.name as product_name',
+                'unit.code as unit',
+            ])
+            ->groupBy('treatment_id');
+
+        return $treatments->map(function (object $treatment) use ($recipesByTreatment): object {
+            $treatment->recipes = ($recipesByTreatment->get($treatment->id) ?? collect())->values();
+
+            return $treatment;
+        });
     }
 
     private function members(): mixed

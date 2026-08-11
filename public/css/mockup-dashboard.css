@@ -47,3 +47,254 @@ main{margin-left:230px;padding:0 28px 36px}header{height:92px;margin:0 -28px 24p
 /* Struktur kalender stabil: header dan kolom jam dipisahkan dari kartu reservasi. */
 .calendar-event{position:relative;justify-self:start;box-sizing:border-box;margin:3px 0}
 .calendar-grid{display:block;min-width:940px}.calendar-header{display:grid;grid-template-columns:62px repeat(7,minmax(125px,1fr));height:48px}.calendar-header .calendar-corner,.calendar-header .calendar-day-head{position:static}.calendar-body{position:relative;display:grid;grid-template-columns:62px repeat(7,minmax(125px,1fr));height:864px}.calendar-time-column{display:grid;grid-template-rows:repeat(24,36px);background:#fff}.calendar-day-column{display:grid;grid-template-rows:repeat(24,36px);border-left:1px solid #e5e7ee}.calendar-slot{border-left:0;border-bottom:1px solid #edf0f5}.calendar-hour{padding:8px 10px 0 0;border-bottom:1px solid #edf0f5;color:#7b8191;font-size:9px}.calendar-events{position:absolute;inset:0 0 0 62px;display:grid;grid-template-columns:repeat(7,minmax(125px,1fr));grid-template-rows:repeat(24,36px);pointer-events:none}.calendar-event{pointer-events:auto;margin:3px 5px;padding:7px 8px;border:1px solid #c9bdff;border-left:4px solid #6039e8;border-radius:7px;background:#f0ecff;box-shadow:none}.calendar-event time{color:#5a33d8}.calendar-event em{color:#4025a7;background:#dbd1ff;font-weight:700}.calendar-event.status-scheduled{border-color:#c9bdff;border-left-color:#6039e8;background:#f0ecff}.calendar-event.status-arrived{border-color:#80c8f5;border-left-color:#1686d9;background:#eaf6ff}.calendar-event.status-arrived time,.calendar-event.status-arrived em{color:#0665ad}.calendar-event.status-arrived em{background:#cdeaff}.calendar-event.status-in_service{border-color:#f1c77d;border-left-color:#e68b00;background:#fff5df}.calendar-event.status-in_service time,.calendar-event.status-in_service em{color:#9d5c00}.calendar-event.status-in_service em{background:#ffe0a3}.calendar-event.status-completed{border-color:#8bd1a4;border-left-color:#1d9b57;background:#ecfaef}.calendar-event.status-completed time,.calendar-event.status-completed em{color:#147342}.calendar-event.status-completed em{background:#cdeed7}.calendar-event.status-cancelled{border-color:#efaaaa;border-left-color:#d73e3e;background:#fff0f0;opacity:1}.calendar-event.status-cancelled time,.calendar-event.status-cancelled em{color:#a72929}.calendar-event.status-cancelled em{background:#ffd1d1}.calendar-queue-item em.status-scheduled{background:#e4ddff;color:#5132ca}.calendar-queue-item em.status-arrived{background:#cdeaff;color:#0665ad}.calendar-queue-item em.status-in_service{background:#ffe0a3;color:#9d5c00}.calendar-queue-item em.status-completed{background:#cdeed7;color:#147342}.calendar-queue-item em.status-cancelled{background:#ffd1d1;color:#a72929}@media(max-width:700px){.calendar-grid{min-width:820px}.calendar-header,.calendar-body{grid-template-columns:56px repeat(7,minmax(109px,1fr))}.calendar-events{left:56px}}
+
+/* Kalender reservasi ringkas: 30 menit = 22px, detail lengkap lewat tooltip/modal. */
+.reservation-calendar{
+    --calendar-time-width:54px;
+    --calendar-slot-height:22px;
+    --calendar-header-height:40px;
+    min-width:850px;
+}
+.calendar-controls.hidden{display:none}
+.calendar-grid{min-width:850px;background:#fff}
+.calendar-header{
+    position:sticky;
+    top:0;
+    z-index:6;
+    display:grid;
+    grid-template-columns:var(--calendar-time-width) repeat(7,minmax(112px,1fr));
+    height:var(--calendar-header-height);
+    background:#fff;
+    box-shadow:0 1px 0 #dfe2ea;
+}
+.calendar-header .calendar-corner{
+    position:sticky;
+    left:0;
+    z-index:7;
+    background:#fff;
+}
+.calendar-header .calendar-day-head{
+    position:relative;
+    border-bottom:0;
+    font-size:10px;
+}
+.calendar-day-head.is-selected:not(.is-today){background:#faf9ff;color:#5a3bd5}
+.calendar-body{
+    position:relative;
+    display:grid;
+    grid-template-columns:var(--calendar-time-width) repeat(7,minmax(112px,1fr));
+    height:calc(26 * var(--calendar-slot-height));
+}
+.calendar-time-column{
+    position:sticky;
+    left:0;
+    z-index:3;
+    display:grid;
+    grid-template-rows:repeat(26,var(--calendar-slot-height));
+    height:calc(26 * var(--calendar-slot-height));
+    background:#fff;
+    box-shadow:1px 0 0 #dfe2ea;
+}
+.calendar-hour{
+    padding:3px 8px 0 0;
+    border-bottom:1px solid #f0f1f5;
+    color:#747b8e;
+    font-size:9px;
+    line-height:1;
+}
+.calendar-hour:nth-child(2n){border-bottom-color:#dfe2ea}
+.calendar-close-time{
+    position:absolute;
+    right:8px;
+    bottom:2px;
+    color:#747b8e;
+    font-size:9px;
+    line-height:1;
+}
+.calendar-day-column{
+    display:grid;
+    grid-template-rows:repeat(26,var(--calendar-slot-height));
+    height:calc(26 * var(--calendar-slot-height));
+    border-left:1px solid #e5e7ee;
+    background:#fff;
+}
+.calendar-slot{border:0;border-bottom:1px solid #f0f1f5;background:#fff}
+.calendar-slot.is-hour{border-bottom-color:#dfe2ea}
+.calendar-events{
+    position:absolute;
+    inset:0 0 0 var(--calendar-time-width);
+    display:block;
+    pointer-events:none;
+}
+.calendar-empty-slots{
+    position:absolute;
+    inset:0;
+    z-index:1;
+    display:grid;
+    grid-template-columns:repeat(7,minmax(0,1fr));
+    grid-template-rows:repeat(26,var(--calendar-slot-height));
+    pointer-events:none;
+}
+.calendar-create-slot{
+    position:relative;
+    min-width:0;
+    min-height:0;
+    border:0;
+    padding:0;
+    background:transparent;
+    cursor:pointer;
+    pointer-events:auto;
+}
+.calendar-create-slot::after{
+    content:"+";
+    position:absolute;
+    top:50%;
+    left:50%;
+    display:grid;
+    width:16px;
+    height:16px;
+    place-items:center;
+    border-radius:50%;
+    background:#7254eb;
+    color:#fff;
+    font-size:14px;
+    font-weight:500;
+    line-height:1;
+    opacity:0;
+    transform:translate(-50%,-50%) scale(.75);
+    transition:opacity .12s ease,transform .12s ease;
+}
+.calendar-create-slot:hover,.calendar-create-slot:focus-visible{background:rgba(113,84,235,.07)}
+.calendar-create-slot:hover::after,.calendar-create-slot:focus-visible::after{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.calendar-create-slot:focus-visible{z-index:2;outline:2px solid #7254eb;outline-offset:-2px}
+.calendar-event{
+    --event-accent:#6039e8;
+    position:absolute;
+    z-index:2;
+    display:block;
+    min-width:0;
+    margin:0;
+    padding:2px 5px;
+    border-left-width:3px;
+    border-radius:5px;
+    box-sizing:border-box;
+    overflow:hidden;
+    line-height:1.15;
+    pointer-events:auto;
+    box-shadow:none;
+    transition:box-shadow .15s ease,filter .15s ease,transform .15s ease;
+}
+.calendar-event::after{
+    content:"";
+    position:absolute;
+    top:4px;
+    right:4px;
+    width:4px;
+    height:4px;
+    border-radius:50%;
+    background:var(--event-accent);
+}
+.calendar-event-main{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    min-width:0;
+    white-space:nowrap;
+}
+.calendar-event .calendar-event-main time{
+    display:block;
+    flex:0 0 auto;
+    font-size:9px;
+    font-weight:750;
+    line-height:14px;
+}
+.calendar-event .calendar-event-main b{
+    display:block;
+    min-width:0;
+    margin:0 7px 0 0;
+    overflow:hidden;
+    color:#252738;
+    font-size:10px;
+    line-height:14px;
+    text-overflow:ellipsis;
+}
+.calendar-event>small{
+    display:block;
+    margin:1px 6px 0 0;
+    overflow:hidden;
+    color:#666c7d;
+    font-size:8px;
+    line-height:10px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+.calendar-event.is-compact>small{display:none}
+.calendar-event:hover{
+    z-index:5;
+    filter:brightness(.985);
+    transform:translateY(-1px);
+    box-shadow:0 5px 14px rgba(45,35,91,.18);
+}
+.calendar-event:focus-visible{
+    z-index:6;
+    outline:2px solid #6f50ec;
+    outline-offset:1px;
+}
+.calendar-event.status-scheduled{--event-accent:#6039e8}
+.calendar-event.status-arrived{--event-accent:#1686d9}
+.calendar-event.status-in_service{--event-accent:#e68b00}
+.calendar-event.status-completed{--event-accent:#1d9b57}
+.calendar-event.status-paid{--event-accent:#148151;border-color:#8bd1a4;border-left-color:#1d9b57;background:#ecfaef}
+.calendar-event.status-paid .calendar-event-main time{color:#147342}
+.calendar-event.status-paid::after{content:"✓";display:grid;width:12px;height:12px;place-items:center;background:#1d9b57;color:#fff;font-size:8px;font-weight:800}
+.calendar-event.status-cancelled{--event-accent:#d73e3e}
+.calendar-queue-item em.status-paid{background:#cdeed7;color:#147342}
+.reservation-calendar-tooltip{
+    position:fixed;
+    z-index:150;
+    width:min(280px,calc(100vw - 24px));
+    padding:12px;
+    border:1px solid #ded9f3;
+    border-radius:9px;
+    background:#fff;
+    color:#272638;
+    box-shadow:0 14px 38px rgba(32,25,69,.22);
+    pointer-events:none;
+}
+.reservation-calendar-tooltip[hidden]{display:none}
+.reservation-calendar-tooltip-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.reservation-calendar-tooltip-head>span{color:#777389;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.reservation-calendar-tooltip-head em{padding:3px 6px;border-radius:999px;background:#ece7ff;color:#5132ca;font-size:9px;font-style:normal;font-weight:700}
+.reservation-calendar-tooltip-head em.status-arrived{background:#dff1ff;color:#0665ad}
+.reservation-calendar-tooltip-head em.status-in_service{background:#ffebc6;color:#9d5c00}
+.reservation-calendar-tooltip-head em.status-completed{background:#dff5e7;color:#147342}
+.reservation-calendar-tooltip-head em.status-paid{background:#dff5e7;color:#147342}
+.reservation-calendar-tooltip-head em.status-cancelled{background:#fde2e1;color:#a72929}
+.reservation-calendar-tooltip>strong{display:block;margin-top:8px;font-size:13px}
+.reservation-calendar-tooltip-time{margin:3px 0 10px;color:#5a3bd5;font-size:10px;font-weight:700}
+.reservation-calendar-tooltip dl{display:grid;gap:6px;margin:0;padding:9px 0;border-top:1px solid #ecebf2;border-bottom:1px solid #ecebf2}
+.reservation-calendar-tooltip dl>div{display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;font-size:10px;line-height:1.35}
+.reservation-calendar-tooltip dt{color:#777b8b}
+.reservation-calendar-tooltip dd{margin:0;color:#343646;font-weight:600}
+.reservation-calendar-tooltip>small{display:block;margin-top:8px;color:#8a8797;font-size:9px}
+.recipe-modal{width:min(620px,calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column}
+.recipe-modal form{display:flex;min-height:0;flex:1;flex-direction:column;padding:0}
+.recipe-checklist{display:grid;gap:0;min-height:0;max-height:min(430px,calc(100vh - 220px));margin:12px 20px;padding:0 10px;overflow:auto;border:1px solid #ececf2;border-radius:8px}
+.recipe-product{display:grid;grid-template-columns:18px minmax(0,1fr) minmax(122px,.38fr);align-items:center;gap:9px;padding:7px 3px;border:0;border-bottom:1px solid #efeff4;border-radius:0;background:transparent;cursor:pointer;transition:background .12s ease}
+.recipe-product:last-child{border-bottom:0}
+.recipe-product:hover{background:#fbfaff}
+.recipe-product.selected{background:#f7f5ff;box-shadow:inset 2px 0 #7858e9}
+.modal .recipe-product-toggle{display:block;width:16px;height:16px;min-height:0;margin:0;accent-color:#6846e5;cursor:pointer}
+.recipe-product-info{min-width:0}.recipe-product-info b,.recipe-product-info small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recipe-product-info b{color:#29263b;font-size:10px}.recipe-product-info small{margin-top:2px;color:#858394;font-size:8px}
+.recipe-product-quantity{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px}.modal .recipe-product-quantity-input{width:100%;min-width:0;min-height:30px;margin:0;padding:5px 7px;font-size:9px}.modal .recipe-product-quantity-input:disabled{background:#fafafd;color:#b0b0b9}.recipe-product-quantity small{color:#77758a;font-size:8px}
+.recipe-modal footer{margin-top:auto}
+.treatment-actions{display:inline-flex;flex:none;align-items:center;gap:6px}.treatment-foot .recipe-button,.treatment-foot .recipe-info-button{display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;cursor:pointer}.treatment-foot .recipe-button{min-height:32px;padding:0 10px;font-weight:650}.treatment-foot .recipe-info-button{width:30px;height:30px;padding:0;border-color:#e4dfff;background:#fff;color:#7455de}.treatment-foot .recipe-info-button::before{content:"i";display:grid;width:15px;height:15px;place-items:center;border:1.5px solid currentColor;border-radius:50%;font:700 10px/1 Arial,sans-serif}.treatment-foot .recipe-info-button:hover{background:#f4f1ff;border-color:#cfc2ff}.recipe-info-modal{width:min(400px,calc(100vw - 32px))}.recipe-info-modal .modal-head p{margin:4px 0 0;color:#858394;font-size:10px}.recipe-summary{display:grid;gap:0;max-height:min(360px,calc(100vh - 210px));margin:0;padding:6px 20px;overflow:auto;list-style:none}.recipe-summary li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #efeff4;font-size:11px}.recipe-summary li:last-child{border-bottom:0}.recipe-summary li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#302d3d}.recipe-summary li b{flex:none;color:#7357f6;font-size:10px}.recipe-info-modal footer{display:flex;justify-content:flex-end;padding:12px 20px 16px;border-top:1px solid #efeff4}
+@media(max-width:700px){
+    .reservation-calendar{--calendar-time-width:50px;min-width:800px}
+    .calendar-grid{min-width:800px}
+    .calendar-header,.calendar-body{grid-template-columns:var(--calendar-time-width) repeat(7,minmax(107px,1fr))}
+    .calendar-events{left:var(--calendar-time-width)}
+    .recipe-product{grid-template-columns:18px minmax(0,1fr)}
+    .recipe-product-quantity{grid-column:2}
+}
+@media(prefers-reduced-motion:reduce){.calendar-event{transition:none}}

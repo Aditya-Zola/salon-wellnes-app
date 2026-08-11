@@ -216,7 +216,9 @@ class ReservationService
             $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
 
             abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
-            $this->ensureNotPaid($reservationId);
+            if ($status === 'cancelled') {
+                $this->ensureNotPaid($reservationId);
+            }
 
             if ($reservation->status === $status) {
                 return ['id' => $reservationId, 'status' => $status, 'idempotent_replay' => true];
@@ -308,7 +310,9 @@ class ReservationService
             $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
             abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
             abort_if($reservation->status === 'cancelled', 422, 'Reservasi yang dibatalkan tidak dapat diubah.');
-            $this->ensureNotPaid($reservationId);
+            if ($status === 'cancelled') {
+                $this->ensureNotPaid($reservationId);
+            }
 
             $item = DB::table('reservation_items')
                 ->where('id', $itemId)
@@ -624,6 +628,14 @@ class ReservationService
             'updated_by' => $userId,
             'updated_at' => $now,
         ]);
+
+        if (
+            $status === 'completed'
+            && $reservation->status !== 'completed'
+            && DB::table('transactions')->where('reservation_id', $reservationId)->where('status', 'paid')->exists()
+        ) {
+            DB::table('customers')->where('id', $reservation->customer_id)->increment('visit_count');
+        }
 
         return $status;
     }
