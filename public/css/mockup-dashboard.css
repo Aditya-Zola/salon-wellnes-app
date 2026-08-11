@@ -1,4 +1,4 @@
-:root{--ui-purple:#5b35d5;--ui-purple-soft:#f2efff;--ui-text:#15182b;--ui-muted:#74788a;--ui-line:#e7e9f0;--ui-bg:#f7f8fb;--ui-green:#169b62;--ui-amber:#d88316}
+:root{--ui-purple:#6B4A38;--ui-purple-soft:#F3ECE7;--ui-text:#292522;--ui-muted:#76716d;--ui-line:#e7dfd9;--ui-bg:#fcfaf8;--ui-green:#169b62;--ui-amber:#b7781d}
 body{background:var(--ui-bg);color:var(--ui-text)}
 .sidebar{width:230px;padding:28px 20px 20px;background:#fff;border-right:1px solid var(--ui-line)}
 .brand{padding:0 7px 42px;gap:12px}.brand>span{width:40px;height:40px;border:0;color:var(--ui-purple);font:700 25px Inter}.brand strong{font-size:24px;color:var(--ui-purple)}.brand small{display:block;color:#8b8fa0;font-size:8px;text-transform:uppercase;letter-spacing:1.5px;margin-top:2px}
@@ -31,7 +31,7 @@ main{margin-left:230px;padding:0 28px 36px}header{height:92px;margin:0 -28px 24p
 
 .dashboard-brand{display:block;width:170px;padding:0 7px 42px;text-decoration:none}.dashboard-brand img{display:block;width:100%;height:auto}@media(max-width:1100px){.dashboard-brand{width:150px;padding-bottom:28px}}@media(max-width:700px){.dashboard-brand{width:46px;padding:0 2px 28px}}
 .dashboard-metric{position:relative;cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
-.dashboard-metric::after{content:"chevron_right";position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:"Material Symbols Rounded";font-size:18px;font-variation-settings:"FILL" 1,"wght" 550,"GRAD" 0,"opsz" 20;color:#a6a2b4;opacity:0;transition:opacity .15s ease,right .15s ease}
+.dashboard-metric::after{content:"chevron_right";position:absolute;right:14px;top:50%;transform:translateY(-50%);font-family:"Material Symbols Outlined";font-size:18px;font-variation-settings:"FILL" 0,"wght" 300,"GRAD" -25,"opsz" 20;color:#8e837c;opacity:0;transition:opacity .15s ease,right .15s ease}
 .dashboard-metric:hover{border-color:#d8d0ff;box-shadow:0 5px 16px rgba(79,57,180,.08);transform:translateY(-1px)}
 .dashboard-metric:hover::after,.dashboard-metric:focus-visible::after{right:11px;opacity:1}
 .dashboard-metric:focus-visible{outline:3px solid rgba(115,87,246,.2);outline-offset:2px;border-color:#927df7}

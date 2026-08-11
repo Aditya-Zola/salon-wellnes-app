@@ -1,9 +1,29 @@
-.material-symbols-rounded,.search::before,.bell::before,.logout b::before,.metrics article>i::before,.promo>b::before,.modal-head>button::before,.role-option b::before{font-family:"Material Symbols Rounded";font-weight:550;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;font-feature-settings:"liga";-webkit-font-feature-settings:"liga";font-variation-settings:"FILL" 1,"wght" 550,"GRAD" 0,"opsz" 20;-webkit-font-smoothing:antialiased}
+.material-symbols-outlined{
+    font-family:"Material Symbols Outlined";
+    font-weight:normal;
+    font-style:normal;
+    font-size:20px;
+    line-height:1;
+    letter-spacing:normal;
+    text-transform:none;
+    display:inline-block;
+    white-space:nowrap;
+    word-wrap:normal;
+    direction:ltr;
+    font-feature-settings:"liga";
+    -webkit-font-feature-settings:"liga";
+    font-variation-settings:"FILL" 0,"wght" 300,"GRAD" -25,"opsz" 20;
+    -webkit-font-smoothing:antialiased;
+}
+
 .sidebar nav button b{border:0!important;background:transparent!important}
-.search{font-size:0}.search::before{content:"search";font-size:18px;color:#777985}.search input{font-size:11px}.bell{font-size:0}.bell::before{content:"notifications";font-size:19px;color:#5d5f69}.bell sup{font-family:"Segoe UI",Arial,sans-serif;font-size:8px;line-height:1;min-width:15px;height:15px;padding:0 4px!important;display:grid;place-items:center}.logout b{font-size:0!important}.logout b::before{content:"logout";font-size:17px}
-.metrics article{align-items:center}.metrics article>i{display:grid!important;align-self:center;background:var(--purple-soft)!important;color:var(--purple)!important;font-size:0!important}.metrics article>i::before{font-size:19px}.metrics article:nth-child(1)>i::before{content:"calendar_month"}.metrics article:nth-child(2)>i::before{content:"groups"}.metrics article:nth-child(3)>i::before{content:"payments"}.metrics article:nth-child(4)>i::before{content:"inventory_2"}
-.queue-row>span:last-child{font-size:18px;color:#a5a5ad}.promo>b{font-size:0}.promo>b::before{content:"campaign";font-size:20px;color:var(--purple)}.transaction>i{font-size:19px}.activity>i{font-size:18px}.modal-head>button{font-size:0}.modal-head>button::before{content:"close";font-size:21px;color:#686a73}
-.role-option b{font-size:0!important}.role-option b::before{font-size:18px}.role-option:nth-child(1) b::before{content:"admin_panel_settings"}.role-option:nth-child(2) b::before{content:"manage_accounts"}.role-option:nth-child(3) b::before{content:"campaign"}.role-option:nth-child(4) b::before{content:"point_of_sale"}
-.receipt-line>i{font-family:"Material Symbols Rounded"!important;font-size:19px!important;font-weight:550!important}
-.row-action{font-size:19px;color:#a5a5ad}.treatment-card>p span{display:inline-flex;align-items:center;gap:4px}.treatment-card>p i{font-size:15px;color:var(--purple)}
-@media(max-width:700px){.sidebar nav button b::before{font-size:20px}.logout b::before{font-size:18px}}
+.search{font-size:inherit}.search .material-symbols-outlined{font-size:18px;color:#6d6b68}.search input{font-size:11px}.bell{font-size:inherit}.bell .material-symbols-outlined{font-size:19px;color:#6d6b68}.bell sup{font-family:"Segoe UI",Arial,sans-serif;font-size:8px;line-height:1;min-width:15px;height:15px;padding:0 4px!important;display:grid;place-items:center}
+.logout b{font-size:0!important}.logout b.material-symbols-outlined{font-size:18px!important}
+.metrics article{align-items:center}.metrics article>i.material-symbols-outlined{display:grid!important;align-self:center;background:var(--ui-purple-soft)!important;color:var(--ui-purple)!important;font-size:20px!important}
+.queue-row>span:last-child{font-size:18px;color:#a5a5ad}.promo>b.material-symbols-outlined{font-size:20px;color:var(--ui-purple)}.transaction>i{font-size:19px}.activity>i{font-size:18px}.modal-head>button{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border-radius:6px;font-size:inherit}.modal-head>button>.material-symbols-outlined{font-size:21px;color:#686a73}.role-option b{font-size:0!important}.role-option b::before{font-family:"Material Symbols Outlined";font-variation-settings:"FILL" 0,"wght" 300,"GRAD" -25,"opsz" 20;font-size:18px}.role-option:nth-child(1) b::before{content:"admin_panel_settings"}.role-option:nth-child(2) b::before{content:"manage_accounts"}.role-option:nth-child(3) b::before{content:"campaign"}.role-option:nth-child(4) b::before{content:"point_of_sale"}
+.receipt-line>i{font-family:"Material Symbols Outlined"!important;font-size:19px!important;font-weight:normal!important;font-variation-settings:"FILL" 0,"wght" 300,"GRAD" -25,"opsz" 20!important}.row-action{font-size:19px;color:#8b8986}.treatment-card>p span{display:inline-flex;align-items:center;gap:4px}.treatment-card>p i{font-size:15px;color:var(--ui-purple)}
+@media(max-width:700px){.sidebar nav button b::before{font-size:20px}.logout b.material-symbols-outlined{font-size:18px!important}}
+
+/* Ikon tombol selalu sejajar dengan label, tanpa karakter + atau X ganda. */
+.primary,.secondary,.dashed,.access-button,.link.add-staff{display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.primary>.material-symbols-outlined,.secondary>.material-symbols-outlined,.dashed>.material-symbols-outlined,.access-button>.material-symbols-outlined,.link.add-staff>.material-symbols-outlined{font-size:18px;flex:0 0 auto}

@@ -4,7 +4,7 @@
     overscroll-behavior:contain;
     scrollbar-width:none;
     -ms-overflow-style:none;
-    background:linear-gradient(180deg,#fff 0%,#fff 68%,#fcfbff 100%);
+    background:linear-gradient(180deg,#faf7f4 0%,#f7f1ec 100%);
     box-shadow:8px 0 28px rgba(39,31,78,.025);
 }
 .sidebar::-webkit-scrollbar{width:0;height:0}
@@ -16,7 +16,7 @@
     bottom:14px;
     left:13px;
     height:1px;
-    background:linear-gradient(90deg,transparent,#ece8f7 18%,#ece8f7 82%,transparent);
+    background:linear-gradient(90deg,transparent,#e7dcd5 18%,#e7dcd5 82%,transparent);
 }
 .sidebar nav button,.sidebar nav>a,.access-menu summary{
     position:relative;
@@ -30,17 +30,35 @@
     width:3px;
     height:20px;
     border-radius:0 4px 4px 0;
-    background:linear-gradient(180deg,#8b70ff,#5e3cde);
+    background:#6B4A38;
 }
 .account{
-    background:linear-gradient(135deg,#fdfcff,#f7f5ff);
+    background:linear-gradient(135deg,#fbf7f3,#f3ece7);
     box-shadow:0 -10px 24px rgba(42,34,86,.025);
 }
 .sidebar nav button:focus-visible,.sidebar nav>a:focus-visible,.access-menu summary:focus-visible{
-    outline:2px solid #7858ee;
+    outline:2px solid #6B4A38;
     outline-offset:2px;
 }
 @media(prefers-reduced-motion:reduce){
     .sidebar nav button,.sidebar nav>a,.access-menu summary{transition:none}
     .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
 }
+
+/* Sistem visual Selésa: sidebar dan status interaksi yang konsisten. */
+:root{--selesa-brown:#6B4A38;--selesa-tint:#F3ECE7;--selesa-sidebar:#faf7f4;--selesa-icon:#6f6a65}
+body{background:#fcfaf8}
+.sidebar{background:var(--selesa-sidebar)!important;border-right:.5px solid #ddd1c9!important;box-shadow:none!important}
+.sidebar nav button,.sidebar nav>a,.access-menu summary{color:var(--selesa-icon)!important}
+.sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover,
+.sidebar nav button.active,.sidebar nav>a.active,.access-menu summary.active{background:var(--selesa-tint)!important;color:var(--selesa-brown)!important;font-weight:700}
+.sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
+.sidebar nav button.active::before,.sidebar nav>a.active::before,.access-menu summary.active::before{background:var(--selesa-brown)!important}
+.access-submenu{border-left-color:#ddcec4!important}.access-submenu a{color:#77716c!important}.access-submenu a:hover,.access-submenu a.active{background:var(--selesa-tint)!important;color:var(--selesa-brown)!important}
+.account{background:var(--selesa-tint)!important;border-top:.5px solid #dfd2ca!important;box-shadow:none!important}.account i{background:var(--selesa-brown)!important;color:#fff!important}.account .logout{color:var(--selesa-brown)!important}.account .logout:hover{background:#eaded6!important}
+.nav-icon,.sidebar .material-symbols-outlined{color:inherit!important}
+.primary,.access-button.primary{background:var(--selesa-brown)!important;color:#fff!important}.primary:hover,.access-button.primary:hover{background:#51372a!important}
+.secondary:hover,.access-button.secondary:hover{border-color:#cdbbae!important;color:var(--selesa-brown)!important;background:var(--selesa-tint)!important}
+.search:focus-within,.bell:hover{border-color:#cdbbae!important;background:#fff!important}.bell sup{background:var(--selesa-brown)!important}
+.access-form input:focus,.access-form select:focus,.role-name-card input:focus{border-color:var(--selesa-brown)!important;box-shadow:0 0 0 3px #6b4a381a!important}
+.count-badge,.role-badge{background:var(--selesa-tint)!important;color:var(--selesa-brown)!important}.text-button{color:var(--selesa-brown)!important}.permission-item:hover{background:var(--selesa-tint)!important}.permission-item input{accent-color:var(--selesa-brown)!important}

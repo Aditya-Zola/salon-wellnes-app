@@ -552,7 +552,7 @@ function renderReservations() {
                 <span class="time">${escapeHtml(reservationTime(reservation))}</span>
                 <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))} · ${escapeHtml(reservationStaffSummary(reservation))}</small></span>
                 <em class="${statusClass(status)}">${escapeHtml(statusLabel(status))}</em>
-                <span class="material-symbols-rounded">chevron_right</span>
+                <span class="material-symbols-outlined">chevron_right</span>
             </div>`;
         }).join('') || '<p class="empty-state">Belum ada reservasi hari ini.</p>';
     }
@@ -688,7 +688,7 @@ function openReservationDetail(reservation) {
     wrapper.innerHTML = `<div class="modal-box reservation-modal-box">
         <div class="modal-head">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
-            <button type="button" class="quick-close">×</button>
+            <button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button>
         </div>
         <div class="quick-info reservation-summary">
             <p><span>Telepon</span><b>${escapeHtml(reservationPhone(reservation) || '-')}</b></p>
@@ -786,7 +786,7 @@ function renderCashier() {
     box.innerHTML = rows.map((reservation, index) => `<button class="cashier-item ${index === 0 ? 'active' : ''}" data-id="${Number(reservation.id)}">
         <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
         <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
-        <i class="material-symbols-rounded row-action">chevron_right</i>
+        <i class="material-symbols-outlined row-action">chevron_right</i>
     </button>`).join('') || '<p class="empty-state">Belum ada reservasi aktif yang menunggu pembayaran.</p>';
 
     document.querySelectorAll('.cashier-item').forEach((button) => {
@@ -833,15 +833,15 @@ function selectCashier(id) {
     document.getElementById('receipt-name').textContent = reservationCustomerName(reservation);
     document.querySelector('.receipt .member').textContent = reservation.is_member ? '· MEMBER' : '· NON-MEMBER';
     const treatmentLines = items.map((item) => `<div class="receipt-line">
-        <i class="material-symbols-rounded">spa</i>
+        <i class="material-symbols-outlined">spa</i>
         <span><b>${escapeHtml(itemTreatmentName(item))}</b><small>Therapist: ${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</small></span>
         <strong>${money(itemPrice(item))}</strong>
     </div>`).join('');
     const productLines = cashierProductItems.map((item) => `<div class="receipt-line receipt-product-line">
-        <i class="material-symbols-rounded">inventory_2</i>
+        <i class="material-symbols-outlined">inventory_2</i>
         <span><b>${escapeHtml(item.name)}</b><small>${Number(item.quantity)} ${escapeHtml(item.unit || 'pcs')} × ${money(item.unit_price)}</small></span>
         <strong>${money(Number(item.unit_price) * Number(item.quantity))}</strong>
-        <button type="button" class="link remove-cashier-product" data-id="${Number(item.product_id)}" aria-label="Hapus produk">×</button>
+        <button type="button" class="link remove-cashier-product" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
     </div>`).join('');
     document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
     document.getElementById('discount').disabled = !reservation.is_member;
@@ -873,7 +873,7 @@ function openCashierProductPicker() {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close">×</button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Tambah</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Tambah</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const select = wrapper.querySelector('select[name="product_id"]');
     const quantity = wrapper.querySelector('input[name="quantity"]');
@@ -938,7 +938,7 @@ function renderTreatments() {
         return `<article class="treatment-card">
         <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
         <h3>${escapeHtml(treatment.name)}</h3>
-        <p><span><i class="material-symbols-rounded">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-rounded">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
+        <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
         <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions">${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
     </article>`;
     }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
@@ -960,7 +960,7 @@ function openRecipeInfo(treatment) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
     wrapper.innerHTML = `<div class="modal-box recipe-info-modal">
-        <div class="modal-head"><div><h2>Resep produk</h2><p>${escapeHtml(treatment.name)}</p></div><button type="button" class="quick-close" aria-label="Tutup">×</button></div>
+        <div class="modal-head"><div><h2>Resep produk</h2><p>${escapeHtml(treatment.name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <ul class="recipe-summary">${recipes.map((recipe) => `<li><span>${escapeHtml(recipe.product_name || recipe.product?.name || 'Produk')}</span><b>${escapeHtml(Number(recipe.quantity))} ${escapeHtml(recipe.unit || recipe.product?.unit || '')}</b></li>`).join('')}</ul>
         <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
     </div>`;
@@ -983,7 +983,7 @@ function openRecipeChecklist(treatment) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
     wrapper.innerHTML = `<div class="modal-box recipe-modal">
-        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close">×</button></div>
+        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>
         <form>
             <div class="recipe-checklist">${products.map((product) => {
                 const recipe = recipes.get(Number(product.id));
@@ -1096,7 +1096,7 @@ function renderMembers() {
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
             <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')}</small></span>
             <span>${Number(member.visit_count || 0)} kunjungan</span><em>Aktif</em>
-            <i class="material-symbols-rounded row-action">chevron_right</i>
+            <i class="material-symbols-outlined row-action">chevron_right</i>
         </div>`).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
 
@@ -1203,7 +1203,7 @@ function renderFinance() {
     if (box) {
         box.innerHTML = transactions.map((transaction) => {
             const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name || payment.payment_method?.name).filter(Boolean);
-            return `<div class="transaction"><i class="material-symbols-rounded">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(transaction.number)} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
+            return `<div class="transaction"><i class="material-symbols-outlined">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(transaction.number)} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
         }).join('') || '<p class="empty-state">Belum ada transaksi hari ini.</p>';
     }
 }
@@ -1264,7 +1264,7 @@ function renderActivity() {
 
     box.innerHTML = rows.map((activity) => `<div class="activity">
         <time>${new Date(activity.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-        <i class="material-symbols-rounded">work_history</i>
+        <i class="material-symbols-outlined">work_history</i>
         <span><b>${escapeHtml(activity.description)}</b><p>${escapeHtml(activity.action)}</p><small>${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small></span>
     </div>`).join('') || '<p class="empty-state">Tidak ada aktivitas yang sesuai filter.</p>';
 }
@@ -1381,7 +1381,7 @@ function addStaffRow(container, role = 'primary') {
     row.className = 'staff-row';
     row.innerHTML = `<label>Therapist<select class="item-employee" required><option value="">Pilih therapist</option>${employeeOptions()}</select></label>
         <label>Peran<select class="item-staff-role"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
-        <button type="button" class="icon-button remove-staff" aria-label="Hapus therapist">×</button>`;
+        <button type="button" class="icon-button remove-staff" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.remove-staff').onclick = () => {
         if (container.children.length <= 1) {
@@ -1416,7 +1416,7 @@ function addReservationItem(values = {}) {
             ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : '<span class="reservation-price-note"><small>Harga</small><b>Mengikuti harga normal</b></span>'}
         </div>
         <label class="item-notes">Catatan treatment<textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label>
-        <div class="staff-block"><div class="staff-block-head"><span>Pembagian therapist</span><button type="button" class="link add-staff">＋ Tambah therapist</button></div><div class="staff-rows"></div></div>`;
+        <div class="staff-block"><div class="staff-block-head"><span>Pembagian therapist</span><button type="button" class="link add-staff"><span class="material-symbols-outlined">add</span> Tambah therapist</button></div><div class="staff-rows"></div></div>`;
     container.appendChild(card);
 
     const staffContainer = card.querySelector('.staff-rows');
@@ -1586,7 +1586,7 @@ function addPaymentRow(values = {}) {
     row.innerHTML = `<label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
         <label>Jumlah<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
-        <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran">×</button>`;
+        <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.payment-amount').addEventListener('input', updatePaymentReconciliation);
     row.querySelector('.payment-method').addEventListener('change', () => {
@@ -1645,7 +1645,7 @@ function updatePaymentReconciliation() {
 function quickForm(title, fields, submit) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close">×</button></div><form><div class="quick-fields">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select name="${escapeHtml(name)}">${array(options).map((option) => {
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select name="${escapeHtml(name)}">${array(options).map((option) => {
         const parts = String(option).split('|');
         const optionValue = parts.length > 1 ? parts[0] : option;
         return `<option value="${escapeHtml(optionValue)}" ${String(optionValue) === String(value ?? '') ? 'selected' : ''}>${escapeHtml(parts[1] || parts[0])}</option>`;
