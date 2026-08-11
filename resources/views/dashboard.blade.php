@@ -117,8 +117,8 @@
 
 <div class="modal" id="reservation-modal">
     <div class="modal-box reservation-modal-box">
-        <div class="modal-head"><div><h2>Reservasi baru</h2><p>Satu kunjungan dapat memuat beberapa treatment dan therapist</p></div><button type="button" class="close-modal"><span class="material-symbols-outlined">close</span></button></div>
-        <form id="reservation-form">
+        <div class="modal-head reservation-modal-head"><div><h2>Reservasi baru</h2><p>Satu kunjungan dapat memuat beberapa treatment dan therapist</p></div><button type="button" class="close-modal reservation-close" aria-label="Tutup form reservasi"><span class="material-symbols-outlined">close</span></button></div>
+        <form id="reservation-form" class="reservation-form">
             <div class="form-grid">
                 <label>Nama pelanggan<input required name="name" placeholder="Masukkan nama"></label>
                 <label>Nomor telepon<input required name="phone" placeholder="08xx xxxx xxxx"></label>
@@ -127,9 +127,9 @@
             </div>
             <div class="reservation-items-head"><div><h3>Daftar treatment</h3><p>Atur waktu dan pembagian therapist untuk setiap treatment.</p></div><button type="button" class="secondary" id="add-reservation-item"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div>
             <div id="reservation-items"></div>
-            <label>Catatan kunjungan<textarea name="notes" placeholder="Permintaan atau catatan umum pelanggan"></textarea></label>
+            <label class="reservation-notes">Catatan kunjungan<textarea name="notes" placeholder="Permintaan atau catatan umum pelanggan"></textarea></label>
             <div class="conflict-panel hidden" id="reservation-conflict" role="alert"></div>
-            <footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan reservasi</button></footer>
+            <footer class="reservation-footer"><button type="button" class="secondary close-modal">Batal</button><button class="primary"><span class="material-symbols-outlined" aria-hidden="true">check</span> Simpan reservasi</button></footer>
         </form>
     </div>
 </div>
