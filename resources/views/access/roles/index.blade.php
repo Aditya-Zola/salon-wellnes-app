@@ -7,7 +7,7 @@
 @section('header-action')
     <div style="display: flex; gap: 9px; margin-left: auto;">
         @can('access.roles.manage')
-            <button type="button" class="access-button primary" id="open-role-modal">＋ Input peran baru</button>
+            <button type="button" class="access-button primary" id="open-role-modal"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input peran baru</button>
         @endcan
         <a class="access-button secondary" href="{{ route('dashboard') }}">Kembali ke halaman utama</a>
     </div>
@@ -69,7 +69,7 @@
             <div class="modal-box small">
                 <div class="modal-head">
                     <div><h2 id="role-modal-title">Input peran baru</h2><p>Contoh: Terapis, Supervisor, atau Finance.</p></div>
-                    <button type="button" class="role-modal-close" aria-label="Tutup">×</button>
+                    <button type="button" class="role-modal-close material-symbols-outlined" aria-label="Tutup">close</button>
                 </div>
                 <form method="POST" action="{{ route('access.roles.store') }}" class="access-form">
                     @csrf

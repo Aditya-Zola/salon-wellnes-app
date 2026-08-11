@@ -6,7 +6,7 @@
 
 @section('header-action')
     @can('access.users.manage')
-        <button type="button" class="access-button primary" id="open-user-modal">＋ Input pengguna baru</button>
+        <button type="button" class="access-button primary" id="open-user-modal"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input pengguna baru</button>
     @endcan
 @endsection
 
@@ -59,7 +59,7 @@
             <div class="modal-box small">
                 <div class="modal-head">
                     <div><h2 id="user-modal-title">Input pengguna baru</h2><p>Akun dapat langsung digunakan untuk masuk.</p></div>
-                    <button type="button" class="user-modal-close" aria-label="Tutup">×</button>
+                    <button type="button" class="user-modal-close material-symbols-outlined" aria-label="Tutup">close</button>
                 </div>
                 <form method="POST" action="{{ route('access.users.store') }}" class="access-form">
                     @csrf
