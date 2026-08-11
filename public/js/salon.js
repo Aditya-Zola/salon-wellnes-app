@@ -1157,7 +1157,15 @@ function renderFinance() {
     const flow = document.getElementById('cash-bars');
     const maximum = Math.max(income, expense, 1);
     if (flow) {
-        flow.innerHTML = income || expense ? `<div><span>Pemasukan</span><i style="width:${income / maximum * 100}%"></i><b>${money(income)}</b></div><div><span>Pengeluaran</span><i style="width:${expense / maximum * 100}%"></i><b>${money(expense)}</b></div>` : '<p class="empty-state">Belum ada arus kas bulan ini.</p>';
+        flow.innerHTML = income || expense ? `
+            <div class="cash-flow-row">
+                <div class="cash-flow-head"><span>Pemasukan</span><b>${money(income)}</b></div>
+                <div class="cash-flow-track"><i class="cash-flow-fill income" style="width:${income / maximum * 100}%"></i></div>
+            </div>
+            <div class="cash-flow-row">
+                <div class="cash-flow-head"><span>Pengeluaran</span><b>${money(expense)}</b></div>
+                <div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${expense / maximum * 100}%"></i></div>
+            </div>` : '<p class="empty-state">Belum ada arus kas bulan ini.</p>';
     }
 
     const today = localDate();
