@@ -3,7 +3,13 @@
 }
 
 .identity {
-    background: linear-gradient(145deg, #342b68, #6f54e9);
+    background-color: #342b68;
+    background-image:
+        linear-gradient(180deg, rgb(22 17 48 / 45%) 0%, rgb(25 19 57 / 62%) 58%, rgb(18 14 42 / 84%) 100%),
+        url("../images/login-salon-exterior.webp");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
 }
 
 .identity-copy > small {
@@ -20,8 +26,12 @@
 }
 
 .login-panel form {
-    border-color: #ececf1;
-    box-shadow: 0 18px 55px #3a2a8012;
+    width: min(400px, 100%);
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .login-panel h2 {

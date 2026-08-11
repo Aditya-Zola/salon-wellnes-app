@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
     <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
     <style>
         @cannot('reservations.view') #reservasi,.go-reservation{display:none!important} @endcannot
         @cannot('employees.view') #pegawai{display:none!important} @endcannot
@@ -43,7 +44,7 @@
     @include('partials.internal-sidebar')
 
     <main>
-        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><label class="search">⌕ <input placeholder="Cari pelanggan, transaksi..."></label><button class="bell">♢<sup>3</sup></button></div></header>
+        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><label class="search">⌕ <input placeholder="Cari pada halaman aktif..."></label>@can('products.view')<button type="button" class="bell go-stock" title="Buka daftar stok menipis" aria-label="Buka daftar stok menipis">♢<sup>0</sup></button>@endcan</div></header>
 
         <section class="page active" id="dashboard">
             <div class="welcome"><div><small>SABTU, 1 AGUSTUS 2026</small><h2>Selamat pagi, Owner.</h2><p>Hari ini ada <b>8 reservasi</b> dan <b>2 stok produk</b> perlu diperhatikan.</p></div><button class="primary open-reservation">＋ Buat reservasi</button></div>
@@ -54,8 +55,8 @@
                 <article class="dashboard-metric" role="button" tabindex="0" data-target="stok" aria-label="Buka daftar produk dengan stok menipis"><i class="rose">!</i><div><small>Stok menipis</small><strong id="metric-low-stock">0 produk</strong><span id="metric-stock-note">Stok aman</span></div></article>
             </div>
             <div class="analytics-grid">
-                <article class="analytics-card"><div class="analytics-head"><div><h3>Analitik Pendapatan</h3><p>Transaksi dibayar dalam 7 hari terakhir</p></div><select aria-label="Periode analitik pendapatan"><option>7 hari terakhir</option></select></div><div class="line-chart" id="revenue-chart"></div></article>
-                <article class="analytics-card treatment-performance"><div class="analytics-head"><div><h3>Performa Treatment</h3><p>Treatment dibayar dalam 7 hari terakhir</p></div><select aria-label="Periode performa treatment"><option>7 hari terakhir</option></select></div><div class="performance-list" id="treatment-performance"></div></article>
+                <article class="analytics-card"><div class="analytics-head"><div><h3>Analitik Pendapatan</h3><p>Transaksi dibayar dalam 7 hari terakhir</p></div></div><div class="line-chart" id="revenue-chart"></div></article>
+                <article class="analytics-card treatment-performance"><div class="analytics-head"><div><h3>Performa Treatment</h3><p>Treatment dibayar dalam 7 hari terakhir</p></div></div><div class="performance-list" id="treatment-performance"></div></article>
             </div>
             <div class="two-column">
                 <div class="card"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></div>
@@ -92,7 +93,7 @@
                 <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
             </div>
             <div id="reservation-calendar-view" class="reservation-view hidden">
-                <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar"></div></div>
+                <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar" aria-label="Kalender reservasi mingguan"></div></div>
             </div>
         </section>
 
@@ -100,17 +101,17 @@
 
         <section class="page" id="kasir"><div class="cashier-grid"><div class="card"><div class="card-head"><div><h3>Pilih antrean</h3><p>Pelanggan yang siap diproses</p></div></div><div id="cashier-queue"></div></div><div class="card receipt empty" id="cashier-receipt"><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih antrean terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled>＋ Tambah produk</button><div class="promo"><b>◇</b><span><strong>Diskon membership</strong><small>Event tersedia untuk member</small></span><select id="discount" disabled><option value="0">Tidak menggunakan diskon</option></select></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon member</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div></div></section>
 
-        <section class="page" id="treatment"><div class="toolbar"><div class="tabs"><button class="active">Semua menu <b id="treatment-count">0</b></button><button>Treatment</button><button>Tambahan</button><button>Paket</button></div><button class="primary show-toast" data-message="Form treatment baru siap dikembangkan">＋ Tambah treatment</button></div><div class="treatment-grid" id="treatment-grid"></div></section>
+        <section class="page" id="treatment"><div class="toolbar"><div><h3>Daftar treatment <b id="treatment-count">0</b></h3><p>Filter jenis layanan akan tersedia saat klasifikasi treatment sudah ditetapkan.</p></div><button class="primary" id="open-treatment">＋ Tambah treatment</button></div><div class="treatment-grid" id="treatment-grid"></div></section>
 
-        <section class="page" id="membership"><div class="metrics three"><article><i class="clay">◇</i><div><small>Member aktif</small><strong id="member-count">0</strong><span id="new-member-count">0 bulan ini</span></div></article><article><i class="gold">✦</i><div><small>Event aktif</small><strong id="promotion-count">0</strong><span id="ending-promotion-count">0 berakhir bulan ini</span></div></article><article><i class="green">↗</i><div><small>Transaksi member</small><strong id="member-transaction-percent">0%</strong><span>Dari total bulan ini</span></div></article></div><div class="two-column membership-grid"><div class="card"><div class="card-head"><div><h3>Daftar membership</h3><p>Gratis tanpa masa berlaku</p></div><button class="primary show-toast" data-message="Form member baru siap dikembangkan">＋ Member baru</button></div><div id="member-list"></div></div><div class="card"><div class="card-head"><div><h3>Event membership</h3><p>Program diskon tersedia</p></div></div><div id="membership-events"></div></div></div></section>
+        <section class="page" id="membership"><div class="metrics three"><article><i class="clay">◇</i><div><small>Member aktif</small><strong id="member-count">0</strong><span id="new-member-count">0 bulan ini</span></div></article><article><i class="gold">✦</i><div><small>Event aktif</small><strong id="promotion-count">0</strong><span id="ending-promotion-count">0 berakhir bulan ini</span></div></article><article><i class="green">↗</i><div><small>Transaksi member</small><strong id="member-transaction-percent">0%</strong><span>Dari total bulan ini</span></div></article></div><div class="two-column membership-grid"><div class="card"><div class="card-head"><div><h3>Daftar membership</h3><p>Gratis tanpa masa berlaku</p></div><button class="primary" id="open-member">＋ Member baru</button></div><div id="member-list"></div></div><div class="card"><div class="card-head"><div><h3>Event membership</h3><p>Program diskon tersedia</p></div></div><div id="membership-events"></div></div></div></section>
 
         <section class="page" id="stok"><div class="toolbar"><div class="tabs"><button class="active stock-tab" data-stock="list">Daftar produk <b id="product-count">0</b></button><button class="stock-tab" data-stock="history">Riwayat keluar-masuk</button></div><div><button class="secondary" id="open-stocktake">Stok opname</button><button class="primary" id="open-product">＋ Tambah produk</button></div></div><div class="card"><div id="stock-list" class="table stock-table"></div><div id="stock-history" class="table history-table hidden"></div></div></section>
 
         <section class="page" id="keuangan"><div class="metrics"><article><i class="green">↗</i><div><small>Pemasukan bulan ini</small><strong id="finance-income">Rp0</strong><span>Data arus kas</span></div></article><article><i class="rose">↘</i><div><small>Pengeluaran</small><strong id="finance-expense">Rp0</strong><span>Data arus kas</span></div></article><article><i class="gold">◎</i><div><small>Saldo bersih</small><strong id="finance-balance">Rp0</strong><span id="finance-period">Bulan berjalan</span></div></article><article><i class="clay">▣</i><div><small>Transaksi</small><strong id="finance-transaction-count">0</strong><span id="finance-transaction-average">Rata-rata Rp0</span></div></article></div><div class="two-column"><div class="card"><div class="card-head"><div><h3>Arus kas</h3><p>Pemasukan dan pengeluaran bulan berjalan</p></div></div><div class="cash-bars" id="cash-bars"></div></div><div class="card"><div class="card-head"><div><h3>Transaksi terbaru</h3><p>Hari ini</p></div></div><div id="transactions"></div></div></div></section>
 
-        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Periode Agustus 2026</h3><p>Data dapat diubah sebelum ditutup</p></div><button class="primary show-toast" data-message="Rekap gaji berhasil disiapkan">Buat rekap gaji</button></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Potongan keterlambatan dimasukkan manual oleh Admin. Komisi dihitung otomatis dari harga normal.</div></section>
+        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Periode Agustus 2026</h3><p>Data dapat diubah sebelum ditutup</p></div><p>Rekap dihitung otomatis dari data penggajian.</p></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Potongan keterlambatan dimasukkan manual oleh Admin. Komisi dihitung otomatis dari harga normal.</div></section>
 
-        <section class="page" id="log"><div class="card activity-card"><div class="filters"><input type="date" value="2026-08-01"><select><option>Semua pengguna</option><option>Super Admin</option><option>Admin</option><option>Marketing</option><option>Kasir</option></select><select><option>Semua aktivitas</option><option>Transaksi</option><option>Stok</option><option>Pengaturan</option></select></div><div id="activity-list"></div></div></section>
+        <section class="page" id="log"><div class="card activity-card"><div class="filters"><input id="activity-filter-date" type="date" aria-label="Filter tanggal aktivitas"><select id="activity-filter-user" aria-label="Filter pengguna aktivitas"><option value="">Semua pengguna</option></select><select id="activity-filter-action" aria-label="Filter jenis aktivitas"><option value="">Semua jenis aktivitas</option></select></div><div id="activity-list"></div></div></section>
     </main>
 </div>
 
@@ -141,6 +142,7 @@
 window.SALON_DATA = @json($salonData ?? []);
 window.SALON_CAPABILITIES = @json([
     'override_price' => auth()->user()->can('reservations.override_price'),
+    'create_reservation' => auth()->user()->can('reservations.create'),
 ]);
 </script>
 <script src="{{ asset('js/salon.js') }}?v={{ filemtime(public_path('js/salon.js')) }}"></script>

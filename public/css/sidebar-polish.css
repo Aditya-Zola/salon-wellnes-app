@@ -1,0 +1,46 @@
+/* Sidebar dibuat tetap dapat di-scroll pada layar pendek, tanpa scrollbar visual. */
+.sidebar{
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    scrollbar-width:none;
+    -ms-overflow-style:none;
+    background:linear-gradient(180deg,#fff 0%,#fff 68%,#fcfbff 100%);
+    box-shadow:8px 0 28px rgba(39,31,78,.025);
+}
+.sidebar::-webkit-scrollbar{width:0;height:0}
+.dashboard-brand{position:relative;padding-bottom:30px}
+.dashboard-brand::after{
+    content:"";
+    position:absolute;
+    right:13px;
+    bottom:14px;
+    left:13px;
+    height:1px;
+    background:linear-gradient(90deg,transparent,#ece8f7 18%,#ece8f7 82%,transparent);
+}
+.sidebar nav button,.sidebar nav>a,.access-menu summary{
+    position:relative;
+    transition:background-color .16s ease,color .16s ease,transform .16s ease;
+}
+.sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:translateX(2px)}
+.sidebar nav button.active::before,.sidebar nav>a.active::before,.access-menu summary.active::before{
+    content:"";
+    position:absolute;
+    left:-10px;
+    width:3px;
+    height:20px;
+    border-radius:0 4px 4px 0;
+    background:linear-gradient(180deg,#8b70ff,#5e3cde);
+}
+.account{
+    background:linear-gradient(135deg,#fdfcff,#f7f5ff);
+    box-shadow:0 -10px 24px rgba(42,34,86,.025);
+}
+.sidebar nav button:focus-visible,.sidebar nav>a:focus-visible,.access-menu summary:focus-visible{
+    outline:2px solid #7858ee;
+    outline-offset:2px;
+}
+@media(prefers-reduced-motion:reduce){
+    .sidebar nav button,.sidebar nav>a,.access-menu summary{transition:none}
+    .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
+}

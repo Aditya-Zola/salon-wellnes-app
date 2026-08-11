@@ -116,6 +116,43 @@ class SalonOperationsTest extends TestCase
         $this->assertDatabaseMissing('customers', ['phone' => '081290000002']);
     }
 
+    public function test_recipe_can_replace_multiple_products_in_one_request(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $products = \DB::table('products')->orderBy('id')->take(2)->get();
+
+        $this->actingAs($this->admin)
+            ->putJson("/operasional/treatment/{$treatment->id}/resep", [
+                'items' => [
+                    ['product_id' => $products[0]->id, 'quantity' => '12.5000'],
+                    ['product_id' => $products[1]->id, 'quantity' => '3'],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Resep treatment berhasil diperbarui.');
+
+        $this->assertSame(2, \DB::table('treatment_product_recipes')->where('treatment_id', $treatment->id)->count());
+        $this->assertDatabaseHas('treatment_product_recipes', [
+            'treatment_id' => $treatment->id,
+            'product_id' => $products[0]->id,
+            'quantity' => '12.5000',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->putJson("/operasional/treatment/{$treatment->id}/resep", [
+                'items' => [
+                    ['product_id' => $products[1]->id, 'quantity' => '5'],
+                ],
+            ])
+            ->assertOk();
+
+        $this->assertSame(1, \DB::table('treatment_product_recipes')->where('treatment_id', $treatment->id)->count());
+        $this->assertDatabaseMissing('treatment_product_recipes', [
+            'treatment_id' => $treatment->id,
+            'product_id' => $products[0]->id,
+        ]);
+    }
+
     public function test_conflict_requires_permission_and_reason_before_it_can_be_overridden(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
@@ -263,7 +300,7 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
-    public function test_checkout_is_rejected_until_every_billable_item_is_finished(): void
+    public function test_checkout_allows_scheduled_reservation_and_service_can_continue_after_payment(): void
     {
         $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
         $employee = $this->employee('EMP-SARI');
@@ -274,6 +311,9 @@ class SalonOperationsTest extends TestCase
         ], ['phone' => '081290000030'])->assertCreated();
 
         $reservationId = (int) $reservation->json('id');
+        $customerId = (int) \DB::table('reservations')->where('id', $reservationId)->value('customer_id');
+        $visitsBefore = (int) \DB::table('customers')->where('id', $customerId)->value('visit_count');
+        $itemId = (int) \DB::table('reservation_items')->where('reservation_id', $reservationId)->value('id');
         $cash = $this->paymentMethod('CASH');
 
         $this->actingAs($this->cashier)
@@ -284,12 +324,19 @@ class SalonOperationsTest extends TestCase
                     'amount' => (int) $treatment->normal_price,
                 ]],
             ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('reservation_id');
+            ->assertCreated()
+            ->assertJsonPath('status', 'paid');
 
-        $this->assertDatabaseMissing('transactions', ['reservation_id' => $reservationId]);
-        $this->assertDatabaseCount('transaction_payments', 0);
-        $this->assertDatabaseCount('cash_entries', 0);
+        $this->assertDatabaseHas('transactions', ['reservation_id' => $reservationId, 'status' => 'paid']);
+        $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'scheduled']);
+        $this->assertSame($visitsBefore, (int) \DB::table('customers')->where('id', $customerId)->value('visit_count'));
+
+        $this->updateItemStatus($reservationId, $itemId, 'in_progress')->assertOk();
+        $this->updateItemStatus($reservationId, $itemId, 'finished')
+            ->assertOk()
+            ->assertJsonPath('reservation_status', 'completed');
+
+        $this->assertSame($visitsBefore + 1, (int) \DB::table('customers')->where('id', $customerId)->value('visit_count'));
     }
 
     public function test_split_payment_must_equal_invoice_total_exactly(): void

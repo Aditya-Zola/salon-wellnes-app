@@ -9,7 +9,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
+use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class UserController extends Controller
 {
@@ -53,10 +55,11 @@ class UserController extends Controller
             abort(403);
         }
 
-        $user->load('roles');
+        $user->load(['roles.permissions', 'permissions']);
         $roles = $this->availableRoles(request()->user());
+        $permissionGroups = $this->availablePermissions(request()->user())->groupBy('group');
 
-        return view('access.users.edit', compact('user', 'roles'));
+        return view('access.users.edit', compact('user', 'roles', 'permissionGroups'));
     }
 
     public function update(Request $request, User $user): RedirectResponse
@@ -71,6 +74,11 @@ class UserController extends Controller
             ],
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],
             'role_id' => ['required', Rule::exists(config('permission.table_names.roles'), 'id')],
+            'permissions' => ['nullable', 'array'],
+            'permissions.*' => [
+                'integer',
+                Rule::exists(config('permission.table_names.permissions'), 'id'),
+            ],
         ]);
 
         $role = Role::findById((int) $validated['role_id']);
@@ -91,6 +99,16 @@ class UserController extends Controller
             ])->withInput();
         }
 
+        $permissionIds = collect($validated['permissions'] ?? [])
+            ->map(fn ($permissionId) => (int) $permissionId)
+            ->unique()
+            ->values();
+
+        if ($role->name !== 'super-admin') {
+            $allowedPermissionIds = $this->availablePermissions($request->user())->pluck('id');
+            abort_unless($permissionIds->diff($allowedPermissionIds)->isEmpty(), 403);
+        }
+
         $user->fill([
             'name' => $validated['name'],
             'email' => $validated['email'],
@@ -102,6 +120,14 @@ class UserController extends Controller
 
         $user->save();
         $user->syncRoles([$role]);
+
+        if ($role->name !== 'super-admin') {
+            // Direct permissions are personal additions to the selected role. Role
+            // permissions stay intact, so changing one user never changes colleagues.
+            $user->syncPermissions(Permission::query()->whereKey($permissionIds)->get());
+        }
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         return redirect()->route('access.users.index')
             ->with('success', 'Pengguna berhasil diperbarui.');
@@ -128,6 +154,17 @@ class UserController extends Controller
         return Role::query()
             ->when(! $actor->isSuperAdmin(), fn ($query) => $query->where('name', '!=', 'super-admin'))
             ->orderBy('display_name')
+            ->get();
+    }
+
+    private function availablePermissions(User $actor): Collection
+    {
+        return Permission::query()
+            ->when(
+                ! $actor->isSuperAdmin(),
+                fn ($query) => $query->whereIn('id', $actor->getAllPermissions()->pluck('id')),
+            )
+            ->orderBy('sort_order')
             ->get();
     }
 }
