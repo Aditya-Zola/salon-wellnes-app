@@ -1409,7 +1409,7 @@ function addReservationItem(values = {}) {
     const card = document.createElement('article');
     card.className = 'reservation-item-card';
     const itemNumber = container.children.length + 1;
-    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="link remove-reservation-item">Hapus</button></div>
+    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment"><span class="material-symbols-outlined">delete</span></button></div>
         <div class="reservation-item-grid">
             <label>Treatment<select class="item-treatment" required><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select></label>
             <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 30 menit</small></label>
