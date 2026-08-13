@@ -22,10 +22,11 @@ class SalonSnapshotService
 
         $mayViewEmployeeMaster = $this->can($user, 'employees.view');
         $mayUseReservationStaff = $this->canAny($user, ['reservations.view', 'reservations.create']);
+        $mayManagePayroll = $this->can($user, 'payroll.manage');
 
-        if ($mayViewEmployeeMaster || $mayUseReservationStaff) {
+        if ($mayViewEmployeeMaster || $mayUseReservationStaff || $mayManagePayroll) {
             $serviceProviders = $this->serviceProviders();
-            $snapshot['employees'] = $mayViewEmployeeMaster ? $this->employees() : $serviceProviders;
+            $snapshot['employees'] = ($mayViewEmployeeMaster || $mayManagePayroll) ? $this->employees() : $serviceProviders;
 
             if ($mayUseReservationStaff) {
                 // Transitional alias plus the canonical explicit key for reservation forms.
@@ -52,8 +53,12 @@ class SalonSnapshotService
             $snapshot['stock_movements'] = $this->stockMovements();
         }
 
-        if ($this->canAny($user, ['cashier.view', 'cashier.process', 'finance.view'])) {
-            $snapshot['transactions'] = $this->transactions();
+        if ($this->canAny($user, ['cashier.view', 'cashier.process', 'finance.view', 'sales.view'])) {
+            $snapshot['transactions'] = $this->transactions($this->can($user, 'sales.view'));
+        }
+
+        if ($this->can($user, 'finance.view')) {
+            $snapshot['cash_entries'] = $this->cashEntries();
         }
 
         if ($this->canAny($user, ['cashier.view', 'cashier.process'])) {
@@ -91,6 +96,16 @@ class SalonSnapshotService
         if ($this->can($user, 'activity.view')) {
             $snapshot['activities'] = DB::table('activity_logs as activity')
                 ->leftJoin('users as user', 'user.id', '=', 'activity.user_id')
+                ->where(function ($query): void {
+                    $query->where('activity.action', 'like', '%.created')
+                        ->orWhere('activity.action', 'like', '%.updated')
+                        ->orWhere('activity.action', 'like', '%.deleted')
+                    ->orWhere('activity.action', 'like', '%.activated')
+                    ->orWhere('activity.action', 'like', '%.deactivated')
+                    ->orWhere('activity.action', 'like', '%.adjusted')
+                    ->orWhere('activity.action', 'like', '%added%')
+                    ->orWhere('activity.action', 'like', '%removed%');
+                })
                 ->latest('activity.created_at')
                 ->limit(50)
                 ->get([
@@ -110,11 +125,22 @@ class SalonSnapshotService
                 });
         }
 
+        $mayManageMemberships = $this->can($user, 'memberships.manage');
         if ($this->canAny($user, ['memberships.view', 'memberships.manage', 'cashier.view', 'cashier.process'])) {
-            $snapshot['promotions'] = DB::table('promotions')
-                ->where('is_active', true)
-                ->whereDate('starts_at', '<=', today())
-                ->whereDate('ends_at', '>=', today())
+            $promotions = DB::table('promotions');
+
+            // Pengelola perlu melihat event yang sudah berakhir/nonaktif agar
+            // masih dapat diperbaiki. Kasir hanya menerima event yang berlaku.
+            if (! $mayManageMemberships) {
+                $promotions
+                    ->where('is_active', true)
+                    ->whereDate('starts_at', '<=', today())
+                    ->whereDate('ends_at', '>=', today());
+            }
+
+            $snapshot['promotions'] = $promotions
+                ->orderByDesc('is_active')
+                ->orderByDesc('ends_at')
                 ->orderBy('name')
                 ->get([
                     'id',
@@ -126,6 +152,8 @@ class SalonSnapshotService
                     'starts_at',
                     'ends_at',
                     'members_only',
+                    'is_active',
+                    'description',
                 ]);
         }
 
@@ -257,8 +285,28 @@ class SalonSnapshotService
             ];
         })
             ->groupBy('reservation_id');
+        $products = DB::table('reservation_product_items')
+            ->whereIn('reservation_id', $reservations->pluck('id'))
+            ->orderBy('id')
+            ->get([
+                'reservation_id',
+                'product_id',
+                'product_name',
+                'unit_code',
+                'quantity',
+                'unit_price',
+            ])
+            ->map(fn (object $item): array => [
+                'reservation_id' => (int) $item->reservation_id,
+                'product_id' => (int) $item->product_id,
+                'name' => $item->product_name,
+                'unit' => $item->unit_code,
+                'quantity' => (float) $item->quantity,
+                'unit_price' => (int) $item->unit_price,
+            ])
+            ->groupBy('reservation_id');
 
-        return $reservations->map(function (object $reservation) use ($items, $maySeePhone, $maySeeTransactionDetails): array {
+        return $reservations->map(function (object $reservation) use ($items, $products, $maySeePhone, $maySeeTransactionDetails): array {
             $reservationItems = collect($items->get($reservation->id, []))->map(function (array $item): array {
                 unset($item['reservation_id']);
 
@@ -284,6 +332,11 @@ class SalonSnapshotService
                 'updated_at' => $reservation->updated_at,
                 'is_paid' => $reservation->transaction_status === 'paid',
                 'items' => $reservationItems,
+                'product_items' => collect($products->get($reservation->id, []))->map(function (array $item): array {
+                    unset($item['reservation_id']);
+
+                    return $item;
+                })->values()->all(),
                 // Transitional first-item fields used by the existing dashboard.
                 'treatment_id' => $first['treatment_id'] ?? null,
                 'treatment_name' => $first['treatment_name'] ?? null,
@@ -426,7 +479,7 @@ class SalonSnapshotService
             ]);
     }
 
-    private function transactions(): mixed
+    private function transactions(bool $includeItems = false): mixed
     {
         $transactions = DB::table('transactions as transaction')
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
@@ -449,6 +502,7 @@ class SalonSnapshotService
                 'transaction.change_amount',
                 'transaction.notes',
                 'transaction.created_at',
+                'transaction.finalized_by',
             ]);
 
         if ($transactions->isEmpty()) {
@@ -464,20 +518,75 @@ class SalonSnapshotService
                 'payment.id',
                 'payment.transaction_id',
                 'payment.amount',
+                'payment.tendered_amount',
                 'payment.reference_number',
                 'payment.paid_at',
                 'method.id as payment_method_id',
                 'method.code as payment_method_code',
                 'method.name as payment_method_name',
+                'method.is_cash as payment_method_is_cash',
             ])
             ->groupBy('transaction_id');
 
-        return $transactions->map(function (object $transaction) use ($payments): object {
+        $items = $includeItems
+            ? DB::table('transaction_items')
+                ->whereIn('transaction_id', $transactions->pluck('id'))
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get([
+                    'id',
+                    'transaction_id',
+                    'item_type',
+                    'name',
+                    'quantity',
+                    'unit_price',
+                    'total_amount',
+                    'sort_order',
+                ])
+                ->groupBy('transaction_id')
+            : collect();
+
+        $cashiers = $includeItems
+            ? DB::table('users')
+                ->whereIn('id', $transactions->pluck('finalized_by')->filter()->unique())
+                ->pluck('name', 'id')
+            : collect();
+
+        return $transactions->map(function (object $transaction) use ($payments, $items, $cashiers, $includeItems): object {
             $transaction->payments = collect($payments->get($transaction->id, []))->values();
             $transaction->payment_method = $transaction->payments->pluck('payment_method_name')->join(' + ');
 
+            if ($includeItems) {
+                $transaction->items = collect($items->get($transaction->id, []))->values();
+                $transaction->cashier_name = $cashiers->get($transaction->finalized_by) ?: 'Kasir Selesa';
+            }
+
             return $transaction;
         });
+    }
+
+    private function cashEntries(): mixed
+    {
+        return DB::table('cash_entries as entry')
+            ->leftJoin('users as creator', 'creator.id', '=', 'entry.created_by')
+            ->leftJoin('transaction_payments as payment', 'payment.id', '=', 'entry.transaction_payment_id')
+            ->leftJoin('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+            ->where('entry.status', 'posted')
+            ->orderByDesc('entry.entry_date')
+            ->orderByDesc('entry.id')
+            ->limit(100)
+            ->get([
+                'entry.id',
+                'entry.transaction_payment_id',
+                'entry.type',
+                'entry.category',
+                'entry.description',
+                'entry.amount',
+                'entry.entry_date',
+                'entry.created_at',
+                'creator.name as created_by_name',
+                'transaction.number as transaction_number',
+            ]);
     }
 
     private function dashboardAnalytics(Authenticatable $user): array

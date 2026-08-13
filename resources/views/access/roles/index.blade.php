@@ -43,13 +43,13 @@
                             <td><span class="count-badge">{{ $role->permissions_count }}</span></td>
                             <td>{{ $role->users_count }} orang</td>
                             <td class="table-actions">
-                                <a class="access-button secondary compact" href="{{ route('access.roles.edit', $role) }}">Atur akses</a>
+                                <a class="access-button action-edit compact" href="{{ route('access.roles.edit', $role) }}">Atur akses</a>
                                 @can('access.roles.manage')
                                     @if (! $role->is_system && $role->users_count === 0)
                                         <form method="POST" action="{{ route('access.roles.destroy', $role) }}" onsubmit="return confirm('Hapus peran ini?')">
                                             @csrf
                                             @method('DELETE')
-                                            <button class="text-danger" type="submit">Hapus</button>
+                                            <button class="access-button action-delete compact" type="submit">Hapus</button>
                                         </form>
                                     @endif
                                 @endcan

@@ -73,7 +73,8 @@ class ReservationService
                 ]);
             }
 
-            $customerId = $this->upsertCustomer($data['name'], $data['phone']);
+            $customer = $this->resolveCustomer($data);
+            $customerId = (int) $customer->id;
             $bookingCode = 'RSV-'.Str::upper((string) Str::ulid());
             $temporaryQueue = 'TMP-'.Str::upper(Str::random(12));
             $firstStart = collect($candidates)->min(fn (array $item) => $item['start']->getTimestamp());
@@ -171,7 +172,7 @@ class ReservationService
                 'reservation.created',
                 'reservation',
                 $reservationId,
-                "Membuat reservasi {$bookingCode} untuk {$data['name']}",
+                "Membuat reservasi {$bookingCode} untuk {$customer->name}",
                 [
                     'booking_code' => $bookingCode,
                     'item_count' => count($createdItems),
@@ -208,6 +209,216 @@ class ReservationService
                 'items' => $createdItems,
             ];
         }, 3);
+    }
+
+    /**
+     * Menambahkan layanan dari kasir sebelum invoice dibayar.
+     * Layanan tetap menjadi reservation item agar jadwal, therapist, resep,
+     * stok, dan komisi mengikuti alur yang sama dengan reservasi awal.
+     */
+    public function addItem(int $reservationId, array $data, Request $request): array
+    {
+        return DB::transaction(function () use ($reservationId, $data, $request): array {
+            $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+            abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+            abort_if($reservation->status === 'cancelled', 422, 'Reservasi yang dibatalkan tidak dapat ditambah treatment.');
+            abort_if(
+                DB::table('transactions')->where('reservation_id', $reservationId)->where('status', 'paid')->exists(),
+                422,
+                'Treatment tambahan hanya dapat dimasukkan sebelum pembayaran.',
+            );
+
+            $treatment = DB::table('treatments')
+                ->where('id', (int) $data['treatment_id'])
+                ->where('is_active', true)
+                ->first();
+            abort_unless($treatment, 422, 'Treatment tidak ditemukan atau tidak aktif.');
+
+            $employeeIds = collect($data['staff'])
+                ->pluck('employee_id')
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->sort()
+                ->values();
+            $employees = DB::table('employees')
+                ->whereIn('id', $employeeIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            if ($employees->count() !== $employeeIds->count() || $employees->contains(
+                fn (object $employee): bool => ! $employee->active || ! $employee->is_service_provider,
+            )) {
+                throw ValidationException::withMessages([
+                    'staff' => ['Semua therapist harus aktif dan dapat menangani layanan.'],
+                ]);
+            }
+
+            $candidate = $this->buildCandidates([
+                'date' => $reservation->reservation_date,
+                'items' => [$data],
+            ], collect([$treatment])->keyBy('id'))[0];
+            $this->validateStaffAssignments([$candidate]);
+            [$conflicts] = $this->findConflicts([$candidate], $employees);
+            if ($conflicts !== []) {
+                throw new ReservationConflictException($conflicts, false);
+            }
+
+            $now = now();
+            $commissionPercent = FixedPoint::normalizePercent((string) $treatment->default_commission_percent);
+            $commissionAmount = FixedPoint::percentOf((int) $treatment->normal_price, $commissionPercent);
+            $sortOrder = ((int) DB::table('reservation_items')->where('reservation_id', $reservationId)->max('sort_order')) + 1;
+            $itemId = DB::table('reservation_items')->insertGetId([
+                'reservation_id' => $reservationId,
+                'treatment_id' => $treatment->id,
+                'treatment_name' => $treatment->name,
+                'duration_minutes' => $treatment->duration_minutes,
+                'normal_price' => $treatment->normal_price,
+                'unit_price' => $treatment->normal_price,
+                'discount_percent' => FixedPoint::normalizePercent(0),
+                'discount_amount' => 0,
+                'net_price' => $treatment->normal_price,
+                'commission_percent' => $commissionPercent,
+                'commission_amount' => $commissionAmount,
+                'scheduled_start_at' => $candidate['start'],
+                'scheduled_end_at' => $candidate['end'],
+                'work_status' => 'waiting',
+                'notes' => $data['notes'] ?? null,
+                'sort_order' => $sortOrder,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            foreach ($data['staff'] as $staff) {
+                $isPrimary = $staff['role'] === 'primary';
+                DB::table('reservation_item_staff')->insert([
+                    'reservation_item_id' => $itemId,
+                    'employee_id' => (int) $staff['employee_id'],
+                    'role' => $staff['role'],
+                    'commission_percent' => $isPrimary ? $commissionPercent : FixedPoint::normalizePercent(0),
+                    'commission_amount' => $isPrimary ? $commissionAmount : 0,
+                    'conflict_override_reason' => null,
+                    'conflict_overridden_by' => null,
+                    'conflict_overridden_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+
+            $this->syncHeaderStatus($reservationId, $request->user()?->id, null);
+            $this->logger->log(
+                $request,
+                'reservation_item.added_from_cashier',
+                'reservation_item',
+                $itemId,
+                "Menambahkan treatment {$treatment->name} dari kasir",
+                ['reservation_id' => $reservationId, 'treatment_id' => (int) $treatment->id],
+            );
+
+            return [
+                'id' => $itemId,
+                'reservation_id' => $reservationId,
+                'treatment_name' => $treatment->name,
+                'start_at' => $candidate['start']->toIso8601String(),
+                'end_at' => $candidate['end']->toIso8601String(),
+            ];
+        }, 3);
+    }
+
+    /** @param array{product_id: int, quantity: string} $data */
+    public function addProductItem(int $reservationId, array $data, Request $request): array
+    {
+        return DB::transaction(function () use ($reservationId, $data, $request): array {
+            $reservation = $this->editableReservation($reservationId);
+            $product = DB::table('products')->where('id', (int) $data['product_id'])->lockForUpdate()->first();
+
+            if (! $product || ! $product->is_active) {
+                throw ValidationException::withMessages(['product_id' => ['Produk tidak tersedia.']]);
+            }
+
+            $quantity = FixedPoint::parse((string) $data['quantity'], FixedPoint::STOCK_SCALE);
+            $stock = FixedPoint::parse((string) $product->current_stock, FixedPoint::STOCK_SCALE);
+            if ($quantity <= 0) {
+                throw ValidationException::withMessages(['quantity' => ['Jumlah produk harus lebih dari nol.']]);
+            }
+            if ((int) $product->selling_price <= 0) {
+                throw ValidationException::withMessages(['product_id' => ["Harga jual {$product->name} belum diatur."]]);
+            }
+
+            $existing = DB::table('reservation_product_items')
+                ->where('reservation_id', $reservationId)
+                ->where('product_id', $product->id)
+                ->lockForUpdate()
+                ->first();
+            $newQuantity = $quantity + ($existing
+                ? FixedPoint::parse((string) $existing->quantity, FixedPoint::STOCK_SCALE)
+                : 0);
+            if ($newQuantity > $stock) {
+                throw ValidationException::withMessages(['quantity' => ["Stok {$product->name} tidak mencukupi."]]);
+            }
+
+            $now = now();
+            DB::table('reservation_product_items')->updateOrInsert(
+                ['reservation_id' => $reservationId, 'product_id' => $product->id],
+                [
+                    'product_name' => $product->name,
+                    'unit_code' => DB::table('units')->where('id', $product->usage_unit_id)->value('code'),
+                    'quantity' => FixedPoint::format($newQuantity, FixedPoint::STOCK_SCALE),
+                    'unit_price' => $product->selling_price,
+                    'updated_at' => $now,
+                    'created_at' => $existing?->created_at ?? $now,
+                ],
+            );
+
+            $this->logger->log(
+                $request,
+                'reservation_product.added_from_cashier',
+                'reservation',
+                $reservationId,
+                "Menambahkan produk {$product->name} ke pesanan {$reservation->queue_number}",
+                ['product_id' => (int) $product->id, 'quantity' => FixedPoint::format($newQuantity, FixedPoint::STOCK_SCALE)],
+            );
+
+            return ['reservation_id' => $reservationId, 'product_id' => (int) $product->id, 'quantity' => FixedPoint::format($newQuantity, FixedPoint::STOCK_SCALE)];
+        }, 3);
+    }
+
+    public function removeProductItem(int $reservationId, int $productId, Request $request): void
+    {
+        DB::transaction(function () use ($reservationId, $productId, $request): void {
+            $reservation = $this->editableReservation($reservationId);
+            $item = DB::table('reservation_product_items')
+                ->where('reservation_id', $reservationId)
+                ->where('product_id', $productId)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($item, 404, 'Produk tidak ditemukan dalam pesanan ini.');
+
+            DB::table('reservation_product_items')->where('id', $item->id)->delete();
+            $this->logger->log(
+                $request,
+                'reservation_product.removed_from_cashier',
+                'reservation',
+                $reservationId,
+                "Menghapus produk {$item->product_name} dari pesanan {$reservation->queue_number}",
+                ['product_id' => $productId],
+            );
+        }, 3);
+    }
+
+    private function editableReservation(int $reservationId): object
+    {
+        $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+        abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+        abort_if($reservation->status === 'cancelled', 422, 'Reservasi yang dibatalkan tidak dapat diubah.');
+        abort_if(
+            DB::table('transactions')->where('reservation_id', $reservationId)->where('status', 'paid')->exists(),
+            422,
+            'Pesanan yang sudah dibayar tidak dapat diubah.',
+        );
+
+        return $reservation;
     }
 
     public function updateHeaderStatus(int $reservationId, string $status, ?string $reason, Request $request): array
@@ -569,6 +780,30 @@ class ReservationService
             'item.scheduled_start_at',
             'item.scheduled_end_at',
         ]);
+    }
+
+    private function resolveCustomer(array $data): object
+    {
+        if (($data['customer_type'] ?? 'guest') === 'member') {
+            $member = DB::table('customers')
+                ->where('id', (int) $data['member_id'])
+                ->where('is_member', true)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $member) {
+                throw ValidationException::withMessages([
+                    'member_id' => ['Member tidak ditemukan atau sudah tidak aktif.'],
+                ]);
+            }
+
+            return $member;
+        }
+
+        $id = $this->upsertCustomer((string) $data['name'], (string) $data['phone']);
+
+        return DB::table('customers')->where('id', $id)->firstOrFail();
     }
 
     private function upsertCustomer(string $name, string $phone): int

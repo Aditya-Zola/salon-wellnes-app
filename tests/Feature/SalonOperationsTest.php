@@ -100,6 +100,116 @@ class SalonOperationsTest extends TestCase
         $this->assertSame((int) $facial->duration_minutes, (int) $persistedSnapshot->duration_minutes);
     }
 
+    public function test_payroll_can_be_created_for_a_registered_employee(): void
+    {
+        $employee = $this->employee('EMP-SARI');
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000099');
+        $paymentMethod = $this->paymentMethod('CASH');
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $total,
+                ]],
+            ])
+            ->assertCreated();
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian', [
+                'employee_id' => $employee->id,
+                'period' => today()->format('Y-m'),
+                'base_salary' => 3500000,
+                'bonus' => 150000,
+                'overtime' => 50000,
+                'late_duration_minutes' => 15,
+                'late_deduction' => 25000,
+                'other_deduction' => 0,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Data penggajian berhasil ditambahkan.');
+
+        $this->assertDatabaseHas('payrolls', [
+            'employee_id' => $employee->id,
+            'period' => today()->format('Y-m'),
+            'employee_name' => 'Sari',
+            'base_salary' => 3500000,
+            'bonus' => 150000,
+            'overtime' => 50000,
+            'late_duration_minutes' => 15,
+            'late_deduction' => 25000,
+            'other_deduction' => 0,
+            'commission' => 4000,
+            'status' => 'draft',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian', [
+                'employee_id' => $employee->id,
+                'period' => today()->format('Y-m'),
+                'base_salary' => 3500000,
+            ])
+            ->assertUnprocessable();
+    }
+
+    public function test_sales_history_includes_paid_invoice_details_for_reprinting(): void
+    {
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000188');
+        $paymentMethod = $this->paymentMethod('CASH');
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $total,
+                    'tendered_amount' => $total + 10000,
+                ]],
+            ])
+            ->assertCreated();
+
+        $snapshot = $this->actingAs($this->cashier)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json();
+
+        $transaction = collect($snapshot['transactions'])->firstWhere('reservation_id', $reservationId);
+        $this->assertNotNull($transaction);
+        $this->assertSame('paid', $transaction['status']);
+        $this->assertCount(2, $transaction['items']);
+        $this->assertSame('Tunai', $transaction['payments'][0]['payment_method_name']);
+        $this->assertSame($total + 10000, (int) $transaction['payments'][0]['tendered_amount']);
+        $this->assertSame('Kasir Selesa', $transaction['cashier_name']);
+    }
+
+    public function test_schedule_and_stock_history_can_be_exported_as_excel(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $employee = $this->employee('EMP-DITA');
+        $this->createReservation($this->admin, [
+            $this->item($treatment->id, '17:00', [
+                ['employee_id' => $employee->id, 'role' => 'primary'],
+            ]),
+        ], [
+            'date' => today()->toDateString(),
+            'name' => 'Pelanggan Ekspor',
+            'phone' => '081290000089',
+        ])->assertCreated();
+
+        $schedule = $this->actingAs($this->admin)
+            ->get('/operasional/reservasi/ekspor?date='.today()->toDateString())
+            ->assertOk();
+        $schedule->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $this->assertStringStartsWith("PK\x03\x04", $schedule->streamedContent());
+
+        $stock = $this->actingAs($this->admin)
+            ->get('/operasional/produk/riwayat-ekspor?from='.today()->toDateString().'&to='.today()->toDateString())
+            ->assertOk();
+        $stock->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $this->assertStringStartsWith("PK\x03\x04", $stock->streamedContent());
+    }
+
     public function test_price_override_requires_the_dedicated_permission(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
@@ -393,6 +503,35 @@ class SalonOperationsTest extends TestCase
         $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'completed']);
     }
 
+    public function test_cash_checkout_records_received_amount_and_change(): void
+    {
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000041');
+        $cash = $this->paymentMethod('CASH');
+
+        $payment = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => $total,
+                    'tendered_amount' => $total + 50000,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('change_amount', 50000);
+
+        $transactionId = (int) $payment->json('id');
+        $this->assertDatabaseHas('transactions', [
+            'id' => $transactionId,
+            'change_amount' => 50000,
+        ]);
+        $this->assertDatabaseHas('transaction_payments', [
+            'transaction_id' => $transactionId,
+            'amount' => $total,
+            'tendered_amount' => $total + 50000,
+        ]);
+    }
+
     public function test_checkout_can_add_sold_product_and_decrease_its_stock(): void
     {
         $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
@@ -445,6 +584,107 @@ class SalonOperationsTest extends TestCase
             'source_type' => 'transaction_sale',
             'source_id' => $transactionId,
         ]);
+    }
+
+    public function test_cashier_product_order_persists_before_payment_and_survives_snapshot_refresh(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $employee = $this->employee('EMP-SARI');
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $cash = $this->paymentMethod('CASH');
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '15:00', [
+                ['employee_id' => $employee->id, 'role' => 'primary'],
+            ]),
+        ], ['phone' => '081290000072'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/reservasi/{$reservationId}/produk", [
+                'product_id' => $product->id,
+                'quantity' => '2.0000',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('product_id', $product->id);
+
+        $this->assertDatabaseHas('reservation_product_items', [
+            'reservation_id' => $reservationId,
+            'product_id' => $product->id,
+            'quantity' => '2.0000',
+        ]);
+        $snapshot = $this->actingAs($this->cashier)->getJson('/operasional/data')->assertOk()->json();
+        $reservationSnapshot = collect($snapshot['reservations'])->firstWhere('id', $reservationId);
+        $this->assertSame($product->name, $reservationSnapshot['product_items'][0]['name']);
+        $this->assertSame(2.0, (float) $reservationSnapshot['product_items'][0]['quantity']);
+
+        $total = (int) $treatment->normal_price + ((int) $product->selling_price * 2);
+        $payment = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => $total,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('total', $total);
+
+        $this->assertDatabaseHas('transaction_items', [
+            'transaction_id' => $payment->json('id'),
+            'item_type' => 'product',
+            'item_id' => $product->id,
+            'quantity' => '2.0000',
+        ]);
+        $this->assertDatabaseMissing('reservation_product_items', ['reservation_id' => $reservationId]);
+    }
+
+    public function test_cashier_can_add_treatment_to_unpaid_reservation_and_it_is_invoiced(): void
+    {
+        $initialTreatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $additionalTreatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $sari = $this->employee('EMP-SARI');
+        $dita = $this->employee('EMP-DITA');
+        $cash = $this->paymentMethod('CASH');
+
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($initialTreatment->id, '09:00', [
+                ['employee_id' => $sari->id, 'role' => 'primary'],
+            ]),
+        ], ['phone' => '081290000071'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/reservasi/{$reservationId}/item", [
+                'treatment_id' => $additionalTreatment->id,
+                'start_time' => '10:30',
+                'staff' => [['employee_id' => $dita->id, 'role' => 'primary']],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('treatment_name', $additionalTreatment->name);
+
+        $this->assertSame(2, (int) \DB::table('reservation_items')->where('reservation_id', $reservationId)->count());
+        $this->assertDatabaseHas('reservation_item_staff', ['employee_id' => $dita->id]);
+
+        $total = (int) $initialTreatment->normal_price + (int) $additionalTreatment->normal_price;
+        $payment = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => $total,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('total', $total);
+
+        $this->assertSame(2, (int) \DB::table('transaction_items')->where('transaction_id', $payment->json('id'))->count());
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/reservasi/{$reservationId}/item", [
+                'treatment_id' => $additionalTreatment->id,
+                'start_time' => '12:00',
+                'staff' => [['employee_id' => $dita->id, 'role' => 'primary']],
+            ])
+            ->assertUnprocessable();
     }
 
     public function test_admin_can_update_product_selling_price(): void
@@ -641,6 +881,199 @@ class SalonOperationsTest extends TestCase
         );
         $this->assertDatabaseMissing('transactions', ['reservation_id' => $reservationId]);
         $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'scheduled']);
+    }
+
+    public function test_finance_manager_can_record_manual_cash_entry_and_see_it_in_history(): void
+    {
+        Carbon::setTestNow('2026-08-13 10:00:00');
+
+        $response = $this->actingAs($this->admin)
+            ->postJson('/operasional/keuangan/arus-kas', [
+                'type' => 'expense',
+                'category' => 'Operasional',
+                'description' => 'Belanja tisu dan air minum',
+                'amount' => 75000,
+                'entry_date' => '2026-08-13',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('message', 'Arus kas berhasil dicatat.');
+
+        $entryId = (int) $response->json('id');
+        $this->assertDatabaseHas('cash_entries', [
+            'id' => $entryId,
+            'transaction_payment_id' => null,
+            'type' => 'expense',
+            'category' => 'Operasional',
+            'amount' => 75000,
+            'entry_date' => '2026-08-13',
+            'status' => 'posted',
+            'created_by' => $this->admin->id,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'finance.cash_entry_created',
+            'subject_type' => 'cash_entry',
+            'subject_id' => $entryId,
+            'user_id' => $this->admin->id,
+        ]);
+
+        $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+        $entry = collect($snapshot['cash_entries'])->firstWhere('id', $entryId);
+        $this->assertSame('Belanja tisu dan air minum', $entry['description']);
+        $this->assertSame('Admin Selesa', $entry['created_by_name']);
+        $this->assertSame(-75000, (int) $snapshot['dashboard']['month_balance']);
+    }
+
+    public function test_cash_entry_requires_finance_manage_permission_and_positive_amount(): void
+    {
+        $payload = [
+            'type' => 'income',
+            'category' => 'Lain-lain',
+            'description' => 'Pemasukan manual',
+            'amount' => 0,
+            'entry_date' => today()->toDateString(),
+        ];
+
+        $this->actingAs($this->marketing)
+            ->postJson('/operasional/keuangan/arus-kas', $payload)
+            ->assertForbidden();
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/keuangan/arus-kas', $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('amount');
+    }
+
+    public function test_checkout_generates_short_sequential_daily_invoice_numbers(): void
+    {
+        Carbon::setTestNow('2026-08-13 10:00:00');
+        [$firstReservationId, $firstTotal] = $this->finishedTwoItemReservation('081290000071');
+        [$secondReservationId, $secondTotal] = $this->finishedTwoItemReservation('081290000072');
+        $paymentMethod = $this->paymentMethod('CASH');
+
+        $first = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $firstReservationId,
+                'payments' => [[
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $firstTotal,
+                ]],
+            ])
+            ->assertCreated();
+        $second = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $secondReservationId,
+                'payments' => [[
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $secondTotal,
+                ]],
+            ])
+            ->assertCreated();
+
+        $this->assertSame('INV-20260813-001', $first->json('number'));
+        $this->assertSame('INV-20260813-002', $second->json('number'));
+        $this->assertDatabaseHas('invoice_sequences', [
+            'invoice_date' => '2026-08-13',
+            'last_number' => 2,
+        ]);
+    }
+
+    public function test_members_and_membership_events_can_be_managed_without_losing_history(): void
+    {
+        $member = $this->actingAs($this->admin)
+            ->postJson('/operasional/member', [
+                'name' => 'Member Kelola',
+                'phone' => '081290000081',
+                'email' => 'member.kelola@example.test',
+            ])
+            ->assertCreated();
+        $memberId = (int) $member->json('id');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/member/{$memberId}", [
+                'name' => 'Member Diperbarui',
+                'phone' => '081290000082',
+                'email' => 'member.baru@example.test',
+            ])
+            ->assertOk();
+        $this->assertDatabaseHas('customers', [
+            'id' => $memberId,
+            'name' => 'Member Diperbarui',
+            'is_member' => true,
+        ]);
+
+        $promotion = $this->actingAs($this->admin)
+            ->postJson('/operasional/promo', [
+                'name' => 'Promo Kelola',
+                'discount_percent' => 12.5,
+                'starts_at' => today()->toDateString(),
+                'ends_at' => today()->addDays(7)->toDateString(),
+                'members_only' => true,
+                'is_active' => true,
+                'description' => 'Promo untuk pengujian',
+            ])
+            ->assertCreated();
+        $promotionId = (int) $promotion->json('id');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/promo/{$promotionId}", [
+                'name' => 'Promo Diperbarui',
+                'discount_percent' => 15,
+                'starts_at' => today()->toDateString(),
+                'ends_at' => today()->addDays(14)->toDateString(),
+                'members_only' => false,
+                'is_active' => true,
+                'description' => null,
+            ])
+            ->assertOk();
+        $this->assertDatabaseHas('promotions', [
+            'id' => $promotionId,
+            'name' => 'Promo Diperbarui',
+            'discount_percent' => '15.0000',
+        ]);
+
+        $this->actingAs($this->admin)->deleteJson("/operasional/member/{$memberId}")->assertOk();
+        $this->actingAs($this->admin)->deleteJson("/operasional/promo/{$promotionId}")->assertOk();
+        $this->assertDatabaseHas('customers', ['id' => $memberId, 'is_member' => false]);
+        $this->assertDatabaseMissing('promotions', ['id' => $promotionId]);
+    }
+
+    public function test_reservation_can_use_registered_member_without_accepting_client_customer_data(): void
+    {
+        $member = $this->actingAs($this->admin)
+            ->postJson('/operasional/member', [
+                'name' => 'Member Reservasi',
+                'phone' => '081290000091',
+            ])
+            ->assertCreated();
+        $memberId = (int) $member->json('id');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+
+        $reservation = $this->actingAs($this->admin)
+            ->postJson('/operasional/reservasi', [
+                'customer_type' => 'member',
+                'member_id' => $memberId,
+                'name' => 'Nama dari browser yang tidak boleh dipakai',
+                'phone' => '000000000000',
+                'date' => today()->addDay()->toDateString(),
+                'source' => 'walk_in',
+                'items' => [$this->item($treatment->id, '16:00', [[
+                    'employee_id' => $therapist->id,
+                    'role' => 'primary',
+                ]])],
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('reservations', [
+            'id' => (int) $reservation->json('id'),
+            'customer_id' => $memberId,
+        ]);
+        $this->assertDatabaseHas('customers', [
+            'id' => $memberId,
+            'name' => 'Member Reservasi',
+            'phone' => '081290000091',
+        ]);
+        $this->assertDatabaseMissing('customers', ['phone' => '000000000000']);
     }
 
     private function createReservation(User $actor, array $items, array $overrides = []): TestResponse

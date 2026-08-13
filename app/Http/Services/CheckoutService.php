@@ -6,7 +6,6 @@ use App\Http\Support\FixedPoint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class CheckoutService
@@ -49,7 +48,7 @@ class CheckoutService
             abort_unless($customer, 422, 'Data pelanggan reservasi tidak ditemukan.');
 
             $serviceSubtotal = $this->sumMoney($billableItems->map(fn (object $item): int => (int) $item->unit_price));
-            $productLines = $this->resolveProductItems($data);
+            $productLines = $this->resolveProductItems($reservationId, $data);
             $productSubtotal = $this->sumMoney($productLines->map(fn (array $line): int => $line['gross_amount']));
             $subtotal = $this->safeAdd($serviceSubtotal, $productSubtotal);
             [$discountPercent, $discountAmount, $promotionId, $discountType] = $this->resolveDiscount($data, $customer, $serviceSubtotal);
@@ -58,6 +57,9 @@ class CheckoutService
             abort_if($total <= 0, 422, 'Transaksi tanpa nilai pembayaran belum didukung.');
 
             $payments = $this->resolvePayments($data, $total);
+            $changeAmount = $this->sumMoney(collect($payments)->map(
+                fn (array $payment): int => $payment['tendered_amount'],
+            )) - $total;
             $idempotencyKey = trim((string) ($data['idempotency_key'] ?? '')) ?: "checkout:reservation:{$reservationId}";
             $reusedKey = DB::table('transactions')->where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
 
@@ -65,8 +67,8 @@ class CheckoutService
                 abort(409, 'Idempotency key sudah digunakan oleh transaksi lain.');
             }
 
-            $number = 'TRX-'.now()->format('Ymd').'-'.Str::upper((string) Str::ulid());
             $now = now();
+            $number = $this->nextInvoiceNumber($now->toDateString(), $now->format('Ymd'));
 
             $transactionId = DB::table('transactions')->insertGetId([
                 'number' => $number,
@@ -79,7 +81,7 @@ class CheckoutService
                 'discount_amount' => $discountAmount,
                 'total' => $total,
                 'paid_amount' => $total,
-                'change_amount' => 0,
+                'change_amount' => $changeAmount,
                 'idempotency_key' => $idempotencyKey,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $request->user()?->id,
@@ -142,12 +144,14 @@ class CheckoutService
 
             $this->deductRecipeStock($billableItems, $transactionId, $number, $request, $now);
             $this->deductSoldProductStock($productLines, $transactionId, $number, $request, $now);
+            DB::table('reservation_product_items')->where('reservation_id', $reservationId)->delete();
 
             foreach ($payments as $payment) {
                 $paymentId = DB::table('transaction_payments')->insertGetId([
                     'transaction_id' => $transactionId,
                     'payment_method_id' => $payment['method']->id,
                     'amount' => $payment['amount'],
+                    'tendered_amount' => $payment['tendered_amount'],
                     'reference_number' => $payment['reference_number'],
                     'paid_at' => $now,
                     'status' => 'confirmed',
@@ -206,15 +210,32 @@ class CheckoutService
                 'number' => $number,
                 'total' => $total,
                 'paid_amount' => $total,
+                'change_amount' => $changeAmount,
+                'cashier_name' => $request->user()?->name,
                 'status' => 'paid',
                 'idempotent_replay' => false,
             ];
         }, 3);
     }
 
-    private function resolveProductItems(array $data): Collection
+    private function resolveProductItems(int $reservationId, array $data): Collection
     {
-        $inputs = collect($data['product_items'] ?? []);
+        // Produk dari kasir disimpan terlebih dahulu pada pesanan reservasi.
+        // Payload lama tetap didukung untuk integrasi/API yang sudah ada, tetapi
+        // tidak dapat menimpa jumlah pesanan yang sudah tersimpan.
+        $saved = DB::table('reservation_product_items')
+            ->where('reservation_id', $reservationId)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get(['product_id', 'quantity'])
+            ->map(fn (object $item): array => [
+                'product_id' => (int) $item->product_id,
+                'quantity' => (string) $item->quantity,
+            ]);
+        $savedProductIds = $saved->pluck('product_id')->map(fn (int $id): int => $id)->all();
+        $legacy = collect($data['product_items'] ?? [])
+            ->reject(fn (array $item): bool => in_array((int) $item['product_id'], $savedProductIds, true));
+        $inputs = $saved->concat($legacy)->values();
 
         if ($inputs->isEmpty()) {
             return collect();
@@ -368,10 +389,27 @@ class CheckoutService
             }
 
             $amount = (int) $input['amount'];
+            $tenderedAmount = isset($input['tendered_amount'])
+                ? (int) $input['tendered_amount']
+                : $amount;
+
+            if ($method->is_cash && $tenderedAmount < $amount) {
+                throw ValidationException::withMessages([
+                    "payments.{$index}.tendered_amount" => ['Uang tunai yang diterima tidak boleh kurang dari nominal pembayaran.'],
+                ]);
+            }
+
+            if (! $method->is_cash && $tenderedAmount !== $amount) {
+                throw ValidationException::withMessages([
+                    "payments.{$index}.tendered_amount" => ['Nominal diterima untuk pembayaran non-tunai harus sama dengan nominal pembayaran.'],
+                ]);
+            }
+
             $paid = $this->safeAdd($paid, $amount);
             $resolved[] = [
                 'method' => $method,
                 'amount' => $amount,
+                'tendered_amount' => $tenderedAmount,
                 'reference_number' => $reference ?: null,
                 'notes' => $input['notes'] ?? null,
             ];
@@ -555,9 +593,32 @@ class CheckoutService
             'number' => $transaction->number,
             'total' => (int) $transaction->total,
             'paid_amount' => (int) $transaction->paid_amount,
+            'change_amount' => (int) $transaction->change_amount,
             'status' => $transaction->status,
             'idempotent_replay' => $replay,
         ];
+    }
+
+    private function nextInvoiceNumber(string $date, string $dateCode): string
+    {
+        DB::table('invoice_sequences')->insertOrIgnore([
+            'invoice_date' => $date,
+            'last_number' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $sequence = DB::table('invoice_sequences')
+            ->where('invoice_date', $date)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        $next = (int) $sequence->last_number + 1;
+        DB::table('invoice_sequences')
+            ->where('invoice_date', $date)
+            ->update(['last_number' => $next, 'updated_at' => now()]);
+
+        return sprintf('INV-%s-%03d', $dateCode, $next);
     }
 
     private function sumMoney(Collection $amounts): int

@@ -19,15 +19,15 @@ class LoginTest extends TestCase
             ->assertDontSee('name="role"', false);
     }
 
-    public function test_user_can_login_with_email_and_password_only(): void
+    public function test_user_can_login_with_username_and_password_only(): void
     {
         $user = User::factory()->create([
-            'email' => 'admin@selesa.test',
+            'username' => 'admin.selesa',
             'password' => 'password',
         ]);
 
         $response = $this->post(route('login.store'), [
-            'email' => $user->email,
+            'username' => $user->username,
             'password' => 'password',
         ]);
 
@@ -38,15 +38,15 @@ class LoginTest extends TestCase
     public function test_login_fails_when_password_is_incorrect(): void
     {
         User::factory()->create([
-            'email' => 'admin@selesa.test',
+            'username' => 'admin.selesa',
             'password' => 'password',
         ]);
 
         $this->post(route('login.store'), [
-            'email' => 'admin@selesa.test',
+            'username' => 'admin.selesa',
             'password' => 'wrong-password',
         ])
-            ->assertSessionHasErrors('email');
+            ->assertSessionHasErrors('username');
 
         $this->assertGuest();
     }

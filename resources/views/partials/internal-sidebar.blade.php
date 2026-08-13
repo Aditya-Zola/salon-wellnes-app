@@ -2,16 +2,15 @@
     $user = auth()->user();
     $isDashboard = request()->routeIs('dashboard');
     $modules = [
+        ['page' => 'membership', 'label' => 'Membership', 'icon' => 'workspace_premium', 'permission' => 'memberships.view'],
         ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard', 'permission' => 'dashboard.view'],
         ['page' => 'reservasi', 'label' => 'Reservasi', 'icon' => 'calendar_month', 'permission' => 'reservations.view'],
-        ['page' => 'pegawai', 'label' => 'Pegawai', 'icon' => 'badge', 'permission' => 'employees.view'],
-        ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
-        ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
-        ['page' => 'membership', 'label' => 'Membership', 'icon' => 'workspace_premium', 'permission' => 'memberships.view'],
         ['page' => 'stok', 'label' => 'Produk & Stok', 'icon' => 'inventory_2', 'permission' => 'products.view'],
+        ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
+        ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
+        ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
         ['page' => 'keuangan', 'label' => 'Keuangan', 'icon' => 'payments', 'permission' => 'finance.view'],
         ['page' => 'penggajian', 'label' => 'Penggajian', 'icon' => 'account_balance_wallet', 'permission' => 'payroll.view'],
-        ['page' => 'log', 'label' => 'Log Aktivitas', 'icon' => 'history', 'permission' => 'activity.view'],
     ];
 @endphp
 
@@ -52,12 +51,26 @@
                     @endcan
                     @can('access.users.view')
                         <a class="{{ request()->routeIs('access.users.*') ? 'active' : '' }}" href="{{ route('access.users.index') }}">
-                            <span>Pengguna</span>
+                            <span>Pengguna & Karyawan</span>
                         </a>
                     @endcan
                 </div>
             </details>
         @endcanany
+
+        @can('activity.view')
+            @if ($isDashboard)
+                <button type="button" data-page="log">
+                    <b class="material-symbols-outlined nav-icon">history</b>
+                    <span>Log Aktivitas</span>
+                </button>
+            @else
+                <a href="{{ route('dashboard') }}#log">
+                    <b class="material-symbols-outlined nav-icon">history</b>
+                    <span>Log Aktivitas</span>
+                </a>
+            @endif
+        @endcan
     </nav>
 
     <div class="account">

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Employee;
 use App\Models\User;
 use Database\Seeders\AccessControlSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -32,7 +33,7 @@ class AccessControlTest extends TestCase
 
         $this->actingAs($user)->get(route('access.users.index'))
             ->assertOk()
-            ->assertSee('Input pengguna baru');
+            ->assertSee('Tambah pengguna');
     }
 
     public function test_marketing_cannot_open_access_control_pages(): void
@@ -80,16 +81,53 @@ class AccessControlTest extends TestCase
         $marketing = Role::findByName('marketing');
 
         $this->actingAs($actor)->post(route('access.users.store'), [
-            'name' => 'Marketing Baru',
-            'email' => 'marketing.baru@selesa.test',
+            'identity' => 'marketing.baru',
             'role_id' => $marketing->id,
             'password' => 'password123',
             'password_confirmation' => 'password123',
         ])->assertRedirect(route('access.users.index'));
 
-        $created = User::query()->where('email', 'marketing.baru@selesa.test')->firstOrFail();
+        $created = User::query()->where('username', 'marketing.baru')->firstOrFail();
         $this->assertTrue($created->hasRole('marketing'));
         $this->assertCount(1, $created->roles);
+        $this->assertDatabaseHas('employees', [
+            'user_id' => $created->id,
+            'name' => 'Marketing Baru',
+        ]);
+    }
+
+    public function test_employee_can_be_recorded_without_a_system_login(): void
+    {
+        $actor = User::factory()->create();
+        $actor->syncRoles('super-admin');
+
+        $this->actingAs($actor)->post(route('access.users.store'), [
+            'identity' => 'Dita Terapis',
+            'role_id' => 'therapist',
+            'specialty' => 'Hair therapist',
+        ])->assertRedirect(route('access.users.index'));
+
+        $employee = Employee::query()->where('name', 'Dita Terapis')->firstOrFail();
+        $this->assertNull($employee->user_id);
+        $this->assertTrue($employee->is_service_provider);
+        $this->assertDatabaseMissing('users', ['name' => 'Dita Terapis']);
+    }
+
+    public function test_employee_without_history_can_be_deleted(): void
+    {
+        $actor = User::factory()->create();
+        $actor->syncRoles('super-admin');
+        $employee = Employee::create([
+            'code' => 'EMP-DELETE',
+            'name' => 'Karyawan Hapus',
+            'is_service_provider' => true,
+            'active' => true,
+        ]);
+
+        $this->actingAs($actor)->delete(route('access.users.employees.destroy', $employee))
+            ->assertRedirect(route('access.users.index'));
+
+        $this->assertModelMissing($employee);
     }
 
     public function test_super_admin_can_grant_a_personal_action_permission_to_a_user(): void
@@ -115,6 +153,7 @@ class AccessControlTest extends TestCase
 
         $this->actingAs($actor)->put(route('access.users.update', $user), [
             'name' => $user->name,
+            'username' => $user->username,
             'email' => $user->email,
             'role_id' => $role->id,
             'permissions' => [$productCreate->id],

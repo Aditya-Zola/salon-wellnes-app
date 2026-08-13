@@ -18,7 +18,12 @@ Route::middleware('auth')->group(function () {
 
     Route::prefix('operasional')->name('operations.')->group(function () {
         Route::get('/data', [SalonController::class, 'data'])->name('data');
+        Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
+        Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
+        Route::post('/reservasi/{reservation}/item', [SalonController::class, 'storeReservationItem'])->middleware('permission:cashier.process')->name('reservations.items.store');
+        Route::post('/reservasi/{reservation}/produk', [SalonController::class, 'storeReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.store');
+        Route::delete('/reservasi/{reservation}/produk/{product}', [SalonController::class, 'destroyReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.destroy');
         Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view|reservations.create')->name('reservations.therapists');
         Route::patch('/reservasi/{reservation}/item/{item}/status', [SalonController::class, 'updateReservationItemStatus'])->middleware('permission:reservations.update')->name('reservations.items.status');
         Route::patch('/reservasi/{id}', [SalonController::class, 'updateReservation'])->middleware('permission:reservations.update')->name('reservations.update');
@@ -30,7 +35,14 @@ Route::middleware('auth')->group(function () {
         Route::post('/treatment', [SalonController::class, 'storeTreatment'])->middleware('permission:treatments.create')->name('treatments.store');
         Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');
         Route::post('/member', [SalonController::class, 'storeMember'])->middleware('permission:memberships.manage')->name('members.store');
+        Route::patch('/member/{id}', [SalonController::class, 'updateMember'])->middleware('permission:memberships.manage')->name('members.update');
+        Route::delete('/member/{id}', [SalonController::class, 'destroyMember'])->middleware('permission:memberships.manage')->name('members.destroy');
+        Route::post('/promo', [SalonController::class, 'storePromotion'])->middleware('permission:memberships.manage')->name('promotions.store');
+        Route::patch('/promo/{id}', [SalonController::class, 'updatePromotion'])->middleware('permission:memberships.manage')->name('promotions.update');
+        Route::delete('/promo/{id}', [SalonController::class, 'destroyPromotion'])->middleware('permission:memberships.manage')->name('promotions.destroy');
         Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
+        Route::post('/keuangan/arus-kas', [SalonController::class, 'storeCashEntry'])->middleware('permission:finance.manage')->name('finance.cash-entries.store');
+        Route::post('/penggajian', [SalonController::class, 'storePayroll'])->middleware('permission:payroll.manage')->name('payroll.store');
         Route::patch('/penggajian/{id}', [SalonController::class, 'updatePayroll'])->middleware('permission:payroll.manage')->name('payroll.update');
     });
 
@@ -65,9 +77,18 @@ Route::middleware('auth')->group(function () {
         Route::get('/pengguna/{user}/edit', [UserController::class, 'edit'])
             ->middleware('permission:access.users.view')
             ->name('users.edit');
+        Route::get('/pengguna/karyawan/{employee}/edit', [UserController::class, 'editEmployee'])
+            ->middleware('permission:access.users.view')
+            ->name('users.employees.edit');
         Route::put('/pengguna/{user}', [UserController::class, 'update'])
             ->middleware('permission:access.users.manage')
             ->name('users.update');
+        Route::put('/pengguna/karyawan/{employee}', [UserController::class, 'updateEmployee'])
+            ->middleware('permission:access.users.manage')
+            ->name('users.employees.update');
+        Route::delete('/pengguna/karyawan/{employee}', [UserController::class, 'destroyEmployee'])
+            ->middleware('permission:access.users.manage')
+            ->name('users.employees.destroy');
         Route::delete('/pengguna/{user}', [UserController::class, 'destroy'])
             ->middleware('permission:access.users.manage')
             ->name('users.destroy');
