@@ -87,3 +87,29 @@
         </form>
     </div>
 </aside>
+
+<button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Tutup sidebar" title="Tutup sidebar">
+    <span class="material-symbols-outlined" aria-hidden="true">menu_open</span>
+</button>
+
+<script>
+(() => {
+    const sidebar = document.querySelector('.sidebar');
+    const toggle = document.getElementById('sidebar-toggle');
+    if (!sidebar || !toggle) return;
+
+    sidebar.id = 'app-sidebar';
+    const storageKey = 'selesa-sidebar-collapsed';
+    const setCollapsed = (collapsed) => {
+        document.body.classList.toggle('sidebar-is-collapsed', collapsed);
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        toggle.setAttribute('aria-label', collapsed ? 'Buka sidebar' : 'Tutup sidebar');
+        toggle.title = collapsed ? 'Buka sidebar' : 'Tutup sidebar';
+        toggle.querySelector('span').textContent = collapsed ? 'menu' : 'menu_open';
+        localStorage.setItem(storageKey, String(collapsed));
+    };
+
+    setCollapsed(localStorage.getItem(storageKey) === 'true');
+    toggle.addEventListener('click', () => setCollapsed(!document.body.classList.contains('sidebar-is-collapsed')));
+})();
+</script>
