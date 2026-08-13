@@ -22,6 +22,9 @@ const localDate = () => {
 const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
 const capabilities = window.SALON_CAPABILITIES || {};
 const canCreateReservations = Boolean(capabilities.create_reservation);
+const canUpdateReservations = Boolean(capabilities.update_reservation);
+const canManageFinance = Boolean(capabilities.manage_finance);
+const canManageMemberships = Boolean(capabilities.manage_memberships);
 const headerStatusLabels = {
     paid: 'Lunas',
     scheduled: 'Terjadwal',
@@ -49,19 +52,9 @@ const headerStatusTransitions = {
     cancelled: [],
     completed: [],
 };
-const workStatusTransitions = {
-    waiting: ['in_progress', 'cancelled'],
-    in_progress: ['continue', 'ready', 'finished', 'overtime', 'cancelled'],
-    continue: ['in_progress', 'ready', 'finished', 'overtime', 'cancelled'],
-    ready: ['in_progress', 'finished', 'overtime', 'cancelled'],
-    overtime: ['continue', 'ready', 'finished', 'cancelled'],
-    finished: [],
-    cancelled: [],
-};
 
 let state = window.SALON_DATA || {};
 let selectedReservation = null;
-let cashierProductItems = [];
 let reservationMode = 'today';
 let reservationStatusGroup = null;
 let reservationView = 'queue';
@@ -80,6 +73,7 @@ const copy = {
     treatment: ['Treatment', 'Kelola menu, paket, harga, dan resep produk'],
     membership: ['Membership', 'Data member dan program khusus'],
     stok: ['Produk & Stok', 'Pantau persediaan dan pergerakan produk'],
+    penjualan: ['Penjualan', 'Riwayat transaksi lunas dan cetak ulang nota'],
     keuangan: ['Keuangan', 'Arus kas dan laporan transaksi'],
     penggajian: ['Penggajian', 'Gaji, bonus, keterlambatan, dan komisi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
@@ -530,7 +524,9 @@ function renderReservations() {
 
     let rows = all.filter((reservation) => {
         const date = reservationDate(reservation);
-        return date >= weekStartKey && date <= weekEndKey;
+        return reservationStatus(reservation) !== 'cancelled'
+            && date >= weekStartKey
+            && date <= weekEndKey;
     });
 
     if (selectedEmployee) {
@@ -542,7 +538,10 @@ function renderReservations() {
         rows = rows.filter((reservation) => reservationStatus(reservation) === selectedStatus);
     }
 
-    const todayRows = all.filter((reservation) => reservationDate(reservation) === selectedDate);
+    const todayRows = all.filter((reservation) => (
+        reservationStatus(reservation) !== 'cancelled'
+        && reservationDate(reservation) === selectedDate
+    ));
     const short = document.getElementById('queue-short');
     if (short) {
         short.innerHTML = todayRows.slice(0, 5).map((reservation) => {
@@ -685,6 +684,9 @@ function openReservationDetail(reservation) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
     const items = reservationItems(reservation);
+    const paid = isAlreadyPaid(reservation);
+    const serviceStatus = reservationStatus(reservation);
+    const paymentStatus = paid ? 'Lunas' : 'Belum dibayar';
     wrapper.innerHTML = `<div class="modal-box reservation-modal-box">
         <div class="modal-head">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
@@ -693,53 +695,57 @@ function openReservationDetail(reservation) {
         <div class="quick-info reservation-summary">
             <p><span>Telepon</span><b>${escapeHtml(reservationPhone(reservation) || '-')}</b></p>
             <p><span>Sumber booking</span><b>${escapeHtml(reservation.source || '-')}</b></p>
-            <p><span>Status kunjungan</span><b>${escapeHtml(statusLabel(reservationStatus(reservation)))}</b></p>
+            <p><span>Status layanan</span><b>${escapeHtml(statusLabel(serviceStatus))}</b></p>
+            <p><span>Pembayaran</span><b class="reservation-payment-status ${paid ? 'paid' : 'unpaid'}">${paymentStatus}</b></p>
             <p><span>Catatan</span><b>${escapeHtml(reservation.general_notes || reservation.notes || '-')}</b></p>
         </div>
-        <div class="reservation-detail-items">${items.map((item, index) => `<article class="reservation-item-card">
-            <div class="reservation-item-title"><strong>${index + 1}. ${escapeHtml(itemTreatmentName(item))}</strong><b>${money(itemPrice(item))}</b></div>
-            <div class="reservation-detail-meta">
-                <span>Jadwal <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
-                <span>Durasi <b>${Number(item.duration_minutes || 0)} menit</b></span>
-                <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
-            </div>
-            <label>Status pekerjaan
-                <select class="work-status-select status-select" data-reservation-id="${Number(reservation.id)}" data-item-id="${Number(item.id)}" ${reservationStatus(reservation) === 'cancelled' || !(workStatusTransitions[item.work_status] || []).length ? 'disabled' : ''}>
-                    ${[item.work_status, ...(workStatusTransitions[item.work_status] || [])].map((value) => `<option value="${value}" ${item.work_status === value ? 'selected' : ''}>${workStatusLabels[value] || value}</option>`).join('')}
-                </select>
-            </label>
-        </article>`).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
+        <div class="reservation-detail-items">${items.map((item, index) => {
+            const currentStatus = item.work_status || 'waiting';
+            const nextStatus = currentStatus === 'waiting'
+                ? 'in_progress'
+                : ['in_progress', 'continue', 'ready', 'overtime'].includes(currentStatus)
+                    ? 'finished'
+                    : null;
+            const actionLabel = nextStatus === 'in_progress' ? 'Mulai treatment' : 'Selesaikan treatment';
+            const actionIcon = nextStatus === 'in_progress' ? 'play_arrow' : 'check';
+            const action = nextStatus && canUpdateReservations
+                ? `<button type="button" class="treatment-progress-action ${nextStatus === 'finished' ? 'primary' : ''}" data-item-id="${Number(item.id)}" data-next-status="${nextStatus}"><span class="material-symbols-outlined">${actionIcon}</span>${actionLabel}</button>`
+                : '';
+
+            return `<article class="reservation-item-card">
+                <div class="reservation-item-title"><strong>${index + 1}. ${escapeHtml(itemTreatmentName(item))}</strong><b>${money(itemPrice(item))}</b></div>
+                <div class="reservation-detail-meta">
+                    <span>Jadwal <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
+                    <span>Durasi <b>${Number(item.duration_minutes || 0)} menit</b></span>
+                    <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
+                </div>
+                <div class="reservation-work-status"><span><small>Status pengerjaan</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span>${action}</div>
+            </article>`;
+        }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
         <footer><button type="button" class="primary quick-close">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
     });
-    wrapper.querySelectorAll('.work-status-select').forEach((select) => {
-        select.dataset.previous = select.value;
-        select.onchange = async () => {
-            let reason = null;
-            if (select.value === 'cancelled') {
-                reason = window.prompt('Tuliskan alasan pembatalan treatment:')?.trim() || '';
-                if (!reason) {
-                    select.value = select.dataset.previous;
-                    toast('Alasan pembatalan wajib diisi.', true);
-                    return;
-                }
-            }
-            select.disabled = true;
+    wrapper.querySelectorAll('.treatment-progress-action').forEach((button) => {
+        button.onclick = async () => {
+            const nextStatus = button.dataset.nextStatus;
+            const isFinishing = nextStatus === 'finished';
+            if (isFinishing && !window.confirm('Tandai treatment ini sudah selesai?')) return;
+
+            button.disabled = true;
             try {
-                const result = await api(`/operasional/reservasi/${select.dataset.reservationId}/item/${select.dataset.itemId}/status`, {
+                await api(`/operasional/reservasi/${Number(reservation.id)}/item/${Number(button.dataset.itemId)}/status`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ status: select.value, reason }),
+                    body: JSON.stringify({ status: nextStatus }),
                 });
-                toast(result.message);
                 wrapper.remove();
                 await refresh();
+                toast(isFinishing ? 'Treatment ditandai selesai.' : 'Treatment dimulai.');
             } catch (error) {
-                select.value = select.dataset.previous;
-                select.disabled = false;
                 toast(error.message, true);
+                button.disabled = false;
             }
         };
     });
@@ -747,7 +753,6 @@ function openReservationDetail(reservation) {
 
 function resetCashier() {
     selectedReservation = null;
-    cashierProductItems = [];
     document.getElementById('cashier-receipt')?.classList.add('empty');
     document.getElementById('receipt-number').textContent = '—';
     document.getElementById('receipt-name').textContent = 'Pilih antrean terlebih dahulu';
@@ -771,8 +776,12 @@ function selectedTotal() {
     const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
     if (!reservation) return 0;
     const serviceSubtotal = reservationSubtotal(reservation);
-    const productSubtotal = cashierProductItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
+    const productSubtotal = reservationProductItems(reservation).reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
     return Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal);
+}
+
+function reservationProductItems(reservation) {
+    return array(reservation?.product_items);
 }
 
 function renderCashier() {
@@ -804,9 +813,6 @@ function renderCashier() {
 }
 
 function selectCashier(id) {
-    if (selectedReservation && Number(selectedReservation) !== Number(id)) {
-        cashierProductItems = [];
-    }
     selectedReservation = id;
     document.querySelectorAll('.cashier-item').forEach((element) => {
         element.classList.toggle('active', Number(element.dataset.id) === Number(id));
@@ -822,7 +828,8 @@ function selectCashier(id) {
     if (!reservation.is_member && discountSelect) discountSelect.value = '0';
     const items = reservationItems(reservation).filter((item) => item.work_status !== 'cancelled');
     const serviceSubtotal = reservationSubtotal(reservation);
-    const productSubtotal = cashierProductItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
+    const productItems = reservationProductItems(reservation);
+    const productSubtotal = productItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
     const subtotal = serviceSubtotal + productSubtotal;
     const discount = selectedDiscount();
     const discountAmount = Math.round(serviceSubtotal * discount / 100);
@@ -837,7 +844,7 @@ function selectCashier(id) {
         <span><b>${escapeHtml(itemTreatmentName(item))}</b><small>Therapist: ${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</small></span>
         <strong>${money(itemPrice(item))}</strong>
     </div>`).join('');
-    const productLines = cashierProductItems.map((item) => `<div class="receipt-line receipt-product-line">
+    const productLines = productItems.map((item) => `<div class="receipt-line receipt-product-line">
         <i class="material-symbols-outlined">inventory_2</i>
         <span><b>${escapeHtml(item.name)}</b><small>${Number(item.quantity)} ${escapeHtml(item.unit || 'pcs')} × ${money(item.unit_price)}</small></span>
         <strong>${money(Number(item.unit_price) * Number(item.quantity))}</strong>
@@ -910,20 +917,290 @@ function openCashierProductPicker() {
             toast('Jumlah produk melebihi stok yang tersedia.', true);
             return;
         }
-        const existing = cashierProductItems.find((item) => Number(item.product_id) === Number(product.id));
-        if (existing) {
-            if (Number(existing.quantity) + amount > productStock(product)) {
-                toast('Jumlah total produk melebihi stok yang tersedia.', true);
-                return;
-            }
-            existing.quantity = Number(existing.quantity) + amount;
-        } else {
-            cashierProductItems.push({ product_id: Number(product.id), name: product.name, unit: productUnit(product), unit_price: Number(product.selling_price), quantity: amount });
-        }
-        wrapper.remove();
-        selectCashier(selectedReservation);
-        toast('Produk ditambahkan ke transaksi.');
+        submitButton.disabled = true;
+        api(`/operasional/reservasi/${Number(selectedReservation)}/produk`, {
+            method: 'POST',
+            body: JSON.stringify({ product_id: Number(product.id), quantity: String(amount) }),
+        }).then(async (result) => {
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+            selectCashier(selectedReservation);
+        }).catch((error) => {
+            submitButton.disabled = false;
+            toast(error.message, true);
+        });
     };
+}
+
+function openCashierAddPicker() {
+    if (!selectedReservation) {
+        toast('Pilih antrean terlebih dahulu.', true);
+        return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambahkan ke transaksi</h2><p>Pilih jenis tambahan sebelum pembayaran.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-add-type="product"><i class="material-symbols-outlined">inventory_2</i><span><b>Produk</b><small>Jual produk retail atau add-on.</small></span></button><button type="button" class="cashier-add-choice" data-add-type="treatment"><i class="material-symbols-outlined">spa</i><span><b>Treatment</b><small>Pilih layanan, jam, dan therapist.</small></span></button></div></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('[data-add-type="product"]').onclick = () => {
+        wrapper.remove();
+        openCashierProductPicker();
+    };
+    wrapper.querySelector('[data-add-type="treatment"]').onclick = () => {
+        wrapper.remove();
+        openCashierTreatmentPicker();
+    };
+}
+
+function openCashierTreatmentPicker() {
+    const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+    const treatments = array(state.treatments).filter((treatment) => Number(treatment.is_active ?? 1) === 1);
+    if (!reservation || !treatments.length) {
+        toast('Tidak ada treatment aktif yang dapat ditambahkan.', true);
+        return;
+    }
+
+    const defaultTime = String(reservation.reservation_time || '09:00').slice(0, 5);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah treatment</h2><p>Masuk ke jadwal reservasi dan invoice sebelum pembayaran.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Treatment<select name="treatment_id">${treatments.map((treatment) => `<option value="${Number(treatment.id)}">${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('')}</select></label><label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label><label class="treatment-therapist-field">Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label><p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist…</p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" disabled>Tambahkan</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    const treatmentSelect = wrapper.querySelector('[name="treatment_id"]');
+    const timeSelect = wrapper.querySelector('[name="start_time"]');
+    const employeeSelect = wrapper.querySelector('[name="employee_id"]');
+    const availability = wrapper.querySelector('.cashier-treatment-availability');
+    const submitButton = wrapper.querySelector('button.primary');
+    const syncSubmitState = () => {
+        submitButton.disabled = employeeSelect.disabled || !employeeSelect.value;
+    };
+
+    const loadAvailability = async () => {
+        employeeSelect.disabled = true;
+        submitButton.disabled = true;
+        availability.textContent = 'Memeriksa jadwal therapist…';
+        try {
+            const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(reservation.reservation_date)}&start_time=${encodeURIComponent(timeSelect.value)}&treatment_id=${encodeURIComponent(treatmentSelect.value)}`);
+            const available = array(data.employees).filter((employee) => employee.available);
+            employeeSelect.innerHTML = available.length
+                ? `<option value="">Pilih therapist</option>${available.map((employee) => `<option value="${Number(employee.id)}">${escapeHtml(employee.name)}${employee.specialty ? ` · ${escapeHtml(employee.specialty)}` : ''}</option>`).join('')}`
+                : '<option value="">Tidak ada therapist tersedia</option>';
+            employeeSelect.disabled = !available.length;
+            syncSubmitState();
+            availability.textContent = available.length
+                ? `${available.length} therapist tersedia untuk ${timeSelect.value}.`
+                : `Tidak ada therapist tersedia pada ${timeSelect.value}. Coba jam lain.`;
+        } catch (error) {
+            employeeSelect.innerHTML = '<option value="">Jadwal tidak dapat dimuat</option>';
+            employeeSelect.disabled = true;
+            syncSubmitState();
+            availability.textContent = error.message;
+            toast(error.message, true);
+        }
+    };
+
+    treatmentSelect.addEventListener('change', loadAvailability);
+    timeSelect.addEventListener('change', loadAvailability);
+    employeeSelect.addEventListener('change', syncSubmitState);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        if (!employeeSelect.value) {
+            toast('Pilih therapist yang tersedia.', true);
+            return;
+        }
+        submitButton.disabled = true;
+        try {
+            const result = await api(`/operasional/reservasi/${Number(reservation.id)}/item`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    treatment_id: Number(treatmentSelect.value),
+                    start_time: timeSelect.value,
+                    staff: [{ employee_id: Number(employeeSelect.value), role: 'primary' }],
+                }),
+            });
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+            selectCashier(reservation.id);
+        } catch (error) {
+            submitButton.disabled = false;
+            toast(error.message, true);
+            if (error.status === 409) loadAvailability();
+        }
+    };
+    loadAvailability();
+}
+
+function receiptPayload(result, reservation, productItems, payments) {
+    const treatments = reservationItems(reservation)
+        .filter((item) => item.work_status !== 'cancelled')
+        .map((item) => ({
+            type: 'Treatment',
+            name: itemTreatmentName(item),
+            detail: `Therapist: ${itemStaff(item).map(employeeName).join(', ') || '-'}`,
+            quantity: 1,
+            unitPrice: itemPrice(item),
+            total: itemPrice(item),
+        }));
+    const products = productItems.map((item) => ({
+        type: 'Produk',
+        name: item.name,
+        detail: `${Number(item.quantity)} ${item.unit || 'pcs'} × ${money(item.unit_price)}`,
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.unit_price),
+        total: Number(item.quantity) * Number(item.unit_price),
+    }));
+    const serviceSubtotal = reservationSubtotal(reservation);
+    const subtotal = serviceSubtotal + products.reduce((total, item) => total + item.total, 0);
+    const discount = Math.round(serviceSubtotal * selectedDiscount() / 100);
+
+    return {
+        number: result.number || result.transaction_number,
+        customer: reservationCustomerName(reservation),
+        queue: reservation.queue_number || reservation.booking_code,
+        date: new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }),
+        items: [...treatments, ...products],
+        payments: payments.map((payment) => {
+            const method = paymentMethods().find((item) => Number(item.id) === Number(payment.payment_method_id));
+            return {
+                name: method?.name || 'Pembayaran',
+                isCash: Boolean(Number(method?.is_cash ?? 0)),
+                amount: Number(payment.amount),
+                tenderedAmount: Number(payment.tendered_amount || payment.amount),
+                reference: payment.reference_number,
+            };
+        }),
+        subtotal,
+        discount,
+        total: Number(result.total),
+        change: Number(result.change_amount || 0),
+        cashier: result.cashier_name || 'Kasir Selesa',
+    };
+}
+
+function legacyPrintReceipt(receipt, format) {
+    const compact = format === 'struk';
+    const lines = receipt.items.map((item) => `<tr><td><b>${escapeHtml(item.name)}</b>${compact ? '' : `<small>${escapeHtml(item.type)} · ${escapeHtml(item.detail)}</small>`}</td><td class="amount">${compact ? `${item.quantity}×` : money(item.total)}</td></tr>`).join('');
+    const paymentLines = receipt.payments.map((payment) => `<p>${escapeHtml(payment.name)}${payment.reference ? ` · ${escapeHtml(payment.reference)}` : ''}<b>${money(payment.amount)}</b></p>`).join('');
+    const layout = compact ? 'thermal' : 'invoice';
+    const title = compact ? 'STRUK PEMBAYARAN' : 'NOTA PEMBAYARAN';
+    const documentWindow = window.open('', '_blank', 'width=760,height=860');
+    if (!documentWindow) {
+        toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
+    documentWindow.document.write(`<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title><style>@page{size:${compact ? '80mm auto' : 'A4'};margin:${compact ? '5mm' : '16mm'}}*{box-sizing:border-box}body{margin:0;font:12px Arial,sans-serif;color:#27231f}.sheet{width:${compact ? '70mm' : '100%'};margin:0 auto}.head{text-align:center;border-bottom:1px dashed #777;padding-bottom:10px}.head h1{margin:0;font-size:22px;letter-spacing:1px}.head h2{margin:6px 0 0;font-size:12px}.meta{margin:12px 0;color:#56504b;font-size:11px;line-height:1.55}.meta b{color:#27231f}table{width:100%;border-collapse:collapse}td{padding:7px 0;border-bottom:1px solid #e8e3df;vertical-align:top}td b,td small{display:block}td small{margin-top:3px;color:#706963;font-size:10px}.amount{text-align:right;white-space:nowrap}.total{margin-top:11px;border-top:1px solid #444;padding-top:8px}.total p,.payments p{display:flex;justify-content:space-between;gap:12px;margin:6px 0}.grand{font-size:16px;font-weight:700}.footer{margin-top:16px;padding-top:10px;border-top:1px dashed #777;text-align:center;color:#706963;font-size:10px}@media print{button{display:none}}</style></head><body><main class="sheet ${layout}"><header class="head"><h1>selesa</h1><h2>${title}</h2></header><section class="meta"><div><b>${escapeHtml(receipt.number)}</b></div><div>${escapeHtml(receipt.date)}</div><div>Antrean: ${escapeHtml(receipt.queue)}</div><div>Pelanggan: ${escapeHtml(receipt.customer)}</div></section><table><tbody>${lines}</tbody></table><section class="total"><p><span>Subtotal</span><b>${money(receipt.subtotal)}</b></p>${receipt.discount ? `<p><span>Diskon member</span><b>-${money(receipt.discount)}</b></p>` : ''}<p class="grand"><span>Total</span><b>${money(receipt.total)}</b></p></section><section class="payments">${paymentLines}</section><footer class="footer">Terima kasih telah berkunjung ke Selesa Salon.</footer></main><script>window.addEventListener('load',()=>window.print());<\/script></body></html>`);
+    documentWindow.document.close();
+}
+
+function compactReceiptPrintLegacy(receipt, format) {
+    const compact = format === 'struk';
+    const lines = receipt.items.map((item) => `<tr><td><b>${escapeHtml(item.name)}</b>${compact ? `<small>${escapeHtml(String(item.quantity))} &times; ${money(item.unitPrice)}</small>` : `<small>${escapeHtml(item.type)} · ${escapeHtml(item.detail)}</small>`}</td><td class="amount">${money(item.total)}</td></tr>`).join('');
+    const paymentLines = receipt.payments.map((payment) => {
+        if (payment.isCash) return `<p><span>Tunai</span><b>${money(payment.tenderedAmount)}</b></p>`;
+        return `<p><span>${escapeHtml(payment.name)}${payment.reference ? `<small>${escapeHtml(payment.reference)}</small>` : ''}</span><b>${money(payment.amount)}</b></p>`;
+    }).join('');
+    const paymentSummary = compact
+        ? `${paymentLines}${receipt.change > 0 ? `<p class="change"><span>Kembalian</span><b>${money(receipt.change)}</b></p>` : ''}`
+        : receipt.payments.map((payment) => `<p><span>${escapeHtml(payment.name)}${payment.reference ? ` · ${escapeHtml(payment.reference)}` : ''}</span><b>${money(payment.amount)}</b></p>`).join('');
+    const documentWindow = window.open('', '_blank', 'width=760,height=860');
+    if (!documentWindow) {
+        toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
+
+    const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
+    documentWindow.document.write(`<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title><style>@page{size:${compact ? '80mm auto' : 'A4'};margin:${compact ? '4mm' : '16mm'}}*{box-sizing:border-box}body{margin:0;font:12px Arial,sans-serif;color:#27231f}.sheet{width:${compact ? '72mm' : '100%'};margin:0 auto}.head{text-align:center;border-bottom:1px dashed #777;padding-bottom:9px}.head img{display:block;width:${compact ? '31mm' : '52mm'};height:auto;margin:0 auto 7px}.head h1{margin:0;font-size:15px;letter-spacing:.5px}.head h2{margin:3px 0 0;font-size:11px;font-weight:600}.receipt-number{margin-top:4px;font-size:11px;font-weight:700}.meta{margin:11px 0;padding:9px 0;border-bottom:1px dashed #777;color:#403b37;font-size:11px;line-height:1.5}.meta p{display:flex;justify-content:space-between;gap:8px;margin:0}.meta p span:first-child{white-space:nowrap}.meta p b{text-align:right}table{width:100%;border-collapse:collapse}td{padding:6px 0;border-bottom:1px solid #e8e3df;vertical-align:top}td b,td small{display:block}td small{margin-top:2px;color:#706963;font-size:10px}.amount{text-align:right;white-space:nowrap}.total{margin-top:10px;border-top:1px solid #444;padding-top:6px}.total p,.payments p{display:flex;justify-content:space-between;gap:12px;margin:6px 0}.payments{margin-top:8px;padding-top:7px;border-top:1px dashed #777}.payments span small{display:block;margin-top:2px;color:#706963;font-size:9px}.grand{font-size:15px;font-weight:700}.change{font-weight:700}.footer{margin-top:15px;padding-top:10px;border-top:1px dashed #777;text-align:center;color:#514a44;font-size:10px;line-height:1.45}.footer strong{display:block;margin-bottom:8px;color:#27231f;font-size:12px}.footer p{margin:1px 0}@media print{button{display:none}}</style></head><body><main class="sheet"><header class="head"><img src="${escapeHtml(logoUrl)}" alt="Selesa"><h1>selesa</h1><h2>SALON · SPA · WELLNESS · NAIL · EYELASH</h2><div class="receipt-number">${escapeHtml(receipt.number)}</div></header><section class="meta"><p><span>Pelanggan</span><b>: ${escapeHtml(receipt.customer)}</b></p><p><span>Transaksi</span><b>: ${escapeHtml(receipt.date)}</b></p><p><span>Karyawan</span><b>: ${escapeHtml(receipt.cashier)}</b></p></section><table><tbody>${lines}</tbody></table><section class="total"><p><span>Subtotal</span><b>${money(receipt.subtotal)}</b></p>${receipt.discount ? `<p><span>Diskon member</span><b>-${money(receipt.discount)}</b></p>` : ''}<p><span>Total</span><b>${money(receipt.total)}</b></p><p class="grand"><span>Grand Total</span><b>${money(receipt.total)}</b></p></section><section class="payments">${paymentSummary}</section><footer class="footer"><strong>TERIMA KASIH</strong><p>WhatsApp : 081128702019</p><p>Instagram : @selesa.salonspa</p></footer></main><script>window.addEventListener('load',()=>window.print());<\/script></body></html>`);
+    documentWindow.document.close();
+}
+
+function printReceipt(receipt, format) {
+    const compact = format === 'struk';
+    const documentWindow = window.open('', '_blank', 'width=760,height=860');
+    if (!documentWindow) {
+        toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
+
+    const itemRows = receipt.items.map((item) => `<div class="receipt-item">
+        <div><b>${escapeHtml(item.name)}</b><span>${escapeHtml(String(item.quantity))} x ${money(item.unitPrice)}</span></div>
+        <b class="receipt-item-total">${money(item.total)}</b>
+    </div>`).join('');
+    const cashPayments = receipt.payments.filter((payment) => payment.isCash);
+    const nonCashPayments = receipt.payments.filter((payment) => !payment.isCash);
+    const paymentRows = [
+        ...cashPayments.map((payment) => `<p><span>Tunai</span><i>:</i><b>${money(payment.tenderedAmount)}</b></p>`),
+        ...nonCashPayments.map((payment) => `<p><span>${escapeHtml(payment.name)}</span><i>:</i><b>${money(payment.amount)}</b></p>`),
+        ...(receipt.change > 0 ? [`<p><span>Kembali</span><i>:</i><b>${money(receipt.change)}</b></p>`] : []),
+    ].join('');
+    const totals = [
+        `<p><span>Subtotal</span><i>:</i><b>${money(receipt.subtotal)}</b></p>`,
+        ...(receipt.discount ? [`<p><span>Diskon member</span><i>:</i><b>-${money(receipt.discount)}</b></p>`] : []),
+        `<p><span>Total</span><i>:</i><b>${money(receipt.total)}</b></p>`,
+        `<p class="grand-total"><span>Grand Total</span><i>:</i><b>${money(receipt.total)}</b></p>`,
+    ].join('');
+    const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
+    const pageSize = compact ? '80mm auto' : 'A4';
+    const sheetClass = compact ? 'thermal' : 'nota';
+
+    documentWindow.document.write(`<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
+<style>
+@page{size:${pageSize};margin:${compact ? '3mm' : '16mm'}}
+*{box-sizing:border-box}
+body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:11px;line-height:1.25}
+.sheet{margin:0 auto}.sheet.thermal{width:74mm}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
+.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '39mm' : '56mm'};height:auto;margin:0 auto 5px;filter:grayscale(1) contrast(1.25)}
+.brand-name{margin:0;font-size:${compact ? '17px' : '21px'};font-weight:700;letter-spacing:.2px}.brand-subtitle{margin:1px 0 0;font-size:${compact ? '9px' : '11px'};font-weight:700;letter-spacing:.1px}.receipt-code{margin-top:2px;font-size:${compact ? '10px' : '12px'};font-weight:700}
+.dash{border-top:1px dashed #4d4d4d;margin:12px 0 9px}.dash.thin{margin:9px 0}
+.receipt-meta{margin:0}.receipt-meta p,.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr 4mm auto;gap:2px;margin:2px 0}.receipt-meta b,.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-meta i,.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
+.reprint{text-align:center;font-size:${compact ? '13px' : '15px'};font-weight:700;margin:0}
+.receipt-item{display:grid;grid-template-columns:1fr auto;gap:7px;padding:3px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:3mm;margin-top:1px}.receipt-item-total{align-self:end;white-space:nowrap}
+.receipt-totals{margin-top:1px}.receipt-totals p{margin:4px 0}.receipt-totals .grand-total{font-size:${compact ? '13px' : '16px'};margin-top:6px;font-weight:700}.receipt-payments p{margin:4px 0}.receipt-footer{text-align:center;margin-top:11px}.receipt-footer strong{display:block;font-size:${compact ? '13px' : '15px'};margin-bottom:9px}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '3mm' : '15mm'}}
+@media print{body{background:#fff}}
+</style></head><body>
+<main class="sheet ${sheetClass}">
+    <header class="receipt-header">
+        <img src="${escapeHtml(logoUrl)}" alt="Logo Selesa">
+        <p class="brand-name">selesa</p>
+        <p class="brand-subtitle">SALON. SPA. WELLNESS. NAIL. EYELASH</p>
+        <p class="receipt-code">${escapeHtml(receipt.number)}</p>
+    </header>
+    <div class="dash"></div>
+    <section class="receipt-meta">
+        <p><span>Pelanggan</span><i>:</i><b>${escapeHtml(receipt.customer)}</b></p>
+        <p><span>Transaksi</span><i>:</i><b>${escapeHtml(receipt.date)}</b></p>
+        <p><span>Karyawan</span><i>:</i><b>${escapeHtml(receipt.cashier)}</b></p>
+    </section>
+    <div class="dash thin"></div>
+    <p class="reprint">Cetak Ulang</p>
+    <div class="dash thin"></div>
+    <section class="receipt-items">${itemRows}</section>
+    <div class="dash thin"></div>
+    <section class="receipt-totals">${totals}</section>
+    <div class="dash thin"></div>
+    <section class="receipt-payments">${paymentRows}</section>
+    <div class="dash thin"></div>
+    <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>Whatsapp&nbsp;&nbsp;: 081128702019</p><p>Instagram&nbsp;: @selesa.salonspa</p></footer>
+</main>
+<script>window.addEventListener('load',()=>window.print());<\/script>
+</body></html>`);
+    documentWindow.document.close();
+}
+
+function openReceiptPrintChoice(receipt, options = {}) {
+    const title = options.title || 'Pembayaran berhasil';
+    const description = options.description || `${receipt.number} · ${money(receipt.total)}`;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-print="struk"><i class="material-symbols-outlined">receipt_long</i><span><b>Cetak struk</b><small>Format ringkas untuk printer thermal.</small></span></button><button type="button" class="cashier-add-choice" data-print="nota"><i class="material-symbols-outlined">description</i><span><b>Cetak nota</b><small>Format rinci untuk kertas A4.</small></span></button></div><p class="print-choice-note">Dokumen dibuka di tab baru, lalu pilih printer atau simpan sebagai PDF.</p></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelectorAll('[data-print]').forEach((button) => {
+        button.onclick = () => printReceipt(receipt, button.dataset.print);
+    });
 }
 
 function renderTreatments() {
@@ -1096,11 +1373,23 @@ function renderMembers() {
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
             <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')}</small></span>
             <span>${Number(member.visit_count || 0)} kunjungan</span><em>Aktif</em>
-            <i class="material-symbols-outlined row-action">chevron_right</i>
+            ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
         </div>`).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
 
-    if (events) {
+    if (events && canManageMemberships) {
+        events.innerHTML = array(state.promotions).map((promotion) => {
+            const active = Number(promotion.is_active ?? 1) === 1;
+            const period = `${new Date(`${promotion.starts_at}T00:00:00`).toLocaleDateString('id-ID')}–${new Date(`${promotion.ends_at}T00:00:00`).toLocaleDateString('id-ID')}`;
+
+            return `<article class="membership-event ${active ? '' : 'inactive'}">
+                <div><small>${active ? 'AKTIF' : 'NONAKTIF'}</small><h3>${escapeHtml(promotion.name)}</h3><p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p><span>${period}</span></div>
+                <div class="membership-actions"><button type="button" class="membership-edit-promotion" data-id="${Number(promotion.id)}">Edit</button><button type="button" class="membership-delete-promotion" data-id="${Number(promotion.id)}">Hapus</button></div>
+            </article>`;
+        }).join('') || '<p class="empty-state">Belum ada event membership.</p>';
+    }
+
+    if (events && !canManageMemberships) {
         events.innerHTML = array(state.promotions).map((promotion, index) => `<div class="event ${index ? 'pale' : ''}">
             <small>AKTIF</small><h3>${escapeHtml(promotion.name)}</h3>
             <p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p>
@@ -1206,6 +1495,192 @@ function renderFinance() {
             return `<div class="transaction"><i class="material-symbols-outlined">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(transaction.number)} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
         }).join('') || '<p class="empty-state">Belum ada transaksi hari ini.</p>';
     }
+
+    renderCashEntryHistory();
+}
+
+function transactionReceiptPayload(transaction) {
+    const transactedAt = transaction.transacted_at || transaction.created_at;
+    const transactedDate = transactedAt ? new Date(String(transactedAt).replace(' ', 'T')) : null;
+    const date = transactedDate && !Number.isNaN(transactedDate.getTime())
+        ? transactedDate.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+        : '-';
+
+    return {
+        number: transaction.number,
+        customer: transaction.customer_name || transaction.customer?.name || 'Pelanggan',
+        date,
+        cashier: transaction.cashier_name || 'Kasir Selesa',
+        items: array(transaction.items).map((item) => ({
+            name: item.name,
+            quantity: Number(item.quantity || 1),
+            unitPrice: Number(item.unit_price || 0),
+            total: Number(item.total_amount ?? item.total ?? 0),
+        })),
+        payments: array(transaction.payments).map((payment) => ({
+            name: payment.payment_method_name || payment.payment_method?.name || 'Pembayaran',
+            isCash: Boolean(Number(payment.payment_method_is_cash ?? payment.payment_method?.is_cash ?? 0)),
+            amount: Number(payment.amount || 0),
+            tenderedAmount: Number(payment.tendered_amount || payment.amount || 0),
+            reference: payment.reference_number,
+        })),
+        subtotal: Number(transaction.subtotal || 0),
+        discount: Number(transaction.discount_amount || 0),
+        total: Number(transaction.total || 0),
+        change: Number(transaction.change_amount || 0),
+    };
+}
+
+function formatTransactionDate(value) {
+    if (!value) return '-';
+    const date = new Date(String(value).replace(' ', 'T'));
+    if (Number.isNaN(date.getTime())) return String(value);
+
+    return date.toLocaleString('id-ID', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+}
+
+function renderSales() {
+    const box = document.getElementById('sales-history');
+    if (!box) return;
+
+    const searchInput = document.getElementById('sales-search');
+    const paymentFilter = document.getElementById('sales-payment-filter');
+    const query = String(searchInput?.value || '').trim().toLocaleLowerCase('id-ID');
+    const paymentOptions = [...new Set(array(state.transactions)
+        .flatMap((transaction) => array(transaction.payments).map((payment) => payment.payment_method_name))
+        .filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, 'id'));
+
+    if (paymentFilter) {
+        const selected = paymentFilter.value;
+        paymentFilter.innerHTML = `<option value="">Semua pembayaran</option>${paymentOptions.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+        paymentFilter.value = paymentOptions.includes(selected) ? selected : '';
+    }
+
+    const transactions = array(state.transactions)
+        .filter((transaction) => transaction.status === 'paid')
+        .filter((transaction) => {
+            const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name).filter(Boolean);
+            const matchesPayment = !paymentFilter?.value || paymentNames.includes(paymentFilter.value);
+            const haystack = [transaction.number, transaction.customer_name, ...paymentNames]
+                .filter(Boolean)
+                .join(' ')
+                .toLocaleLowerCase('id-ID');
+
+            return matchesPayment && (!query || haystack.includes(query));
+        });
+
+    const rows = transactions.map((transaction) => {
+        const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name).filter(Boolean).join(' + ') || '-';
+        const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
+        const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
+        return `<div class="tr sales-row">
+            <span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span>
+            <span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span>
+            <span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span>
+            <span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span>
+            <b class="align-right">${money(transaction.total)}</b>
+            <button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button>
+        </div>`;
+    }).join('');
+
+    box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
+
+    box.querySelectorAll('.sales-reprint-button').forEach((button) => {
+        const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (!transaction) return;
+        button.onclick = () => openReceiptPrintChoice(transactionReceiptPayload(transaction), {
+            title: 'Cetak ulang nota',
+            description: `${transaction.number} · ${money(transaction.total)}`,
+        });
+    });
+}
+
+function formatCashEntryDate(value) {
+    if (!value) return '-';
+
+    return new Date(`${String(value).slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    });
+}
+
+function renderCashEntryHistory() {
+    const box = document.getElementById('cash-entry-history');
+    if (!box) return;
+
+    const typeFilter = document.getElementById('cash-entry-type-filter');
+    const search = document.getElementById('cash-entry-search');
+    const type = typeFilter?.value || '';
+    const keyword = String(search?.value || '').trim().toLocaleLowerCase('id-ID');
+    const entries = array(state.cash_entries).filter((entry) => {
+        const matchesType = !type || entry.type === type;
+        const haystack = [entry.category, entry.description, entry.created_by_name, entry.transaction_number]
+            .filter(Boolean)
+            .join(' ')
+            .toLocaleLowerCase('id-ID');
+
+        return matchesType && (!keyword || haystack.includes(keyword));
+    });
+
+    const rows = entries.map((entry) => {
+        const isIncome = entry.type === 'income';
+        const automated = Boolean(entry.transaction_payment_id);
+        return `<div class="tr finance-history-row">
+            <span>${escapeHtml(formatCashEntryDate(entry.entry_date))}</span>
+            <span><em class="finance-type ${isIncome ? 'income' : 'expense'}">${isIncome ? 'Pemasukan' : 'Pengeluaran'}</em></span>
+            <span><b>${escapeHtml(entry.category)}</b><small>${escapeHtml(entry.description)}</small></span>
+            <span><small class="finance-source ${automated ? 'automatic' : 'manual'}">${automated ? `Otomatis${entry.transaction_number ? ` · ${escapeHtml(entry.transaction_number)}` : ''}` : 'Manual'}</small></span>
+            <span>${escapeHtml(entry.created_by_name || '-')}</span>
+            <b class="align-right finance-amount ${isIncome ? 'income' : 'expense'}">${isIncome ? '+' : '−'}${money(entry.amount)}</b>
+        </div>`;
+    }).join('');
+    box.innerHTML = `<div class="tr th"><span>TANGGAL</span><span>ARUS</span><span>KATEGORI & CATATAN</span><span>SUMBER</span><span>DICATAT OLEH</span><span class="align-right">NOMINAL</span></div>${rows || '<p class="empty-state">Tidak ada riwayat arus kas yang sesuai.</p>'}`;
+}
+
+function openCashEntryForm() {
+    if (!canManageFinance) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small finance-entry-modal">
+        <div class="modal-head"><div><h2>Catat arus kas</h2><p>Catat pemasukan atau pengeluaran di luar transaksi kasir.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <form>
+            <div class="quick-fields">
+                <label>Jenis arus<select name="type"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
+                <label>Tanggal<input name="entry_date" type="date" value="${localDate()}" max="${localDate()}" required></label>
+                <label>Kategori<input name="category" maxlength="100" placeholder="Contoh: Operasional salon" required></label>
+                <label>Nominal (Rp)<input name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
+                <label class="finance-entry-description">Catatan<textarea name="description" rows="3" maxlength="2000" placeholder="Contoh: Beli tisu dan air minum untuk operasional" required></textarea></label>
+            </div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" type="submit">Simpan catatan</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    wrapper.querySelectorAll('.quick-close').forEach((button) => {
+        button.onclick = () => wrapper.remove();
+    });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        const button = event.currentTarget.querySelector('button[type="submit"]');
+        button.disabled = true;
+        try {
+            const result = await api('/operasional/keuangan/arus-kas', {
+                method: 'POST',
+                body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
+            });
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            button.disabled = false;
+            toast(error.message, true);
+        }
+    };
 }
 
 function renderPayroll() {
@@ -1233,6 +1708,51 @@ function renderPayroll() {
             body: JSON.stringify(data),
         }));
     });
+}
+
+function openPayrollForm() {
+    const initialPeriod = localDate().slice(0, 7);
+    const activeEmployees = employees().filter((employee) => Number(employee.active ?? employee.is_active ?? 1) === 1);
+    const availableEmployees = (period) => {
+        const recordedEmployeeIds = new Set(array(state.payrolls)
+            .filter((payroll) => String(payroll.period) === period)
+            .map((payroll) => Number(payroll.employee_id)));
+
+        return activeEmployees.filter((employee) => !recordedEmployeeIds.has(Number(employee.id)));
+    };
+    const initialEmployees = availableEmployees(initialPeriod);
+    if (!initialEmployees.length) {
+        toast('Semua karyawan aktif sudah memiliki data gaji untuk periode ini.', true);
+        return;
+    }
+
+    const employeeLabel = (employee) => `${employee.name}${employee.position ? ` · ${employee.position}` : ''}`;
+    const wrapper = quickForm('Input penggajian', [
+        ['employee_id', 'Karyawan', 'select', initialEmployees.map((employee) => `${employee.id}|${employeeLabel(employee)}`)],
+        ['period', 'Periode gaji', 'month', null, initialPeriod],
+        ['base_salary', 'Gaji pokok', 'number', null, 0],
+        ['bonus', 'Bonus', 'number', null, 0],
+        ['overtime', 'Upah lembur', 'number', null, 0],
+        ['late_duration_minutes', 'Keterlambatan (menit)', 'number', null, 0],
+        ['late_deduction', 'Potongan keterlambatan', 'number', null, 0],
+        ['other_deduction', 'Potongan lain', 'number', null, 0],
+    ], (data) => api('/operasional/penggajian', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    }));
+
+    const periodInput = wrapper.querySelector('[name="period"]');
+    const employeeSelect = wrapper.querySelector('[name="employee_id"]');
+    const submitButton = wrapper.querySelector('button[type="submit"], footer .primary');
+    const refreshEmployeeOptions = () => {
+        const options = availableEmployees(periodInput.value);
+        employeeSelect.innerHTML = options.length
+            ? options.map((employee) => `<option value="${Number(employee.id)}">${escapeHtml(employeeLabel(employee))}</option>`).join('')
+            : '<option value="" selected>Semua karyawan sudah tercatat</option>';
+        employeeSelect.disabled = options.length === 0;
+        submitButton.disabled = options.length === 0;
+    };
+    periodInput.addEventListener('change', refreshEmployeeOptions);
 }
 
 function renderActivity() {
@@ -1355,6 +1875,7 @@ function renderAll() {
     renderTreatments();
     renderMembers();
     renderStock();
+    renderSales();
     renderFinance();
     renderPayroll();
     renderActivity();
@@ -1446,6 +1967,7 @@ function renumberReservationItems() {
 function resetReservationForm() {
     const form = document.getElementById('reservation-form');
     form?.reset();
+    syncReservationCustomerType();
     const date = document.getElementById('reservation-date');
     if (date) date.value = localDate();
     const items = document.getElementById('reservation-items');
@@ -1469,6 +1991,36 @@ function openReservationForm(values = {}) {
     requestAnimationFrame(() => document.querySelector('#reservation-form [name="name"]')?.focus());
 }
 
+function syncReservationCustomerType() {
+    const form = document.getElementById('reservation-form');
+    const type = form?.querySelector('[name="customer_type"]:checked')?.value || 'guest';
+    const picker = document.getElementById('reservation-member-picker');
+    const select = document.getElementById('reservation-member-id');
+    const preview = document.getElementById('reservation-member-preview');
+    const name = form?.querySelector('[name="name"]');
+    const phone = form?.querySelector('[name="phone"]');
+    const isMember = type === 'member';
+
+    if (picker) picker.hidden = !isMember;
+    [name, phone].filter(Boolean).forEach((field) => {
+        field.disabled = isMember;
+        field.required = !isMember;
+    });
+    if (select) {
+        const selectedMemberId = select.value;
+        select.required = isMember;
+        select.innerHTML = `<option value="">Pilih member</option>${array(state.members).map((member) => `<option value="${Number(member.id)}">${escapeHtml(member.name)} · ${escapeHtml(member.phone || '-')}</option>`).join('')}`;
+        select.value = isMember && [...select.options].some((option) => option.value === selectedMemberId)
+            ? selectedMemberId
+            : '';
+    }
+
+    const member = array(state.members).find((item) => Number(item.id) === Number(select?.value));
+    if (preview) preview.textContent = member
+        ? `${member.name} · ${member.phone || 'tanpa nomor telepon'} · Member sejak ${member.member_since ? new Date(`${member.member_since}T00:00:00`).toLocaleDateString('id-ID') : '-'}`
+        : 'Pilih member untuk memakai data pelanggan yang sudah terdaftar.';
+}
+
 function collectReservationPayload(form) {
     const formData = new FormData(form);
     const items = [...document.querySelectorAll('#reservation-items .reservation-item-card')].map((card) => {
@@ -1487,14 +2039,23 @@ function collectReservationPayload(form) {
         return item;
     });
 
-    return {
-        name: formData.get('name'),
-        phone: formData.get('phone'),
+    const customerType = formData.get('customer_type') || 'guest';
+    const payload = {
+        customer_type: customerType,
         date: formData.get('date'),
         source: formData.get('source'),
         notes: formData.get('notes') || null,
         items,
     };
+
+    if (customerType === 'member') {
+        payload.member_id = Number(formData.get('member_id'));
+    } else {
+        payload.name = formData.get('name');
+        payload.phone = formData.get('phone');
+    }
+
+    return payload;
 }
 
 function hideConflictPanel() {
@@ -1584,11 +2145,13 @@ function addPaymentRow(values = {}) {
     const row = document.createElement('div');
     row.className = 'payment-row';
     row.innerHTML = `<label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
-        <label>Jumlah<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
+        <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
+        <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
         <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.payment-amount').addEventListener('input', updatePaymentReconciliation);
+    row.querySelector('.payment-tendered').addEventListener('input', updatePaymentReconciliation);
     row.querySelector('.payment-method').addEventListener('change', () => {
         syncPaymentReference(row);
         updatePaymentReconciliation();
@@ -1611,10 +2174,20 @@ function syncPaymentReference(row) {
     const method = paymentMethods().find((item) => Number(item.id) === methodId);
     const input = row.querySelector('.payment-reference');
     const label = row.querySelector('.payment-reference-label');
+    const tenderedInput = row.querySelector('.payment-tendered');
+    const tenderedLabel = row.querySelector('.payment-tendered-label');
     const required = Number(method?.requires_reference ?? 0) === 1;
+    const isCash = Boolean(Number(method?.is_cash ?? 0));
     input.required = required;
     input.placeholder = required ? 'Wajib diisi' : 'Opsional';
     if (label) label.firstChild.textContent = required ? 'Referensi *' : 'Referensi';
+    row.classList.toggle('is-cash', isCash);
+    tenderedLabel.hidden = !isCash;
+    tenderedInput.disabled = !isCash;
+    tenderedInput.required = isCash;
+    if (isCash && !Number(tenderedInput.value || 0)) {
+        tenderedInput.value = row.querySelector('.payment-amount').value;
+    }
 }
 
 function resetPaymentRows() {
@@ -1629,6 +2202,11 @@ function updatePaymentReconciliation() {
     const total = selectedTotal();
     const entered = [...document.querySelectorAll('.payment-amount')]
         .reduce((sum, input) => sum + Number(input.value || 0), 0);
+    const cashRows = [...document.querySelectorAll('.payment-row.is-cash')];
+    const cashTendered = cashRows.reduce((sum, row) => sum + Number(row.querySelector('.payment-tendered')?.value || 0), 0);
+    const cashAllocated = cashRows.reduce((sum, row) => sum + Number(row.querySelector('.payment-amount')?.value || 0), 0);
+    const change = Math.max(0, cashTendered - cashAllocated);
+    const invalidCashTender = cashRows.some((row) => Number(row.querySelector('.payment-tendered')?.value || 0) < Number(row.querySelector('.payment-amount')?.value || 0));
     const difference = total - entered;
     const missingReference = [...document.querySelectorAll('.payment-row')].some((row) => {
         const method = paymentMethods().find((item) => Number(item.id) === Number(row.querySelector('.payment-method').value));
@@ -1637,9 +2215,17 @@ function updatePaymentReconciliation() {
     const panel = document.querySelector('.payment-reconciliation');
     document.getElementById('payment-entered').textContent = money(entered);
     document.getElementById('payment-difference').textContent = money(difference);
+    const changeElement = document.getElementById('payment-change');
+    if (changeElement) {
+        changeElement.hidden = !cashRows.length;
+        changeElement.querySelector('b').textContent = money(change);
+    }
     panel?.classList.toggle('has-difference', difference !== 0);
     const button = document.getElementById('complete-payment');
-    if (button) button.disabled = difference !== 0 || entered <= 0 || !paymentMethods().length || missingReference;
+    if (button) {
+        button.disabled = difference !== 0 || entered <= 0 || !paymentMethods().length || missingReference || invalidCashTender;
+        button.title = invalidCashTender ? 'Uang tunai yang diterima tidak boleh kurang dari nominal pembayaran.' : '';
+    }
 }
 
 function quickForm(title, fields, submit) {
@@ -1649,7 +2235,7 @@ function quickForm(title, fields, submit) {
         const parts = String(option).split('|');
         const optionValue = parts.length > 1 ? parts[0] : option;
         return `<option value="${escapeHtml(optionValue)}" ${String(optionValue) === String(value ?? '') ? 'selected' : ''}>${escapeHtml(parts[1] || parts[0])}</option>`;
-    }).join('')}</select>` : `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" required>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan</button></footer></form></div>`;
+    }).join('')}</select>` : `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${String(label).includes('(opsional)') ? '' : 'required'}>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
@@ -1668,9 +2254,19 @@ function quickForm(title, fields, submit) {
             toast(error.message, true);
         }
     };
+
+    return wrapper;
 }
 
 function populateSelects() {
+    const memberSelect = document.getElementById('reservation-member-id');
+    if (memberSelect) {
+        const selected = memberSelect.value;
+        memberSelect.innerHTML = `<option value="">Pilih member</option>${array(state.members).map((member) => `<option value="${Number(member.id)}">${escapeHtml(member.name)} · ${escapeHtml(member.phone || '-')}</option>`).join('')}`;
+        memberSelect.value = [...memberSelect.options].some((option) => option.value === selected) ? selected : '';
+        syncReservationCustomerType();
+    }
+
     const employeeFilter = document.getElementById('reservation-filter-employee');
     if (employeeFilter) {
         const selected = employeeFilter.value;
@@ -1770,6 +2366,12 @@ document.querySelectorAll('.open-reservation').forEach((button) => {
 });
 document.getElementById('add-reservation-item')?.addEventListener('click', () => addReservationItem());
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
+document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
+document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
+document.getElementById('sales-search')?.addEventListener('input', renderSales);
+document.getElementById('sales-payment-filter')?.addEventListener('change', renderSales);
+document.getElementById('cash-entry-type-filter')?.addEventListener('change', renderCashEntryHistory);
+document.getElementById('cash-entry-search')?.addEventListener('input', renderCashEntryHistory);
 document.getElementById('open-payment')?.addEventListener('click', () => {
     if (!selectedReservation) {
         toast('Pilih antrean terlebih dahulu.', true);
@@ -1786,20 +2388,40 @@ document.querySelectorAll('.stock-tab').forEach((button) => {
     button.onclick = () => {
         document.querySelectorAll('.stock-tab').forEach((item) => item.classList.remove('active'));
         button.classList.add('active');
-        document.getElementById('stock-list').classList.toggle('hidden', button.dataset.stock !== 'list');
-        document.getElementById('stock-history').classList.toggle('hidden', button.dataset.stock !== 'history');
+        const showingHistory = button.dataset.stock === 'history';
+        document.getElementById('stock-list').hidden = showingHistory;
+        document.getElementById('stock-history').hidden = !showingHistory;
+        document.getElementById('stock-list-actions').hidden = showingHistory;
+        document.getElementById('stock-history-actions').hidden = !showingHistory;
     };
+});
+
+document.getElementById('export-schedule')?.addEventListener('click', () => {
+    const date = document.getElementById('reservation-calendar-date')?.value || localDate();
+    window.location.assign(`/operasional/reservasi/ekspor?date=${encodeURIComponent(date)}`);
+});
+
+document.getElementById('export-stock-history')?.addEventListener('click', () => {
+    const today = localDate();
+    const from = `${today.slice(0, 8)}01`;
+    window.location.assign(`/operasional/produk/riwayat-ekspor?from=${encodeURIComponent(from)}&to=${encodeURIComponent(today)}`);
 });
 
 document.getElementById('discount')?.addEventListener('change', () => {
     if (selectedReservation) selectCashier(selectedReservation);
 });
-document.getElementById('add-extra')?.addEventListener('click', openCashierProductPicker);
+document.getElementById('add-extra')?.addEventListener('click', openCashierAddPicker);
 document.addEventListener('click', (event) => {
     const button = event.target.closest('.remove-cashier-product');
     if (!button) return;
-    cashierProductItems = cashierProductItems.filter((item) => Number(item.product_id) !== Number(button.dataset.id));
-    if (selectedReservation) selectCashier(selectedReservation);
+    if (!selectedReservation) return;
+    api(`/operasional/reservasi/${Number(selectedReservation)}/produk/${Number(button.dataset.id)}`, {
+        method: 'DELETE',
+    }).then(async (result) => {
+        toast(result.message);
+        await refresh();
+        selectCashier(selectedReservation);
+    }).catch((error) => toast(error.message, true));
 });
 
 document.getElementById('reservation-form')?.addEventListener('submit', async (event) => {
@@ -1808,6 +2430,11 @@ document.getElementById('reservation-form')?.addEventListener('submit', async (e
     const payload = collectReservationPayload(event.currentTarget);
     await submitReservation(payload);
 });
+
+document.querySelectorAll('#reservation-form [name="customer_type"]').forEach((input) => {
+    input.addEventListener('change', syncReservationCustomerType);
+});
+document.getElementById('reservation-member-id')?.addEventListener('change', syncReservationCustomerType);
 
 document.getElementById('product-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1841,6 +2468,9 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
     const payments = [...document.querySelectorAll('.payment-row')].map((row) => ({
         payment_method_id: Number(row.querySelector('.payment-method').value),
         amount: Number(row.querySelector('.payment-amount').value),
+        tendered_amount: row.classList.contains('is-cash')
+            ? Number(row.querySelector('.payment-tendered').value)
+            : Number(row.querySelector('.payment-amount').value),
         reference_number: row.querySelector('.payment-reference').value.trim() || null,
     }));
     const invalidReference = [...document.querySelectorAll('.payment-row')].find((row) => {
@@ -1854,21 +2484,24 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
     }
     button.disabled = true;
     try {
+        const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+        const receipt = receiptPayload({ total: selectedTotal() }, reservation, reservationProductItems(reservation), payments);
         const result = await api('/operasional/pembayaran', {
             method: 'POST',
             body: JSON.stringify({
                 reservation_id: selectedReservation,
                 discount_percent: String(selectedDiscount()),
-                product_items: cashierProductItems.map((item) => ({
-                    product_id: Number(item.product_id),
-                    quantity: String(item.quantity),
-                })),
                 payments,
                 idempotency_key: paymentIdempotencyKey,
             }),
         });
         document.getElementById('payment-modal').classList.remove('open');
         toast(`${result.message}: ${result.number || result.transaction_number || ''}`.trim());
+        receipt.number = result.number || result.transaction_number || receipt.number;
+        receipt.total = Number(result.total || receipt.total);
+        receipt.change = Number(result.change_amount || receipt.change || 0);
+        receipt.cashier = result.cashier_name || receipt.cashier;
+        openReceiptPrintChoice(receipt);
         selectedReservation = null;
         paymentIdempotencyKey = null;
         await refresh();
@@ -1908,8 +2541,74 @@ if (memberAdd) {
     memberAdd.onclick = () => quickForm('Member baru', [
         ['name', 'Nama pelanggan', 'text'],
         ['phone', 'Nomor telepon', 'text'],
+        ['email', 'Email (opsional)', 'email'],
     ], (data) => api('/operasional/member', { method: 'POST', body: JSON.stringify(data) }));
 }
+
+document.getElementById('open-promotion')?.addEventListener('click', () => quickForm('Event membership baru', [
+    ['name', 'Nama event', 'text'],
+    ['discount_percent', 'Diskon (%)', 'number'],
+    ['starts_at', 'Tanggal mulai', 'date', [], localDate()],
+    ['ends_at', 'Tanggal selesai', 'date', [], localDate()],
+    ['members_only', 'Sasaran', 'select', ['1|Khusus member', '0|Semua pelanggan'], '1'],
+    ['is_active', 'Status', 'select', ['1|Aktif', '0|Nonaktif'], '1'],
+    ['description', 'Catatan (opsional)', 'text'],
+], (data) => api('/operasional/promo', { method: 'POST', body: JSON.stringify(data) })));
+
+document.addEventListener('click', async (event) => {
+    const memberEdit = event.target.closest('.membership-edit');
+    const memberDelete = event.target.closest('.membership-delete');
+    const promotionEdit = event.target.closest('.membership-edit-promotion');
+    const promotionDelete = event.target.closest('.membership-delete-promotion');
+
+    if (memberEdit) {
+        const member = array(state.members).find((item) => Number(item.id) === Number(memberEdit.dataset.id));
+        if (!member) return;
+        quickForm(`Edit member: ${member.name}`, [
+            ['name', 'Nama pelanggan', 'text', [], member.name],
+            ['phone', 'Nomor telepon', 'text', [], member.phone],
+            ['email', 'Email (opsional)', 'email', [], member.email],
+        ], (data) => api(`/operasional/member/${member.id}`, { method: 'PATCH', body: JSON.stringify(data) }));
+    }
+
+    if (memberDelete) {
+        const member = array(state.members).find((item) => Number(item.id) === Number(memberDelete.dataset.id));
+        if (!member || !confirm(`Cabut status member untuk ${member.name}? Riwayat pelanggan tetap tersimpan.`)) return;
+        try {
+            const result = await api(`/operasional/member/${member.id}`, { method: 'DELETE' });
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            toast(error.message, true);
+        }
+    }
+
+    if (promotionEdit) {
+        const promotion = array(state.promotions).find((item) => Number(item.id) === Number(promotionEdit.dataset.id));
+        if (!promotion) return;
+        quickForm(`Edit event: ${promotion.name}`, [
+            ['name', 'Nama event', 'text', [], promotion.name],
+            ['discount_percent', 'Diskon (%)', 'number', [], promotion.discount_percent],
+            ['starts_at', 'Tanggal mulai', 'date', [], promotion.starts_at],
+            ['ends_at', 'Tanggal selesai', 'date', [], promotion.ends_at],
+            ['members_only', 'Sasaran', 'select', ['1|Khusus member', '0|Semua pelanggan'], Number(promotion.members_only) ? '1' : '0'],
+            ['is_active', 'Status', 'select', ['1|Aktif', '0|Nonaktif'], Number(promotion.is_active) ? '1' : '0'],
+            ['description', 'Catatan (opsional)', 'text', [], promotion.description],
+        ], (data) => api(`/operasional/promo/${promotion.id}`, { method: 'PATCH', body: JSON.stringify(data) }));
+    }
+
+    if (promotionDelete) {
+        const promotion = array(state.promotions).find((item) => Number(item.id) === Number(promotionDelete.dataset.id));
+        if (!promotion || !confirm(`Hapus event ${promotion.name}? Event akan hilang dari daftar dan tidak bisa dipakai di kasir.`)) return;
+        try {
+            const result = await api(`/operasional/promo/${promotion.id}`, { method: 'DELETE' });
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            toast(error.message, true);
+        }
+    }
+});
 
 document.getElementById('open-stocktake')?.addEventListener('click', () => quickForm('Stok opname', [
     ['product_id', 'Produk', 'select', array(state.products).map((product) => `${product.id}|${product.name}`)],

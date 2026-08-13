@@ -5,13 +5,16 @@ namespace App\Http\Controllers;
 use App\Http\Exceptions\ReservationConflictException;
 use App\Http\Requests\CheckoutRequest;
 use App\Http\Requests\StoreReservationRequest;
+use App\Http\Requests\StoreReservationItemRequest;
 use App\Http\Requests\UpdateReservationItemStatusRequest;
 use App\Http\Requests\UpdateReservationStatusRequest;
 use App\Http\Services\ActivityLogger;
 use App\Http\Services\CheckoutService;
 use App\Http\Services\ReservationService;
 use App\Http\Services\SalonSnapshotService;
+use App\Http\Services\SpreadsheetExportService;
 use App\Http\Support\FixedPoint;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +22,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SalonController extends Controller
 {
@@ -26,6 +30,7 @@ class SalonController extends Controller
         private readonly ReservationService $reservations,
         private readonly CheckoutService $checkout,
         private readonly SalonSnapshotService $snapshots,
+        private readonly SpreadsheetExportService $spreadsheets,
         private readonly ActivityLogger $logger,
     ) {}
 
@@ -45,6 +50,166 @@ class SalonController extends Controller
         }
 
         return response()->json($this->snapshots->forUser($request->user()));
+    }
+
+    public function exportSchedule(Request $request): StreamedResponse
+    {
+        $data = $request->validate([
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+        $date = $data['date'] ?? today()->toDateString();
+        $items = DB::table('reservation_items as item')
+            ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
+            ->join('customers as customer', 'customer.id', '=', 'reservation.customer_id')
+            ->leftJoin('transactions as transaction', 'transaction.reservation_id', '=', 'reservation.id')
+            ->where('reservation.reservation_date', $date)
+            ->where('reservation.status', '!=', 'cancelled')
+            ->orderBy('item.scheduled_start_at')
+            ->orderBy('item.id')
+            ->get([
+                'item.id',
+                'item.reservation_id',
+                'item.treatment_name',
+                'item.scheduled_start_at',
+                'item.scheduled_end_at',
+                'item.unit_price',
+                'customer.name as customer_name',
+                'reservation.queue_number',
+                'transaction.number as invoice_number',
+                'transaction.status as payment_status',
+            ]);
+        $staffByItem = DB::table('reservation_item_staff as assignment')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->whereIn('assignment.reservation_item_id', $items->pluck('id'))
+            ->orderByRaw("CASE WHEN assignment.role = 'primary' THEN 0 ELSE 1 END")
+            ->orderBy('employee.name')
+            ->get(['assignment.reservation_item_id', 'employee.name'])
+            ->groupBy('reservation_item_id');
+        $paymentsByReservation = DB::table('transaction_payments as payment')
+            ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+            ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
+            ->where('payment.status', 'confirmed')
+            ->where('transaction.status', 'paid')
+            ->whereIn('transaction.id', DB::table('transactions')
+                ->whereIn('reservation_id', DB::table('reservations')->where('reservation_date', $date)->select('id'))
+                ->select('id'))
+            ->get(['transaction.reservation_id', 'method.name'])
+            ->groupBy('reservation_id');
+
+        $rows = $items->values()->map(function (object $item, int $index) use ($staffByItem, $paymentsByReservation): array {
+            $therapists = collect($staffByItem->get($item->id, []))->pluck('name')->join(', ');
+            $payments = collect($paymentsByReservation->get($item->reservation_id ?? 0, []))->pluck('name')->join(' + ');
+
+            return [
+                $index + 1,
+                $item->queue_number ?: '-',
+                $item->customer_name,
+                $item->treatment_name,
+                $item->scheduled_start_at ? \Carbon\CarbonImmutable::parse($item->scheduled_start_at)->format('H:i') : '-',
+                $item->scheduled_end_at ? \Carbon\CarbonImmutable::parse($item->scheduled_end_at)->format('H:i') : '-',
+                $therapists ?: '-',
+                $item->payment_status === 'paid' ? 'Lunas' : 'Belum dibayar',
+                $payments ?: '-',
+                (int) $item->unit_price,
+                $item->invoice_number ?: '-',
+            ];
+        })->all();
+
+        $filename = 'jadwal-selesa-'.str_replace('-', '', $date).'.xlsx';
+
+        return $this->spreadsheetResponse(
+            $filename,
+            'Jadwal '.\Carbon\CarbonImmutable::parse($date)->translatedFormat('d F Y'),
+            'Jadwal',
+            ['No', 'Antrean', 'Nama pelanggan', 'Treatment', 'Mulai', 'Selesai', 'Terapis', 'Status bayar', 'Metode bayar', 'Nominal', 'Invoice'],
+            $rows,
+            [9],
+        );
+    }
+
+    public function exportStockHistory(Request $request): StreamedResponse
+    {
+        $data = $request->validate([
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+        ]);
+        $from = $data['from'] ?? now()->startOfMonth()->toDateString();
+        $to = $data['to'] ?? today()->toDateString();
+        $movements = DB::table('stock_movements as movement')
+            ->join('products as product', 'product.id', '=', 'movement.product_id')
+            ->join('units as unit', 'unit.id', '=', 'movement.unit_id')
+            ->leftJoin('transactions as transaction', function ($join): void {
+                $join->on('transaction.id', '=', 'movement.source_id')
+                    ->whereIn('movement.source_type', ['transaction', 'transaction_sale']);
+            })
+            ->leftJoin('reservations as reservation', 'reservation.id', '=', 'transaction.reservation_id')
+            ->leftJoin('customers as customer', 'customer.id', '=', 'reservation.customer_id')
+            ->leftJoin('users as creator', 'creator.id', '=', 'movement.created_by')
+            ->whereBetween('movement.occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])
+            ->orderByDesc('movement.occurred_at')
+            ->orderByDesc('movement.id')
+            ->get([
+                'movement.type',
+                'movement.quantity',
+                'movement.stock_before',
+                'movement.stock_after',
+                'movement.source_type',
+                'movement.reference',
+                'movement.notes',
+                'movement.occurred_at',
+                'product.name as product_name',
+                'unit.code as unit_code',
+                'reservation.id as reservation_id',
+                'customer.name as customer_name',
+                'creator.name as creator_name',
+            ]);
+        $reservationIds = $movements->pluck('reservation_id')->filter()->unique()->values();
+        $therapistsByReservation = $reservationIds->isEmpty()
+            ? collect()
+            : DB::table('reservation_item_staff as assignment')
+                ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
+                ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+                ->whereIn('item.reservation_id', $reservationIds)
+                ->where('assignment.role', 'primary')
+                ->orderBy('employee.name')
+                ->get(['item.reservation_id', 'employee.name'])
+                ->groupBy('reservation_id');
+
+        $rows = $movements->values()->map(function (object $movement, int $index) use ($therapistsByReservation): array {
+            $quantity = (float) $movement->quantity;
+            $type = match ($movement->type) {
+                'in' => 'Stok masuk',
+                'out' => 'Stok keluar',
+                'adjustment' => 'Penyesuaian',
+                default => ucfirst((string) $movement->type),
+            };
+
+            return [
+                $index + 1,
+                \Carbon\CarbonImmutable::parse($movement->occurred_at)->format('d/m/Y'),
+                \Carbon\CarbonImmutable::parse($movement->occurred_at)->format('H:i'),
+                $movement->product_name,
+                $type,
+                $quantity,
+                $movement->unit_code,
+                (float) $movement->stock_before,
+                (float) $movement->stock_after,
+                $movement->customer_name ?: '-',
+                collect($therapistsByReservation->get($movement->reservation_id, []))->pluck('name')->unique()->join(', ') ?: '-',
+                $this->stockSourceLabel($movement->source_type),
+                $movement->reference ?: '-',
+                $movement->creator_name ?: 'Sistem',
+                $movement->notes ?: '-',
+            ];
+        })->all();
+
+        return $this->spreadsheetResponse(
+            "rekap-stok-in-out-{$from}-{$to}.xlsx",
+            "Rekap stok in-out {$from} s.d. {$to}",
+            'Rekap Stok',
+            ['No', 'Tanggal', 'Jam', 'Produk', 'Jenis', 'Jumlah', 'Satuan', 'Stok sebelum', 'Sisa stok', 'Pelanggan', 'Terapis', 'Sumber', 'Referensi', 'Dicatat oleh', 'Catatan'],
+            $rows,
+        );
     }
 
     public function storeReservation(StoreReservationRequest $request): JsonResponse
@@ -85,6 +250,47 @@ class SalonController extends Controller
             'employees' => $employees,
             'therapists' => $employees,
         ]);
+    }
+
+    public function storeReservationItem(StoreReservationItemRequest $request, int $reservation): JsonResponse
+    {
+        try {
+            $item = $this->reservations->addItem($reservation, $request->validated(), $request);
+        } catch (ReservationConflictException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'code' => 'schedule_conflict',
+                'can_override' => false,
+                'conflicts' => $exception->conflicts,
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => 'Treatment tambahan masuk ke reservasi dan invoice.',
+            ...$item,
+        ], 201);
+    }
+
+    public function storeReservationProduct(Request $request, int $reservation): JsonResponse
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+        ]);
+
+        $item = $this->reservations->addProductItem($reservation, $data, $request);
+
+        return response()->json([
+            'message' => 'Produk ditambahkan ke pesanan pelanggan.',
+            ...$item,
+        ], 201);
+    }
+
+    public function destroyReservationProduct(Request $request, int $reservation, int $product): JsonResponse
+    {
+        $this->reservations->removeProductItem($reservation, $product, $request);
+
+        return response()->json(['message' => 'Produk dihapus dari pesanan pelanggan.']);
     }
 
     public function updateReservation(UpdateReservationStatusRequest $request, int $id): JsonResponse
@@ -465,6 +671,108 @@ class SalonController extends Controller
         return response()->json(['message' => 'Membership berhasil diaktifkan.', 'id' => $id], 201);
     }
 
+    public function updateMember(Request $request, int $id): JsonResponse
+    {
+        abort_unless(
+            DB::table('customers')->where('id', $id)->where('is_member', true)->exists(),
+            404,
+            'Member tidak ditemukan.',
+        );
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'phone' => ['required', 'string', 'max:30', Rule::unique('customers', 'phone')->ignore($id)],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('customers', 'email')->ignore($id)],
+        ]);
+
+        DB::table('customers')->where('id', $id)->update([
+            ...$data,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log($request, 'membership.updated', 'customer', $id, "Memperbarui member {$data['name']}");
+
+        return response()->json(['message' => 'Data member berhasil diperbarui.', 'id' => $id]);
+    }
+
+    public function destroyMember(Request $request, int $id): JsonResponse
+    {
+        $member = DB::table('customers')->where('id', $id)->where('is_member', true)->first(['id', 'name']);
+        abort_unless($member, 404, 'Member tidak ditemukan.');
+
+        // Riwayat reservasi dan transaksi tetap terhubung ke pelanggan yang sama.
+        DB::table('customers')->where('id', $id)->update([
+            'is_member' => false,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log($request, 'membership.deactivated', 'customer', $id, "Mencabut status member {$member->name}");
+
+        return response()->json(['message' => 'Status membership berhasil dicabut.']);
+    }
+
+    public function storePromotion(Request $request): JsonResponse
+    {
+        $data = $this->validatedPromotion($request);
+        $id = DB::table('promotions')->insertGetId([
+            'code' => 'PRM-'.Str::upper(Str::random(8)),
+            ...$data,
+            'discount_type' => 'percent',
+            'discount_amount' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->logger->log($request, 'promotion.created', 'promotion', $id, "Menambahkan event {$data['name']}");
+
+        return response()->json(['message' => 'Event membership berhasil ditambahkan.', 'id' => $id], 201);
+    }
+
+    public function updatePromotion(Request $request, int $id): JsonResponse
+    {
+        abort_unless(DB::table('promotions')->where('id', $id)->exists(), 404, 'Event tidak ditemukan.');
+
+        $data = $this->validatedPromotion($request);
+        DB::table('promotions')->where('id', $id)->update([
+            ...$data,
+            'discount_type' => 'percent',
+            'discount_amount' => 0,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log($request, 'promotion.updated', 'promotion', $id, "Memperbarui event {$data['name']}");
+
+        return response()->json(['message' => 'Event membership berhasil diperbarui.', 'id' => $id]);
+    }
+
+    public function destroyPromotion(Request $request, int $id): JsonResponse
+    {
+        $promotion = DB::table('promotions')->where('id', $id)->first(['id', 'name']);
+        abort_unless($promotion, 404, 'Event tidak ditemukan.');
+
+        DB::table('promotions')->where('id', $id)->delete();
+        $this->logger->log($request, 'promotion.deleted', 'promotion', $id, "Menghapus event {$promotion->name}");
+
+        return response()->json(['message' => 'Event membership berhasil dihapus.']);
+    }
+
+    /** @return array{name: string, discount_percent: string, starts_at: string, ends_at: string, members_only: bool, is_active: bool, description: string|null} */
+    private function validatedPromotion(Request $request): array
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:150'],
+            'discount_percent' => ['required', 'numeric', 'gt:0', 'max:100'],
+            'starts_at' => ['required', 'date_format:Y-m-d'],
+            'ends_at' => ['required', 'date_format:Y-m-d', 'after_or_equal:starts_at'],
+            'members_only' => ['required', 'boolean'],
+            'is_active' => ['required', 'boolean'],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        return [
+            ...$data,
+            'discount_percent' => FixedPoint::normalizePercent((string) $data['discount_percent']),
+            'members_only' => (bool) $data['members_only'],
+            'is_active' => (bool) $data['is_active'],
+        ];
+    }
+
     public function storePayment(CheckoutRequest $request): JsonResponse
     {
         $transaction = $this->checkout->checkout($request->validated(), $request);
@@ -478,13 +786,133 @@ class SalonController extends Controller
         ], $status);
     }
 
+    public function storeCashEntry(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'type' => ['required', Rule::in(['income', 'expense'])],
+            'category' => ['required', 'string', 'max:100'],
+            'description' => ['required', 'string', 'max:2000'],
+            'amount' => ['required', 'integer', 'min:1', 'max:999999999999'],
+            'entry_date' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+        ]);
+
+        $id = DB::transaction(function () use ($data, $request): int {
+            $now = now();
+            $id = DB::table('cash_entries')->insertGetId([
+                'type' => $data['type'],
+                'category' => trim($data['category']),
+                'description' => trim($data['description']),
+                'amount' => $data['amount'],
+                'entry_date' => $data['entry_date'],
+                'status' => 'posted',
+                'created_by' => $request->user()?->id,
+                'approved_by' => $request->user()?->id,
+                'approved_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $typeLabel = $data['type'] === 'income' ? 'pemasukan' : 'pengeluaran';
+            $this->logger->log(
+                $request,
+                'finance.cash_entry_created',
+                'cash_entry',
+                $id,
+                "Mencatat {$typeLabel}: {$data['category']}",
+                ['type' => $data['type'], 'amount' => $data['amount'], 'entry_date' => $data['entry_date']],
+            );
+
+            return $id;
+        }, 3);
+
+        return response()->json([
+            'message' => 'Arus kas berhasil dicatat.',
+            'id' => $id,
+        ], 201);
+    }
+
+    public function storePayroll(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'period' => ['required', 'date_format:Y-m'],
+            'base_salary' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'bonus' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'overtime' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'late_deduction' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'other_deduction' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
+            'late_duration_minutes' => ['nullable', 'integer', 'min:0', 'max:999999'],
+        ]);
+
+        $id = DB::transaction(function () use ($data, $request): int {
+            $employee = DB::table('employees')
+                ->where('id', $data['employee_id'])
+                ->where('active', true)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($employee, 422, 'Karyawan tidak aktif atau tidak ditemukan.');
+
+            if (DB::table('payrolls')
+                ->where('employee_id', $employee->id)
+                ->where('period', $data['period'])
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'employee_id' => ['Penggajian karyawan ini untuk periode tersebut sudah dibuat.'],
+                ]);
+            }
+
+            $bonus = (int) ($data['bonus'] ?? 0);
+            $overtime = (int) ($data['overtime'] ?? 0);
+            $lateDeduction = (int) ($data['late_deduction'] ?? 0);
+            $otherDeduction = (int) ($data['other_deduction'] ?? 0);
+            $commission = $this->payrollCommission((int) $employee->id, $data['period']);
+            $gross = (int) $data['base_salary'] + $bonus + $overtime + $commission;
+            $deductions = $lateDeduction + $otherDeduction;
+            abort_if($deductions > $gross, 422, 'Total potongan tidak boleh melebihi pendapatan.');
+
+            $now = now();
+            $id = DB::table('payrolls')->insertGetId([
+                'employee_id' => $employee->id,
+                'period' => $data['period'],
+                'employee_name' => $employee->name,
+                'position' => $employee->position,
+                'base_salary' => $data['base_salary'],
+                'bonus' => $bonus,
+                'overtime' => $overtime,
+                'commission' => $commission,
+                'late_deduction' => $lateDeduction,
+                'other_deduction' => $otherDeduction,
+                'net_salary' => $gross - $deductions,
+                'late_duration_minutes' => (int) ($data['late_duration_minutes'] ?? 0),
+                'status' => 'draft',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $this->logger->log(
+                $request,
+                'payroll.created',
+                'payroll',
+                $id,
+                "Membuat penggajian {$employee->name} periode {$data['period']}",
+                ['employee_id' => (int) $employee->id, 'period' => $data['period']],
+            );
+
+            return $id;
+        }, 3);
+
+        return response()->json([
+            'message' => 'Data penggajian berhasil ditambahkan.',
+            'id' => $id,
+        ], 201);
+    }
+
     public function updatePayroll(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
             'base_salary' => ['required', 'integer', 'min:0', 'max:999999999999'],
             'bonus' => ['required', 'integer', 'min:0', 'max:999999999999'],
             'overtime' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
-            'commission' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'late_deduction' => ['required', 'integer', 'min:0', 'max:999999999999'],
             'other_deduction' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'late_duration_minutes' => ['nullable', 'integer', 'min:0', 'max:999999'],
@@ -496,7 +924,8 @@ class SalonController extends Controller
             abort_if($payroll->status !== 'draft', 422, 'Penggajian yang sudah difinalisasi tidak dapat diubah.');
 
             $overtime = (int) ($data['overtime'] ?? $payroll->overtime);
-            $commission = (int) ($data['commission'] ?? $payroll->commission);
+            // Komisi adalah hasil transaksi layanan, bukan nilai yang diinput manual.
+            $commission = $this->payrollCommission((int) $payroll->employee_id, $payroll->period);
             $otherDeduction = (int) ($data['other_deduction'] ?? $payroll->other_deduction);
             $gross = (int) $data['base_salary'] + (int) $data['bonus'] + $overtime + $commission;
             $deductions = (int) $data['late_deduction'] + $otherDeduction;
@@ -517,6 +946,56 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Data gaji berhasil diperbarui.']);
+    }
+
+    /**
+     * @param  array<int, string>  $headers
+     * @param  array<int, array<int, mixed>>  $rows
+     * @param  array<int, int>  $currencyColumns
+     */
+    private function spreadsheetResponse(
+        string $filename,
+        string $title,
+        string $sheetName,
+        array $headers,
+        array $rows,
+        array $currencyColumns = [],
+    ): StreamedResponse {
+        return response()->streamDownload(function () use ($sheetName, $title, $headers, $rows, $currencyColumns): void {
+            echo $this->spreadsheets->make($sheetName, $title, $headers, $rows, $currencyColumns);
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function stockSourceLabel(?string $source): string
+    {
+        return match ($source) {
+            'opening_stock' => 'Stok awal',
+            'manual_adjustment' => 'Penyesuaian manual',
+            'transaction' => 'Pemakaian resep treatment',
+            'transaction_sale' => 'Penjualan produk',
+            default => $source ?: '-',
+        };
+    }
+
+    private function payrollCommission(int $employeeId, string $period): int
+    {
+        $start = CarbonImmutable::createFromFormat('!Y-m', $period)->startOfMonth();
+        $end = $start->addMonth();
+
+        return (int) DB::table('reservation_item_staff as assignment')
+            ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
+            ->join('transactions as transaction', 'transaction.reservation_id', '=', 'item.reservation_id')
+            ->join('transaction_items as transaction_item', function ($join): void {
+                $join->on('transaction_item.transaction_id', '=', 'transaction.id')
+                    ->on('transaction_item.reservation_item_id', '=', 'item.id');
+            })
+            ->where('assignment.employee_id', $employeeId)
+            ->where('transaction.status', 'paid')
+            ->where('transaction.transacted_at', '>=', $start)
+            ->where('transaction.transacted_at', '<', $end)
+            ->sum('assignment.commission_amount');
     }
 
     private function replaceRecipe(Request $request, int $id): JsonResponse

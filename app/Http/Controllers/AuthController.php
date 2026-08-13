@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class AuthController extends Controller
@@ -17,16 +18,19 @@ class AuthController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $credentials = $request->validate([
-            'email' => ['required', 'email'],
+            'username' => ['required', 'string'],
             'password' => ['required', 'string'],
         ]);
 
         $remember = $request->boolean('remember');
 
-        if (! Auth::attempt($credentials, $remember)) {
+        if (! Auth::attempt([
+            'username' => Str::lower($credentials['username']),
+            'password' => $credentials['password'],
+        ], $remember)) {
             return back()->withErrors([
-                'email' => 'Email atau kata sandi tidak sesuai.',
-            ])->onlyInput('email');
+                'username' => 'Username atau kata sandi tidak sesuai.',
+            ])->onlyInput('username');
         }
 
         $request->session()->regenerate();

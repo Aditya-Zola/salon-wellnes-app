@@ -34,6 +34,9 @@ class AccessControlSeeder extends Seeder
             'cashier.process' => 'Proses transaksi',
             'cashier.refund' => 'Proses pengembalian dana',
         ],
+        'Penjualan' => [
+            'sales.view' => 'Lihat riwayat penjualan dan cetak ulang nota',
+        ],
         'Treatment' => [
             'treatments.view' => 'Lihat treatment',
             'treatments.create' => 'Tambah treatment',
@@ -127,6 +130,7 @@ class AccessControlSeeder extends Seeder
             'reservations.view',
             'cashier.view',
             'cashier.process',
+            'sales.view',
             'treatments.view',
             'memberships.view',
             'products.view',

@@ -15,6 +15,7 @@ class TransactionPayment extends Model
         'transaction_id',
         'payment_method_id',
         'amount',
+        'tendered_amount',
         'reference_number',
         'paid_at',
         'status',
@@ -26,6 +27,7 @@ class TransactionPayment extends Model
     {
         return [
             'amount' => 'integer',
+            'tendered_amount' => 'integer',
             'paid_at' => 'datetime',
         ];
     }

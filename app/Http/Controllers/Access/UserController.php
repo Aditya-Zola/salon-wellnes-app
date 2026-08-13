@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Access;
 
 use App\Http\Controllers\Controller;
+use App\Models\Employee;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -17,36 +20,74 @@ class UserController extends Controller
 {
     public function index(): View
     {
-        $users = User::query()->with('roles')->orderBy('name')->get();
+        $users = User::query()->with(['roles', 'employee'])->orderBy('name')->get();
+        $employeesWithoutAccount = Employee::query()
+            ->whereNull('user_id')
+            ->orderBy('name')
+            ->get();
         $roles = $this->availableRoles(request()->user());
 
-        return view('access.users.index', compact('users', 'roles'));
+        return view('access.users.index', compact('users', 'employeesWithoutAccount', 'roles'));
     }
 
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:100'],
-            'email' => ['required', 'email', 'max:150', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-            'role_id' => ['required', Rule::exists(config('permission.table_names.roles'), 'id')],
+            'identity' => ['required', 'string', 'min:3', 'max:100'],
+            'role_id' => ['required'],
+            'specialty' => ['required_if:role_id,therapist', 'nullable', 'string', 'max:150'],
+            'password' => ['required_unless:role_id,therapist', 'nullable', 'string', 'min:8', 'confirmed'],
         ]);
 
-        $role = Role::findById((int) $validated['role_id']);
+        $isTherapist = $validated['role_id'] === 'therapist';
+        $role = $isTherapist ? null : Role::findById((int) $validated['role_id']);
+        abort_unless($isTherapist || $role, 422, 'Peran tidak ditemukan.');
 
-        if ($role->name === 'super-admin' && ! $request->user()->isSuperAdmin()) {
+        if ($role?->name === 'super-admin' && ! $request->user()->isSuperAdmin()) {
             abort(403);
         }
 
-        $user = User::create([
-            'name' => $validated['name'],
-            'email' => $validated['email'],
-            'password' => $validated['password'],
-        ]);
-        $user->syncRoles([$role]);
+        if (! $isTherapist) {
+            validator(['username' => $validated['identity']], [
+                'username' => ['regex:/^[A-Za-z0-9._-]+$/', 'max:40', 'unique:users,username'],
+            ])->validate();
+        }
+
+        DB::transaction(function () use ($validated, $isTherapist, $role): void {
+            if ($isTherapist) {
+                Employee::create([
+                    'code' => 'EMP-'.Str::upper(Str::random(8)),
+                    'name' => $validated['identity'],
+                    'position' => 'Therapist',
+                    'specialty' => $validated['specialty'],
+                    'is_service_provider' => true,
+                    'active' => true,
+                ]);
+
+                return;
+            }
+
+            $username = Str::lower($validated['identity']);
+            $user = User::create([
+                'name' => $this->displayNameFromUsername($username),
+                'username' => $username,
+                'password' => $validated['password'],
+            ]);
+            $user->syncRoles([$role]);
+
+            Employee::create([
+                'user_id' => $user->id,
+                'code' => 'EMP-'.Str::upper(Str::random(8)),
+                'name' => $user->name,
+                'position' => $role->display_name ?: $role->name,
+                'specialty' => null,
+                'is_service_provider' => false,
+                'active' => true,
+            ]);
+        });
 
         return redirect()->route('access.users.index')
-            ->with('success', 'Pengguna berhasil ditambahkan.');
+            ->with('success', $isTherapist ? 'Terapis berhasil ditambahkan tanpa akses login.' : 'Akun pengguna berhasil ditambahkan.');
     }
 
     public function edit(User $user): View
@@ -55,7 +96,7 @@ class UserController extends Controller
             abort(403);
         }
 
-        $user->load(['roles.permissions', 'permissions']);
+        $user->load(['roles.permissions', 'permissions', 'employee']);
         $roles = $this->availableRoles(request()->user());
         $permissionGroups = $this->availablePermissions(request()->user())->groupBy('group');
 
@@ -66,14 +107,21 @@ class UserController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:100'],
-            'email' => [
+            'username' => [
                 'required',
-                'email',
+                'string',
+                'min:3',
                 'max:150',
-                Rule::unique('users', 'email')->ignore($user),
+                'regex:/^[A-Za-z0-9._-]+$/',
+                Rule::unique('users', 'username')->ignore($user),
             ],
+            'email' => ['nullable', 'email', 'max:150', Rule::unique('users', 'email')->ignore($user)],
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],
             'role_id' => ['required', Rule::exists(config('permission.table_names.roles'), 'id')],
+            'position' => ['nullable', 'string', 'max:100'],
+            'specialty' => ['nullable', 'string', 'max:150'],
+            'is_service_provider' => ['nullable', 'boolean'],
+            'active' => ['nullable', 'boolean'],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => [
                 'integer',
@@ -111,7 +159,8 @@ class UserController extends Controller
 
         $user->fill([
             'name' => $validated['name'],
-            'email' => $validated['email'],
+            'username' => Str::lower($validated['username']),
+            'email' => $validated['email'] ?? null,
         ]);
 
         if ($validated['password'] ?? null) {
@@ -120,6 +169,21 @@ class UserController extends Controller
 
         $user->save();
         $user->syncRoles([$role]);
+
+        Employee::query()->firstOrCreate(
+            ['user_id' => $user->id],
+            [
+                'code' => 'EMP-'.Str::upper(Str::random(8)),
+                'name' => $validated['name'],
+                'active' => true,
+            ],
+        )->update([
+            'name' => $validated['name'],
+            'position' => $validated['position'] ?? null,
+            'specialty' => $validated['specialty'] ?? null,
+            'is_service_provider' => (bool) ($validated['is_service_provider'] ?? false),
+            'active' => ! array_key_exists('active', $validated) || (bool) $validated['active'],
+        ]);
 
         if ($role->name !== 'super-admin') {
             // Direct permissions are personal additions to the selected role. Role
@@ -130,7 +194,60 @@ class UserController extends Controller
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         return redirect()->route('access.users.index')
-            ->with('success', 'Pengguna berhasil diperbarui.');
+            ->with('success', 'Data karyawan dan akses login berhasil diperbarui.');
+    }
+
+    public function editEmployee(Employee $employee): View
+    {
+        abort_if($employee->user_id !== null, 404);
+
+        return view('access.users.edit-employee', compact('employee'));
+    }
+
+    public function updateEmployee(Request $request, Employee $employee): RedirectResponse
+    {
+        abort_if($employee->user_id !== null, 404);
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'position' => ['nullable', 'string', 'max:100'],
+            'specialty' => ['nullable', 'string', 'max:150'],
+            'is_service_provider' => ['nullable', 'boolean'],
+            'active' => ['nullable', 'boolean'],
+        ]);
+
+        $employee->update([
+            'name' => $validated['name'],
+            'position' => $validated['position'] ?? null,
+            'specialty' => $validated['specialty'] ?? null,
+            'is_service_provider' => (bool) ($validated['is_service_provider'] ?? false),
+            'active' => ! array_key_exists('active', $validated) || (bool) $validated['active'],
+        ]);
+
+        return redirect()->route('access.users.index')
+            ->with('success', 'Data karyawan berhasil diperbarui.');
+    }
+
+    public function destroyEmployee(Employee $employee): RedirectResponse
+    {
+        abort_if($employee->user_id !== null, 404);
+
+        $hasOperationalHistory = DB::table('reservation_item_staff')
+            ->where('employee_id', $employee->id)
+            ->exists()
+            || DB::table('payrolls')->where('employee_id', $employee->id)->exists();
+
+        if ($hasOperationalHistory) {
+            $employee->update(['active' => false]);
+
+            return redirect()->route('access.users.index')
+                ->with('success', 'Karyawan memiliki riwayat operasional, sehingga dinonaktifkan agar histori tetap aman.');
+        }
+
+        $employee->delete();
+
+        return redirect()->route('access.users.index')
+            ->with('success', 'Karyawan berhasil dihapus.');
     }
 
     public function destroy(Request $request, User $user): RedirectResponse
@@ -146,7 +263,7 @@ class UserController extends Controller
         $user->delete();
 
         return redirect()->route('access.users.index')
-            ->with('success', 'Pengguna berhasil dihapus.');
+            ->with('success', 'Akses login berhasil dicabut. Data karyawan tetap tersimpan.');
     }
 
     private function availableRoles(User $actor): Collection
@@ -155,6 +272,14 @@ class UserController extends Controller
             ->when(! $actor->isSuperAdmin(), fn ($query) => $query->where('name', '!=', 'super-admin'))
             ->orderBy('display_name')
             ->get();
+    }
+
+    private function displayNameFromUsername(string $username): string
+    {
+        return Str::of($username)
+            ->replace(['.', '_', '-'], ' ')
+            ->title()
+            ->value();
     }
 
     private function availablePermissions(User $actor): Collection

@@ -52,11 +52,13 @@ class StoreReservationRequest extends FormRequest
         $name = $this->input('name');
         $phone = $this->input('phone');
         $source = $this->input('source', 'walk_in');
+        $customerType = $this->input('customer_type', 'guest');
 
         $this->merge([
             'name' => is_string($name) ? trim($name) : $name,
             'phone' => is_string($phone) ? trim($phone) : $phone,
             'source' => is_string($source) ? strtolower(trim($source)) : $source,
+            'customer_type' => is_string($customerType) ? strtolower(trim($customerType)) : $customerType,
             'items' => $items,
         ]);
     }
@@ -64,8 +66,10 @@ class StoreReservationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:100'],
-            'phone' => ['required', 'string', 'max:30'],
+            'customer_type' => ['required', Rule::in(['guest', 'member'])],
+            'member_id' => ['nullable', 'required_if:customer_type,member', 'integer', 'exists:customers,id'],
+            'name' => ['nullable', 'required_unless:customer_type,member', 'string', 'max:100'],
+            'phone' => ['nullable', 'required_unless:customer_type,member', 'string', 'max:30'],
             'date' => ['required', 'date_format:Y-m-d'],
             'source' => ['required', Rule::in(['walk_in', 'whatsapp', 'phone', 'other'])],
             'notes' => ['nullable', 'string', 'max:2000'],

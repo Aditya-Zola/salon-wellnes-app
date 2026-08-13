@@ -36,21 +36,21 @@
                     <img src="{{ asset('images/selesa-logo.png') }}?v={{ filemtime(public_path('images/selesa-logo.png')) }}" alt="Selesa Salon">
                 </div>
                 <h2>Selamat datang</h2>
-                <p>Masukkan email dan kata sandi untuk melanjutkan.</p>
+                <p>Masukkan username dan kata sandi untuk melanjutkan.</p>
             </header>
 
             @if ($errors->any())
                 <div class="error" role="alert">{{ $errors->first() }}</div>
             @endif
 
-            <label for="email">Email</label>
+            <label for="username">Username</label>
             <input
-                id="email"
-                type="email"
-                name="email"
-                value="{{ old('email') }}"
-                placeholder="nama@email.com"
-                autocomplete="email"
+                id="username"
+                type="text"
+                name="username"
+                value="{{ old('username') }}"
+                placeholder="Contoh: kasir.selesa"
+                autocomplete="username"
                 required
                 autofocus
             >
