@@ -40,22 +40,26 @@
     outline:2px solid #6B4A38;
     outline-offset:2px;
 }
+.sidebar-toggle{position:fixed;z-index:20;top:20px;left:176px;width:40px;height:40px;padding:0;display:grid;place-items:center;border:1px solid #5d463c;border-radius:10px;background:#382923;color:#fff;box-shadow:0 8px 20px rgba(43,27,21,.2);cursor:pointer;transition:left .28s ease,background-color .18s ease,transform .18s ease}.sidebar-toggle:hover{background:#4c372f;transform:translateY(-1px)}.sidebar-toggle:focus-visible{outline:3px solid #f1d7c7;outline-offset:3px}body .sidebar,body main{transition:width .28s ease,margin-left .28s ease,padding .28s ease}body.sidebar-is-collapsed .sidebar{width:72px;padding-inline:12px}body.sidebar-is-collapsed main{margin-left:72px}body.sidebar-is-collapsed .sidebar-toggle{left:16px}body.sidebar-is-collapsed .dashboard-brand{display:none}body.sidebar-is-collapsed .sidebar nav{margin-top:54px}body.sidebar-is-collapsed .sidebar nav button,body.sidebar-is-collapsed .sidebar nav>a,body.sidebar-is-collapsed .access-menu summary{justify-content:center;padding-inline:0;gap:0}body.sidebar-is-collapsed .sidebar nav span,body.sidebar-is-collapsed .access-menu summary>i,body.sidebar-is-collapsed .account>div,body.sidebar-is-collapsed .account form{display:none}body.sidebar-is-collapsed .access-submenu{display:none}body.sidebar-is-collapsed .account{justify-content:center;padding-top:14px}
+@media(max-width:700px){.sidebar-toggle{top:13px;left:76px}body.sidebar-is-collapsed .sidebar-toggle{left:16px}}
 @media(prefers-reduced-motion:reduce){
     .sidebar nav button,.sidebar nav>a,.access-menu summary{transition:none}
     .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
 }
 
 /* Sistem visual Selésa: sidebar dan status interaksi yang konsisten. */
-:root{--selesa-brown:#6B4A38;--selesa-tint:#F3ECE7;--selesa-sidebar:#faf7f4;--selesa-icon:#6f6a65}
+:root{--selesa-brown:#6B4A38;--selesa-tint:#F3ECE7;--selesa-sidebar:#30241f;--selesa-sidebar-deep:#241a17;--selesa-icon:#eadfd8;--selesa-muted:#cdbdb4;--selesa-active:#f1d7c7;--selesa-active-text:#4c3024}
 body{background:#fcfaf8}
-.sidebar{background:var(--selesa-sidebar)!important;border-right:.5px solid #ddd1c9!important;box-shadow:none!important}
+.sidebar{background:linear-gradient(180deg,var(--selesa-sidebar) 0%,var(--selesa-sidebar-deep) 100%)!important;border-right:1px solid #4a3730!important;box-shadow:10px 0 28px rgba(43,27,21,.12)!important}
+.dashboard-brand::after{background:linear-gradient(90deg,transparent,#72584c 18%,#72584c 82%,transparent)}
 .sidebar nav button,.sidebar nav>a,.access-menu summary{color:var(--selesa-icon)!important}
 .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover,
-.sidebar nav button.active,.sidebar nav>a.active,.access-menu summary.active{background:var(--selesa-tint)!important;color:var(--selesa-brown)!important;font-weight:700}
+.sidebar nav button.active,.sidebar nav>a.active,.access-menu summary.active{background:var(--selesa-active)!important;color:var(--selesa-active-text)!important;font-weight:700}
+.sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{background:rgba(255,255,255,.1)!important;color:#fff!important}
 .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
-.sidebar nav button.active::before,.sidebar nav>a.active::before,.access-menu summary.active::before{background:var(--selesa-brown)!important}
-.access-submenu{border-left-color:#ddcec4!important}.access-submenu a{color:#77716c!important}.access-submenu a:hover,.access-submenu a.active{background:var(--selesa-tint)!important;color:var(--selesa-brown)!important}
-.account{background:var(--selesa-tint)!important;border-top:.5px solid #dfd2ca!important;box-shadow:none!important}.account i{background:var(--selesa-brown)!important;color:#fff!important}.account .logout{color:var(--selesa-brown)!important}.account .logout:hover{background:#eaded6!important}
+.sidebar nav button.active::before,.sidebar nav>a.active::before,.access-menu summary.active::before{background:#f3b999!important}
+.access-submenu{border-left-color:#72584c!important}.access-submenu a{color:var(--selesa-muted)!important}.access-submenu a:hover,.access-submenu a.active{background:rgba(255,255,255,.1)!important;color:#fff!important}
+.account{background:rgba(0,0,0,.18)!important;border-top:1px solid #4a3730!important;box-shadow:none!important}.account i{background:#f1d7c7!important;color:#4c3024!important}.account strong{color:#fff!important}.account small{color:var(--selesa-muted)!important}.account .logout{color:#eadfd8!important}.account .logout:hover{background:rgba(255,255,255,.1)!important}
 .nav-icon,.sidebar .material-symbols-outlined{color:inherit!important}
 .primary,.access-button.primary{background:var(--selesa-brown)!important;color:#fff!important}.primary:hover,.access-button.primary:hover{background:#51372a!important}
 .secondary:hover,.access-button.secondary:hover{border-color:#cdbbae!important;color:var(--selesa-brown)!important;background:var(--selesa-tint)!important}
