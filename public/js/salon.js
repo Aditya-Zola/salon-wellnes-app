@@ -1836,10 +1836,27 @@ function renderDashboard() {
         const scale = maximum || 1;
         const points = revenue.map((item, index) => ({
             px: 4 + (index * (93 / Math.max(1, revenue.length - 1))),
-            py: 92 - (Number(item.total || 0) / scale * 80),
+            py: 96 - (Number(item.total || 0) / scale * 90),
             total: Number(item.total || 0),
+            label: item.label,
+            date: item.date,
         }));
-        chart.innerHTML = `<span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(maximum / 2)}</span><span class="axis a3">Rp0</span><div class="chart-grid"></div><div class="chart-line"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Grafik pendapatan tujuh hari"><polyline points="${points.map((point) => `${point.px},${point.py}`).join(' ')}"></polyline></svg>${points.map((point) => `<i style="--x:${point.px}%;--y:${point.py}%" title="${money(point.total)}"></i>`).join('')}</div><div class="chart-labels">${revenue.map((item) => `<span title="${escapeHtml(item.date)}">${escapeHtml(item.label)}</span>`).join('')}</div>`;
+        chart.innerHTML = `<span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(maximum / 2)}</span><span class="axis a3">Rp0</span><div class="chart-grid"></div><div class="chart-line"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Grafik pendapatan tujuh hari"><polyline points="${points.map((point) => `${point.px},${point.py}`).join(' ')}"></polyline></svg>${points.map((point) => `<button type="button" class="chart-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.label)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="chart-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${revenue.map((item) => `<span title="${escapeHtml(item.date)}">${escapeHtml(item.label)}</span>`).join('')}</div>`;
+
+        const tooltip = chart.querySelector('.chart-tooltip');
+        chart.querySelectorAll('.chart-point').forEach((point) => {
+            const showTooltip = () => {
+                tooltip.querySelector('small').textContent = point.dataset.date;
+                tooltip.querySelector('strong').textContent = point.dataset.total;
+                tooltip.style.setProperty('--tooltip-x', point.style.getPropertyValue('--x'));
+                tooltip.style.setProperty('--tooltip-y', point.style.getPropertyValue('--y'));
+                tooltip.classList.add('is-visible');
+            };
+            point.addEventListener('mouseenter', showTooltip);
+            point.addEventListener('focus', showTooltip);
+            point.addEventListener('mouseleave', () => tooltip.classList.remove('is-visible'));
+            point.addEventListener('blur', () => tooltip.classList.remove('is-visible'));
+        });
     }
 
     const treatments = array(dashboard.treatment_last_7_days);
