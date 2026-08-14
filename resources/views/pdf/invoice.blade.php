@@ -62,7 +62,7 @@
         <tbody>
         @foreach ($items as $item)
             <tr>
-                <td><strong>{{ $item->name }}</strong><small>{{ $item->item_type === 'product' ? 'Produk retail' : 'Treatment' }}</small></td>
+                <td><strong>{{ $item->name }}</strong><small>{{ $item->item_type === 'product' ? 'Produk retail' : 'Treatment' }}@if((float) $item->returned_quantity > 0) · Diretur {{ rtrim(rtrim(number_format((float) $item->returned_quantity, 4, '.', ''), '0'), '.') }}@endif</small></td>
                 <td>{{ rtrim(rtrim(number_format((float) $item->quantity, 4, '.', ''), '0'), '.') }}</td>
                 <td class="right">Rp {{ number_format($item->unit_price, 0, ',', '.') }}</td>
                 <td>Rp {{ number_format($item->total_amount, 0, ',', '.') }}</td>
@@ -75,6 +75,10 @@
         <tr><td>Subtotal</td><td>Rp {{ number_format($invoice->subtotal, 0, ',', '.') }}</td></tr>
         @if ($invoice->discount_amount > 0)<tr><td>Diskon</td><td>-Rp {{ number_format($invoice->discount_amount, 0, ',', '.') }}</td></tr>@endif
         <tr class="grand"><td>Total</td><td>Rp {{ number_format($invoice->total, 0, ',', '.') }}</td></tr>
+        @if ($invoice->refunded_amount > 0)
+            <tr><td>Sudah direfund</td><td>-Rp {{ number_format($invoice->refunded_amount, 0, ',', '.') }}</td></tr>
+            <tr class="grand"><td>Nilai bersih</td><td>Rp {{ number_format(max(0, $invoice->total - $invoice->refunded_amount), 0, ',', '.') }}</td></tr>
+        @endif
     </table>
 
     <section class="payments">

@@ -102,11 +102,11 @@ class SalonSnapshotService
                     $query->where('activity.action', 'like', '%.created')
                         ->orWhere('activity.action', 'like', '%.updated')
                         ->orWhere('activity.action', 'like', '%.deleted')
-                    ->orWhere('activity.action', 'like', '%.activated')
-                    ->orWhere('activity.action', 'like', '%.deactivated')
-                    ->orWhere('activity.action', 'like', '%.adjusted')
-                    ->orWhere('activity.action', 'like', '%added%')
-                    ->orWhere('activity.action', 'like', '%removed%');
+                        ->orWhere('activity.action', 'like', '%.activated')
+                        ->orWhere('activity.action', 'like', '%.deactivated')
+                        ->orWhere('activity.action', 'like', '%.adjusted')
+                        ->orWhere('activity.action', 'like', '%added%')
+                        ->orWhere('activity.action', 'like', '%removed%');
                 })
                 ->latest('activity.created_at')
                 ->limit(50)
@@ -524,6 +524,7 @@ class SalonSnapshotService
             'transaction.total',
             'transaction.paid_amount',
             'transaction.change_amount',
+            'transaction.refunded_amount',
             'transaction.notes',
             'transaction.created_at',
             'transaction.finalized_by',
@@ -542,15 +543,45 @@ class SalonSnapshotService
                 ->whereIn('transaction_id', $transactions->pluck('id'))
                 ->orderBy('sort_order')
                 ->orderBy('id')
-                ->get(['id', 'transaction_id', 'item_type', 'name', 'quantity', 'unit_price', 'total_amount', 'sort_order'])
+                ->get(['id', 'transaction_id', 'item_type', 'item_id', 'name', 'quantity', 'unit_price', 'total_amount', 'sort_order'])
+                ->groupBy('transaction_id');
+            $returnedQuantities = DB::table('sales_return_items as item')
+                ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+                ->whereIn('sales_return.transaction_id', $transactions->pluck('id'))
+                ->where('sales_return.status', 'posted')
+                ->select('item.transaction_item_id', DB::raw('SUM(item.quantity) as quantity'))
+                ->groupBy('item.transaction_item_id')
+                ->pluck('quantity', 'transaction_item_id');
+            $returns = DB::table('sales_returns as sales_return')
+                ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+                ->whereIn('sales_return.transaction_id', $transactions->pluck('id'))
+                ->where('sales_return.status', 'posted')
+                ->orderByDesc('sales_return.returned_at')
+                ->get([
+                    'sales_return.id',
+                    'sales_return.transaction_id',
+                    'sales_return.number',
+                    'sales_return.total_amount',
+                    'sales_return.reason',
+                    'sales_return.reference_number',
+                    'sales_return.returned_at',
+                    'method.name as payment_method_name',
+                ])
                 ->groupBy('transaction_id');
             $cashiers = DB::table('users')
                 ->whereIn('id', $transactions->pluck('finalized_by')->filter()->unique())
                 ->pluck('name', 'id');
-            $transactions = $transactions->map(function (object $transaction) use ($payments, $items, $cashiers): object {
+            $transactions = $transactions->map(function (object $transaction) use ($payments, $items, $cashiers, $returnedQuantities, $returns): object {
                 $transaction->payments = collect($payments->get($transaction->id, []))->values();
                 $transaction->payment_method = $transaction->payments->pluck('payment_method_name')->join(' + ');
-                $transaction->items = collect($items->get($transaction->id, []))->values();
+                $transaction->items = collect($items->get($transaction->id, []))->map(function (object $item) use ($returnedQuantities): object {
+                    $item->returned_quantity = (string) ($returnedQuantities->get($item->id) ?? '0.0000');
+                    $item->refundable_quantity = max(0, (float) $item->quantity - (float) $item->returned_quantity);
+
+                    return $item;
+                })->values();
+                $transaction->returns = collect($returns->get($transaction->id, []))->values();
+                $transaction->net_total = max(0, (int) $transaction->total - (int) $transaction->refunded_amount);
                 $transaction->cashier_name = $cashiers->get($transaction->finalized_by) ?: 'Kasir Selesa';
 
                 return $transaction;
@@ -569,6 +600,12 @@ class SalonSnapshotService
                 ->where('is_active', true)
                 ->orderBy('name')
                 ->pluck('name')
+                ->values(),
+            'refund_payment_options' => DB::table('payment_methods')
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference'])
                 ->values(),
         ];
     }
@@ -630,6 +667,7 @@ class SalonSnapshotService
                 'transaction.total',
                 'transaction.paid_amount',
                 'transaction.change_amount',
+                'transaction.refunded_amount',
                 'transaction.notes',
                 'transaction.created_at',
                 'transaction.finalized_by',
@@ -697,7 +735,7 @@ class SalonSnapshotService
 
     private function cashEntries(): mixed
     {
-        return DB::table('cash_entries as entry')
+        $manual = DB::table('cash_entries as entry')
             ->leftJoin('users as creator', 'creator.id', '=', 'entry.created_by')
             ->where('entry.status', 'posted')
             ->whereNull('entry.transaction_payment_id')
@@ -715,6 +753,47 @@ class SalonSnapshotService
                 'entry.created_at',
                 'creator.name as created_by_name',
             ]);
+        $refunds = DB::table('sales_returns as sales_return')
+            ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
+            ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+            ->leftJoin('users as creator', 'creator.id', '=', 'sales_return.created_by')
+            ->where('sales_return.status', 'posted')
+            ->where('method.is_cash', true)
+            ->latest('sales_return.returned_at')
+            ->limit(100)
+            ->get([
+                'sales_return.id',
+                'sales_return.number',
+                'sales_return.reason',
+                'sales_return.total_amount',
+                'sales_return.returned_at',
+                'transaction.number as transaction_number',
+                'creator.name as created_by_name',
+            ])
+            ->map(fn (object $refund): object => (object) [
+                'id' => 'return-'.$refund->id,
+                'transaction_payment_id' => null,
+                'type' => 'expense',
+                'category' => 'Retur penjualan',
+                'description' => "{$refund->number} · {$refund->reason}",
+                'amount' => (int) $refund->total_amount,
+                'entry_date' => substr((string) $refund->returned_at, 0, 10),
+                'created_at' => $refund->returned_at,
+                'created_by_name' => $refund->created_by_name,
+                'transaction_number' => $refund->transaction_number,
+                'automated' => true,
+            ]);
+
+        return $manual
+            ->map(function (object $entry): object {
+                $entry->automated = false;
+
+                return $entry;
+            })
+            ->concat($refunds)
+            ->sortByDesc('created_at')
+            ->take(100)
+            ->values();
     }
 
     private function dashboardAnalytics(Authenticatable $user): array
@@ -738,9 +817,9 @@ class SalonSnapshotService
         }
 
         if ($this->canAny($user, ['cashier.view', 'finance.view'])) {
-            $todayRevenue = (int) DB::table('transactions')->where('status', 'paid')->whereDate('transacted_at', $today)->sum('total');
+            $todayRevenue = $this->netRevenueForDate($today);
             $data['revenue_today'] = $todayRevenue;
-            $data['revenue_yesterday'] = (int) DB::table('transactions')->where('status', 'paid')->whereDate('transacted_at', $today->subDay())->sum('total');
+            $data['revenue_yesterday'] = $this->netRevenueForDate($today->subDay());
             $paymentRevenueTotals = DB::table('transaction_payments as payment')
                 ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
                 ->where('transaction.status', 'paid')
@@ -750,11 +829,19 @@ class SalonSnapshotService
                 ->groupBy('payment.payment_method_id')
                 ->get()
                 ->mapWithKeys(fn (object $payment): array => [(int) $payment->payment_method_id => (int) $payment->total]);
+            $paymentRefundTotals = DB::table('sales_returns')
+                ->where('status', 'posted')
+                ->whereDate('returned_at', $today)
+                ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
+                ->groupBy('refund_payment_method_id')
+                ->get()
+                ->mapWithKeys(fn (object $refund): array => [(int) $refund->refund_payment_method_id => (int) $refund->total]);
             $methods = DB::table('payment_methods')
-                ->where(function ($query) use ($paymentRevenueTotals): void {
+                ->where(function ($query) use ($paymentRevenueTotals, $paymentRefundTotals): void {
                     $query->where('is_active', true);
-                    if ($paymentRevenueTotals->isNotEmpty()) {
-                        $query->orWhereIn('id', $paymentRevenueTotals->keys()->all());
+                    $usedMethodIds = $paymentRevenueTotals->keys()->concat($paymentRefundTotals->keys())->unique()->values();
+                    if ($usedMethodIds->isNotEmpty()) {
+                        $query->orWhereIn('id', $usedMethodIds->all());
                     }
                 })
                 ->orderBy('name')
@@ -766,7 +853,7 @@ class SalonSnapshotService
                 'id' => (int) $method->id,
                 'name' => $method->name,
                 'type' => $method->type,
-                'total' => (int) $paymentRevenueTotals->get((int) $method->id, 0),
+                'total' => (int) $paymentRevenueTotals->get((int) $method->id, 0) - (int) $paymentRefundTotals->get((int) $method->id, 0),
                 'is_active' => (bool) $method->is_active,
             ]))->values()->all();
             $data['revenue_last_7_days'] = collect(range(0, 6))->map(function (int $offset) use ($start): array {
@@ -776,7 +863,7 @@ class SalonSnapshotService
                 return [
                     'date' => $date->toDateString(),
                     'label' => $dayNames[$date->dayOfWeekIso],
-                    'total' => (int) DB::table('transactions')->where('status', 'paid')->whereDate('transacted_at', $date)->sum('total'),
+                    'total' => $this->netRevenueForDate($date),
                 ];
             })->all();
             $data['treatment_last_7_days'] = DB::table('transaction_items as item')
@@ -898,16 +985,51 @@ class SalonSnapshotService
                 ->map(fn (object $item): array => ['category' => $item->category, 'total' => (int) $item->total])
                 ->values()
                 ->all();
+            $cashSales = (int) DB::table('transaction_payments as payment')
+                ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
+                ->where('payment.status', 'confirmed')
+                ->where('method.is_cash', true)
+                ->whereBetween('payment.paid_at', [$monthStart->startOfDay(), $today->endOfDay()])
+                ->sum('payment.amount');
+            $cashRefunds = (int) DB::table('sales_returns as sales_return')
+                ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+                ->where('sales_return.status', 'posted')
+                ->where('method.is_cash', true)
+                ->whereBetween('sales_return.returned_at', [$monthStart->startOfDay(), $today->endOfDay()])
+                ->sum('sales_return.total_amount');
+            if ($cashRefunds > 0) {
+                array_unshift($expenseCategories, ['category' => 'Retur penjualan', 'total' => $cashRefunds]);
+                $expenseCategories = array_slice($expenseCategories, 0, 5);
+            }
             $data += [
-                'month_income' => $income,
-                'month_expense' => $expense,
-                'month_balance' => $income - $expense,
-                'month_cash_entry_count' => $count,
+                'month_income' => $income + $cashSales,
+                'month_expense' => $expense + $cashRefunds,
+                'month_balance' => $income + $cashSales - $expense - $cashRefunds,
+                'month_cash_entry_count' => $count + (int) DB::table('sales_returns as sales_return')
+                    ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+                    ->where('sales_return.status', 'posted')
+                    ->where('method.is_cash', true)
+                    ->whereBetween('sales_return.returned_at', [$monthStart->startOfDay(), $today->endOfDay()])
+                    ->count(),
                 'month_expense_categories' => $expenseCategories,
             ];
         }
 
         return $data;
+    }
+
+    private function netRevenueForDate(CarbonImmutable $date): int
+    {
+        $sales = (int) DB::table('transactions')
+            ->where('status', 'paid')
+            ->whereDate('transacted_at', $date)
+            ->sum('total');
+        $refunds = (int) DB::table('sales_returns')
+            ->where('status', 'posted')
+            ->whereDate('returned_at', $date)
+            ->sum('total_amount');
+
+        return $sales - $refunds;
     }
 
     private function can(Authenticatable $user, string $permission): bool

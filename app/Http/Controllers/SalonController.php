@@ -4,13 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Http\Exceptions\ReservationConflictException;
 use App\Http\Requests\CheckoutRequest;
-use App\Http\Requests\StoreReservationRequest;
 use App\Http\Requests\StoreReservationItemRequest;
+use App\Http\Requests\StoreReservationRequest;
+use App\Http\Requests\StoreSalesReturnRequest;
 use App\Http\Requests\UpdateReservationItemStatusRequest;
 use App\Http\Requests\UpdateReservationStatusRequest;
 use App\Http\Services\ActivityLogger;
 use App\Http\Services\CheckoutService;
 use App\Http\Services\ReservationService;
+use App\Http\Services\SalesReturnService;
 use App\Http\Services\SalonSnapshotService;
 use App\Http\Services\SpreadsheetExportService;
 use App\Http\Support\FixedPoint;
@@ -23,6 +25,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SalonController extends Controller
@@ -30,6 +33,7 @@ class SalonController extends Controller
     public function __construct(
         private readonly ReservationService $reservations,
         private readonly CheckoutService $checkout,
+        private readonly SalesReturnService $salesReturns,
         private readonly SalonSnapshotService $snapshots,
         private readonly SpreadsheetExportService $spreadsheets,
         private readonly ActivityLogger $logger,
@@ -140,8 +144,8 @@ class SalonController extends Controller
                 $item->queue_number ?: '-',
                 $item->customer_name,
                 $item->treatment_name,
-                $item->scheduled_start_at ? \Carbon\CarbonImmutable::parse($item->scheduled_start_at)->format('H:i') : '-',
-                $item->scheduled_end_at ? \Carbon\CarbonImmutable::parse($item->scheduled_end_at)->format('H:i') : '-',
+                $item->scheduled_start_at ? CarbonImmutable::parse($item->scheduled_start_at)->format('H:i') : '-',
+                $item->scheduled_end_at ? CarbonImmutable::parse($item->scheduled_end_at)->format('H:i') : '-',
                 $therapists ?: '-',
                 $item->payment_status === 'paid' ? 'Lunas' : 'Belum dibayar',
                 $payments ?: '-',
@@ -154,7 +158,7 @@ class SalonController extends Controller
 
         return $this->spreadsheetResponse(
             $filename,
-            'Jadwal '.\Carbon\CarbonImmutable::parse($date)->translatedFormat('d F Y'),
+            'Jadwal '.CarbonImmutable::parse($date)->translatedFormat('d F Y'),
             'Jadwal',
             ['No', 'Antrean', 'Nama pelanggan', 'Treatment', 'Mulai', 'Selesai', 'Terapis', 'Status bayar', 'Metode bayar', 'Nominal', 'Invoice'],
             $rows,
@@ -221,8 +225,8 @@ class SalonController extends Controller
 
             return [
                 $index + 1,
-                \Carbon\CarbonImmutable::parse($movement->occurred_at)->format('d/m/Y'),
-                \Carbon\CarbonImmutable::parse($movement->occurred_at)->format('H:i'),
+                CarbonImmutable::parse($movement->occurred_at)->format('d/m/Y'),
+                CarbonImmutable::parse($movement->occurred_at)->format('H:i'),
                 $movement->product_name,
                 $type,
                 $quantity,
@@ -913,7 +917,7 @@ class SalonController extends Controller
         ], $status);
     }
 
-    public function invoicePdf(int $transaction): \Symfony\Component\HttpFoundation\Response
+    public function invoicePdf(int $transaction): Response
     {
         $invoice = DB::table('transactions as transaction')
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
@@ -932,6 +936,16 @@ class SalonController extends Controller
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
+        $returnedQuantities = DB::table('sales_return_items as item')
+            ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+            ->where('sales_return.transaction_id', $invoice->id)
+            ->where('sales_return.status', 'posted')
+            ->select('item.transaction_item_id', DB::raw('SUM(item.quantity) as quantity'))
+            ->groupBy('item.transaction_item_id')
+            ->pluck('quantity', 'transaction_item_id');
+        $items->each(function (object $item) use ($returnedQuantities): void {
+            $item->returned_quantity = (string) ($returnedQuantities->get($item->id) ?? '0.0000');
+        });
         $payments = DB::table('transaction_payments as payment')
             ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
             ->where('payment.transaction_id', $invoice->id)
@@ -954,6 +968,51 @@ class SalonController extends Controller
         return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri'))
             ->setPaper('a4')
             ->stream($invoice->number.'.pdf');
+    }
+
+    public function storeSalesReturn(StoreSalesReturnRequest $request, int $transaction): JsonResponse
+    {
+        $salesReturn = $this->salesReturns->create($transaction, $request->validated(), $request);
+
+        return response()->json([
+            'message' => $salesReturn['idempotent_replay']
+                ? 'Retur sudah pernah diproses.'
+                : 'Retur dan pengembalian dana berhasil diproses.',
+            ...$salesReturn,
+        ], $salesReturn['idempotent_replay'] ? 200 : 201);
+    }
+
+    public function salesReturnPdf(int $salesReturn): Response
+    {
+        $return = DB::table('sales_returns as sales_return')
+            ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
+            ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
+            ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+            ->leftJoin('users as user', 'user.id', '=', 'sales_return.created_by')
+            ->where('sales_return.id', $salesReturn)
+            ->where('sales_return.status', 'posted')
+            ->first([
+                'sales_return.*',
+                'transaction.number as transaction_number',
+                'transaction.transacted_at',
+                'customer.name as customer_name',
+                'method.name as payment_method_name',
+                'user.name as created_by_name',
+            ]);
+        abort_unless($return, 404, 'Struk retur tidak ditemukan.');
+
+        $items = DB::table('sales_return_items')
+            ->where('sales_return_id', $return->id)
+            ->orderBy('id')
+            ->get();
+        $logoPath = public_path('images/selesa-logo.png');
+        $logoDataUri = is_file($logoPath)
+            ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
+            : null;
+
+        return Pdf::loadView('pdf.sales-return', compact('return', 'items', 'logoDataUri'))
+            ->setPaper('a4')
+            ->stream($return->number.'.pdf');
     }
 
     public function storeCashEntry(Request $request): JsonResponse
