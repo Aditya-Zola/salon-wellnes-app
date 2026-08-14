@@ -4,6 +4,7 @@ use App\Http\Controllers\Access\RoleController;
 use App\Http\Controllers\Access\UserController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\SalonController;
+use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
@@ -18,6 +19,7 @@ Route::middleware('auth')->group(function () {
 
     Route::prefix('operasional')->name('operations.')->group(function () {
         Route::get('/data', [SalonController::class, 'data'])->name('data');
+        Route::get('/penjualan', [SalonController::class, 'salesPage'])->middleware('permission:sales.view')->name('sales.page');
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
@@ -30,10 +32,13 @@ Route::middleware('auth')->group(function () {
         Route::post('/pegawai', [SalonController::class, 'storeEmployee'])->middleware('permission:employees.create')->name('employees.store');
         Route::patch('/pegawai/{id}', [SalonController::class, 'updateEmployee'])->middleware('permission:employees.update')->name('employees.update');
         Route::post('/produk', [SalonController::class, 'storeProduct'])->middleware('permission:products.create')->name('products.store');
+        Route::patch('/produk/{id}', [SalonController::class, 'updateProduct'])->middleware('permission:products.update')->name('products.update');
         Route::patch('/produk/{id}/harga', [SalonController::class, 'updateProductPrice'])->middleware('permission:products.update')->name('products.price');
         Route::patch('/produk/{id}/stok', [SalonController::class, 'adjustStock'])->middleware('permission:products.update')->name('products.stock');
         Route::post('/treatment', [SalonController::class, 'storeTreatment'])->middleware('permission:treatments.create')->name('treatments.store');
+        Route::patch('/treatment/{id}/komisi', [SalonController::class, 'updateTreatmentCommission'])->middleware('permission:treatments.update')->name('treatments.commission.update');
         Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');
+        Route::get('/member', [SalonController::class, 'membersPage'])->middleware('permission:memberships.view|memberships.manage')->name('members.page');
         Route::post('/member', [SalonController::class, 'storeMember'])->middleware('permission:memberships.manage')->name('members.store');
         Route::patch('/member/{id}', [SalonController::class, 'updateMember'])->middleware('permission:memberships.manage')->name('members.update');
         Route::delete('/member/{id}', [SalonController::class, 'destroyMember'])->middleware('permission:memberships.manage')->name('members.destroy');
@@ -41,6 +46,7 @@ Route::middleware('auth')->group(function () {
         Route::patch('/promo/{id}', [SalonController::class, 'updatePromotion'])->middleware('permission:memberships.manage')->name('promotions.update');
         Route::delete('/promo/{id}', [SalonController::class, 'destroyPromotion'])->middleware('permission:memberships.manage')->name('promotions.destroy');
         Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
+        Route::get('/penjualan/{transaction}/nota.pdf', [SalonController::class, 'invoicePdf'])->middleware('permission:cashier.process|sales.view')->name('sales.invoice.pdf');
         Route::post('/keuangan/arus-kas', [SalonController::class, 'storeCashEntry'])->middleware('permission:finance.manage')->name('finance.cash-entries.store');
         Route::post('/penggajian', [SalonController::class, 'storePayroll'])->middleware('permission:payroll.manage')->name('payroll.store');
         Route::patch('/penggajian/{id}', [SalonController::class, 'updatePayroll'])->middleware('permission:payroll.manage')->name('payroll.update');
@@ -92,6 +98,15 @@ Route::middleware('auth')->group(function () {
         Route::delete('/pengguna/{user}', [UserController::class, 'destroy'])
             ->middleware('permission:access.users.manage')
             ->name('users.destroy');
+    });
+
+    Route::prefix('pengaturan')->name('settings.')->middleware('permission:settings.manage')->group(function () {
+        Route::get('/penjualan', [SettingsController::class, 'sale'])->name('sale');
+        Route::patch('/penjualan', [SettingsController::class, 'updateSale'])->name('sale.update');
+        Route::get('/{section}', [SettingsController::class, 'paymentMethods'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.index');
+        Route::post('/{section}', [SettingsController::class, 'storePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.store');
+        Route::patch('/{section}/{paymentMethod}', [SettingsController::class, 'updatePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.update');
+        Route::patch('/{section}/{paymentMethod}/status', [SettingsController::class, 'togglePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.toggle');
     });
 
     Route::post('/logout', [AuthController::class, 'destroy'])->name('logout');

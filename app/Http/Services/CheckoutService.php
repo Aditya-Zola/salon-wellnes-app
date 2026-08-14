@@ -3,6 +3,7 @@
 namespace App\Http\Services;
 
 use App\Http\Support\FixedPoint;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -161,21 +162,15 @@ class CheckoutService
                     'updated_at' => $now,
                 ]);
 
-                DB::table('cash_entries')->insert([
-                    'transaction_payment_id' => $paymentId,
-                    'type' => 'income',
-                    'category' => 'Penjualan',
-                    'description' => "{$number} · {$payment['method']->name}",
-                    'amount' => $payment['amount'],
-                    'entry_date' => today(),
-                    'status' => 'posted',
-                    'created_by' => $request->user()?->id,
-                    'approved_by' => $request->user()?->id,
-                    'approved_at' => $now,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
+                // Penjualan sudah tersimpan lengkap di transactions dan transaction_payments.
+                // Jangan menduplikasi baris ke buku kas manual; data kas dipakai untuk
+                // modal serta pengeluaran/pemasukan non-penjualan.
             }
+
+            // Komisi tersimpan pada assignment saat reservasi dibuat. Setiap
+            // transaksi berhasil harus menyegarkan payroll periode berjalan
+            // yang masih draft, agar nominal di penggajian tidak tertinggal.
+            $this->syncDraftPayrollCommissions($reservationId, $now);
 
             // Pembayaran dapat dilakukan saat pelanggan datang, sebelum treatment
             // dikerjakan. Status kunjungan hanya ditutup ketika seluruh item selesai.
@@ -381,12 +376,6 @@ class CheckoutService
         foreach ($paymentInputs as $index => $input) {
             $method = $methods->get((int) $input['payment_method_id']);
             $reference = isset($input['reference_number']) ? trim((string) $input['reference_number']) : null;
-
-            if ($method->requires_reference && ($reference === null || $reference === '')) {
-                throw ValidationException::withMessages([
-                    "payments.{$index}.reference_number" => ['Nomor referensi wajib untuk metode pembayaran ini.'],
-                ]);
-            }
 
             $amount = (int) $input['amount'];
             $tenderedAmount = isset($input['tendered_amount'])
@@ -599,6 +588,64 @@ class CheckoutService
         ];
     }
 
+    private function syncDraftPayrollCommissions(int $reservationId, mixed $paidAt): void
+    {
+        $period = CarbonImmutable::instance($paidAt)->format('Y-m');
+        $employeeIds = DB::table('reservation_item_staff as assignment')
+            ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
+            ->where('item.reservation_id', $reservationId)
+            ->pluck('assignment.employee_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($employeeIds->isEmpty()) {
+            return;
+        }
+
+        $draftPayrolls = DB::table('payrolls')
+            ->whereIn('employee_id', $employeeIds)
+            ->where('period', $period)
+            ->where('status', 'draft')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($draftPayrolls as $payroll) {
+            $commission = $this->payrollCommission((int) $payroll->employee_id, $period);
+            $netSalary = (int) $payroll->base_salary
+                + (int) $payroll->bonus
+                + (int) $payroll->overtime
+                + $commission
+                - (int) $payroll->late_deduction
+                - (int) $payroll->other_deduction;
+
+            DB::table('payrolls')->where('id', $payroll->id)->update([
+                'commission' => $commission,
+                'net_salary' => $netSalary,
+                'updated_at' => $paidAt,
+            ]);
+        }
+    }
+
+    private function payrollCommission(int $employeeId, string $period): int
+    {
+        $start = CarbonImmutable::createFromFormat('!Y-m', $period)->startOfMonth();
+        $end = $start->addMonth();
+
+        return (int) DB::table('reservation_item_staff as assignment')
+            ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
+            ->join('transactions as transaction', 'transaction.reservation_id', '=', 'item.reservation_id')
+            ->join('transaction_items as transactionItem', function ($join): void {
+                $join->on('transactionItem.transaction_id', '=', 'transaction.id')
+                    ->on('transactionItem.reservation_item_id', '=', 'item.id');
+            })
+            ->where('assignment.employee_id', $employeeId)
+            ->where('transaction.status', 'paid')
+            ->where('transaction.transacted_at', '>=', $start)
+            ->where('transaction.transacted_at', '<', $end)
+            ->sum('assignment.commission_amount');
+    }
+
     private function nextInvoiceNumber(string $date, string $dateCode): string
     {
         DB::table('invoice_sequences')->insertOrIgnore([
@@ -618,7 +665,10 @@ class CheckoutService
             ->where('invoice_date', $date)
             ->update(['last_number' => $next, 'updated_at' => now()]);
 
-        return sprintf('INV-%s-%03d', $dateCode, $next);
+        $prefix = DB::table('sale_settings')->where('key', 'invoice_prefix')->value('value') ?: 'INV';
+        $prefix = trim((string) $prefix, '-_ ');
+
+        return sprintf('%s-%s-%03d', $prefix, $dateCode, $next);
     }
 
     private function sumMoney(Collection $amounts): int

@@ -13,6 +13,8 @@ class PaymentMethod extends Model
     protected $fillable = [
         'code',
         'name',
+        'account_name',
+        'account_number',
         'type',
         'is_cash',
         'requires_reference',

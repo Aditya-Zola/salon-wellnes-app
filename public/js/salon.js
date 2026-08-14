@@ -25,6 +25,8 @@ const canCreateReservations = Boolean(capabilities.create_reservation);
 const canUpdateReservations = Boolean(capabilities.update_reservation);
 const canManageFinance = Boolean(capabilities.manage_finance);
 const canManageMemberships = Boolean(capabilities.manage_memberships);
+const canViewSales = Boolean(capabilities.view_sales);
+const canViewMemberships = Boolean(capabilities.view_memberships);
 const headerStatusLabels = {
     paid: 'Lunas',
     scheduled: 'Terjadwal',
@@ -54,12 +56,19 @@ const headerStatusTransitions = {
 };
 
 let state = window.SALON_DATA || {};
+let salesPageState = null;
+let salesSearchTimer;
+let memberPageState = null;
+let memberSearchTimer;
 let selectedReservation = null;
 let reservationMode = 'today';
 let reservationStatusGroup = null;
 let reservationView = 'queue';
+let calendarMode = 'week';
 let pendingReservationPayload = null;
 let paymentIdempotencyKey = null;
+let paymentMode = null;
+let selectedPaymentMethodId = null;
 let toastTimer;
 let reservationCalendarTooltipTimer;
 let reservationCalendarTooltipListenersBound = false;
@@ -121,6 +130,8 @@ async function refresh() {
     state = await api('/operasional/data');
     populateSelects();
     renderAll();
+    if (canViewSales) await loadSalesPage(salesPageState?.meta?.current_page || 1);
+    if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
 }
 
 function array(value) {
@@ -155,6 +166,15 @@ function productUnit(product) {
         || product?.unit
         || product?.usage_unit?.code
         || '';
+}
+
+function productUnitOptions(selected = '') {
+    const units = array(state.units);
+    if (units.length) {
+        return units.map((unit) => `<option value="${Number(unit.id)}" ${Number(unit.id) === Number(selected) ? 'selected' : ''}>${escapeHtml(unit.code)} · ${escapeHtml(unit.name)}</option>`).join('');
+    }
+
+    return `<option value="${Number(selected) || ''}">${escapeHtml(productUnit({ unit: selected }) || '-')}</option>`;
 }
 
 function reservationItems(reservation) {
@@ -430,11 +450,12 @@ function bindReservationCalendarTooltips(calendar, reservations) {
 }
 
 function bindReservationCalendarCreateSlots(calendar) {
-    calendar.querySelectorAll('.calendar-create-slot').forEach((button) => {
+    calendar.querySelectorAll('.calendar-create-slot, .therapist-create-slot').forEach((button) => {
         button.addEventListener('click', () => {
             openReservationForm({
                 date: button.dataset.date,
                 startTime: button.dataset.time,
+                employeeId: button.dataset.employeeId,
             });
         });
     });
@@ -574,7 +595,7 @@ function renderReservations() {
             day.setDate(weekStart.getDate() + index);
             const active = dateKey(day) === today ? ' is-today' : '';
             const selectedDay = dateKey(day) === selectedDate ? ' is-selected' : '';
-            return `<div class="calendar-day-head${active}${selectedDay}">${escapeHtml(dayFormat.format(day))}</div>`;
+            return `<button type="button" class="calendar-day-head calendar-day-open${active}${selectedDay}" data-date="${dateKey(day)}">${escapeHtml(dayFormat.format(day))}</button>`;
         }).join('');
         const timeColumn = slots.map((slot) => {
             const hour = 9 + Math.floor(slot / 2);
@@ -607,8 +628,10 @@ function renderReservations() {
             return { reservation, item, itemIndex, timing, day, start, end };
         })).filter(Boolean);
 
-        // Reservasi yang waktunya beririsan ditempatkan pada jalur horizontal berbeda.
+        // Ringkasan mingguan mempertahankan maksimal dua kartu pada waktu yang sama.
+        // Sisanya menjadi indikator yang membuka tampilan harian per therapist.
         const positionedReservations = [];
+        const overflowGroups = [];
         Array.from({ length: 7 }, (_, day) => day).forEach((day) => {
             const dayReservations = calendarReservations
                 .filter((entry) => entry.day === day)
@@ -628,7 +651,14 @@ function renderReservations() {
                     }
                     return { ...entry, lane };
                 });
-                positionedGroup.forEach((entry) => positionedReservations.push({ ...entry, lanes: laneEnds.length }));
+                const lanes = laneEnds.length;
+                positionedGroup
+                    .filter((entry) => lanes <= 2 || entry.lane < 2)
+                    .forEach((entry) => positionedReservations.push({ ...entry, lanes: Math.min(lanes, 2) }));
+                const hidden = positionedGroup.filter((entry) => entry.lane >= 2);
+                if (hidden.length) {
+                    overflowGroups.push({ day, start: Math.min(...hidden.map((entry) => entry.start)), count: hidden.length });
+                }
                 group = [];
                 groupEnd = 0;
             };
@@ -641,7 +671,7 @@ function renderReservations() {
             positionGroup();
         });
 
-        const events = positionedReservations.map(({ reservation, item, itemIndex, timing, day, start, end, lane, lanes }) => {
+        const weeklyEvents = positionedReservations.map(({ reservation, item, itemIndex, timing, day, start, end, lane, lanes }) => {
             const serviceStatus = reservationStatus(reservation);
             const status = reservationCalendarStatus(reservation);
             const paymentLabel = isAlreadyPaid(reservation) ? 'Lunas' : 'Belum dibayar';
@@ -658,9 +688,67 @@ function renderReservations() {
                 <small>${escapeHtml(itemTreatmentName(item))}</small>
             </button>`;
         }).join('');
-        calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner" aria-hidden="true"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}<span class="calendar-close-time">22.00</span></div>${dayColumns}<div class="calendar-events"><div class="calendar-empty-slots">${createSlots}</div>${events}</div></div></div>`;
+        const overflowIndicators = overflowGroups.map(({ day, start, count }) => {
+            const top = ((start - openingMinutes) / visibleMinutes) * 100;
+            const date = new Date(weekStart);
+            date.setDate(weekStart.getDate() + day);
+            return `<button type="button" class="calendar-overflow" data-date="${dateKey(date)}" style="top:calc(${top}% + 2px);left:calc(${(day * 100) / 7}% + 4px)">+${count} jadwal</button>`;
+        }).join('');
+
+        if (calendarMode === 'week') {
+            calendar.setAttribute('aria-label', 'Ringkasan kalender reservasi mingguan');
+            calendar.innerHTML = `<div class="calendar-week-hint">Tampilkan maksimal dua jadwal yang bertumpuk. Klik tanggal atau <b>+N jadwal</b> untuk melihat kolom therapist secara penuh.</div><div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner" aria-hidden="true"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}<span class="calendar-close-time">22.00</span></div>${dayColumns}<div class="calendar-events"><div class="calendar-empty-slots">${createSlots}</div>${weeklyEvents}${overflowIndicators}</div></div></div>`;
+        } else {
+            const therapists = selectedEmployee
+                ? serviceProviders().filter((employee) => Number(employee.id) === selectedEmployee)
+                : serviceProviders();
+            const dailyTherapists = therapists.length ? therapists : serviceProviders();
+            const dayRows = calendarReservations.filter((entry) => reservationItemDate(entry.item, entry.reservation) === selectedDate);
+            const dailyHeaders = dailyTherapists.map((employee, index) => `<div class="therapist-day-head" style="grid-column:${index + 2}"><b>${escapeHtml(employee.name)}</b><small>${escapeHtml(employee.specialty || 'Therapist')}</small></div>`).join('');
+            const dailyTimes = slots.map((slot) => {
+                const minutes = openingMinutes + (slot * 30);
+                const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+                return `<div class="therapist-day-time" style="grid-column:1;grid-row:${slot + 2}">${slot % 2 === 0 ? time.replace(':', '.') : ''}</div>`;
+            }).join('');
+            const dailySlots = canCreateReservations ? dailyTherapists.flatMap((employee, index) => slots.map((slot) => {
+                const minutes = openingMinutes + (slot * 30);
+                const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+                return `<button type="button" class="therapist-create-slot" data-date="${selectedDate}" data-time="${time}" data-employee-id="${Number(employee.id)}" aria-label="Tambah reservasi ${escapeHtml(employee.name)}, ${time}" style="grid-column:${index + 2};grid-row:${slot + 2}"></button>`;
+            })).join('') : '';
+            const dailyEvents = dayRows.flatMap(({ reservation, item, itemIndex, timing, start, end }) => {
+                const staff = itemStaff(item);
+                return staff.map((assignment) => {
+                    const employeeId = Number(assignment.employee_id ?? assignment.employee?.id ?? assignment.id);
+                    const therapistIndex = dailyTherapists.findIndex((employee) => Number(employee.id) === employeeId);
+                    if (therapistIndex < 0) return '';
+                    const status = reservationCalendarStatus(reservation);
+                    const startRow = Math.max(2, Math.floor((start - openingMinutes) / 30) + 2);
+                    const span = Math.max(1, Math.ceil((end - start) / 30));
+                    const staffName = employeeName(assignment);
+                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
+                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span}"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small>${escapeHtml(itemTreatmentName(item))}</small></button>`;
+                });
+            }).join('');
+            const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty">Belum ada therapist aktif untuk ditampilkan.</p>';
+            calendar.setAttribute('aria-label', 'Kalender harian per therapist');
+            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik <strong>+</strong> pada slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${dailyEvents}</div>`;
+        }
         bindReservationCalendarTooltips(calendar, all);
         bindReservationCalendarCreateSlots(calendar);
+        calendar.querySelectorAll('.calendar-day-open, .calendar-overflow').forEach((button) => {
+            button.addEventListener('click', () => {
+                const date = document.getElementById('reservation-calendar-date');
+                if (date) date.value = button.dataset.date;
+                calendarMode = 'day';
+                document.querySelectorAll('[data-calendar-mode]').forEach((tab) => tab.classList.toggle('active', tab.dataset.calendarMode === 'day'));
+                renderReservations();
+            });
+        });
+        calendar.querySelector('.calendar-week-back')?.addEventListener('click', () => {
+            calendarMode = 'week';
+            document.querySelectorAll('[data-calendar-mode]').forEach((tab) => tab.classList.toggle('active', tab.dataset.calendarMode === 'week'));
+            renderReservations();
+        });
     }
 
     const queue = document.getElementById('reservation-queue-list');
@@ -753,7 +841,10 @@ function openReservationDetail(reservation) {
 
 function resetCashier() {
     selectedReservation = null;
-    document.getElementById('cashier-receipt')?.classList.add('empty');
+    const receipt = document.getElementById('cashier-receipt');
+    receipt?.classList.add('empty');
+    if (receipt) receipt.hidden = true;
+    document.querySelector('#kasir .cashier-grid')?.classList.add('cashier-awaiting-selection');
     document.getElementById('receipt-number').textContent = '—';
     document.getElementById('receipt-name').textContent = 'Pilih antrean terlebih dahulu';
     document.querySelector('.receipt .member').textContent = '';
@@ -763,9 +854,12 @@ function resetCashier() {
     document.getElementById('grand-total').textContent = money(0);
     document.getElementById('payment-total').textContent = money(0);
     document.getElementById('payment-description').textContent = 'Pilih transaksi';
+    const customerName = document.getElementById('cashier-customer-name');
+    if (customerName) customerName.textContent = 'Belum dipilih';
     document.getElementById('discount').disabled = true;
     document.getElementById('open-payment').disabled = true;
     document.getElementById('add-extra').disabled = true;
+    resetPaymentRows();
 }
 
 function selectedDiscount() {
@@ -792,7 +886,7 @@ function renderCashier() {
     const box = document.getElementById('cashier-queue');
     if (!box) return;
 
-    box.innerHTML = rows.map((reservation, index) => `<button class="cashier-item ${index === 0 ? 'active' : ''}" data-id="${Number(reservation.id)}">
+    box.innerHTML = rows.map((reservation) => `<button class="cashier-item ${Number(reservation.id) === Number(selectedReservation) ? 'active' : ''}" data-id="${Number(reservation.id)}">
         <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
         <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
         <i class="material-symbols-outlined row-action">chevron_right</i>
@@ -802,11 +896,8 @@ function renderCashier() {
         button.onclick = () => selectCashier(Number(button.dataset.id));
     });
 
-    if (rows.length) {
-        const nextId = selectedReservation && rows.some((item) => Number(item.id) === Number(selectedReservation))
-            ? selectedReservation
-            : rows[0].id;
-        selectCashier(Number(nextId));
+    if (selectedReservation && rows.some((item) => Number(item.id) === Number(selectedReservation))) {
+        selectCashier(Number(selectedReservation));
     } else {
         resetCashier();
     }
@@ -835,9 +926,14 @@ function selectCashier(id) {
     const discountAmount = Math.round(serviceSubtotal * discount / 100);
     const total = subtotal - discountAmount;
 
-    document.getElementById('cashier-receipt')?.classList.remove('empty');
+    const receipt = document.getElementById('cashier-receipt');
+    receipt?.classList.remove('empty');
+    if (receipt) receipt.hidden = false;
+    document.querySelector('#kasir .cashier-grid')?.classList.remove('cashier-awaiting-selection');
     document.getElementById('receipt-number').textContent = reservation.queue_number || reservation.booking_code;
     document.getElementById('receipt-name').textContent = reservationCustomerName(reservation);
+    const customerName = document.getElementById('cashier-customer-name');
+    if (customerName) customerName.textContent = reservationCustomerName(reservation);
     document.querySelector('.receipt .member').textContent = reservation.is_member ? '· MEMBER' : '· NON-MEMBER';
     const treatmentLines = items.map((item) => `<div class="receipt-line">
         <i class="material-symbols-outlined">spa</i>
@@ -861,6 +957,7 @@ function selectCashier(id) {
     document.getElementById('grand-total').textContent = money(total);
     document.getElementById('payment-total').textContent = money(total);
     document.getElementById('payment-description').textContent = `${reservation.queue_number || reservation.booking_code} · ${reservationCustomerName(reservation)}`;
+    resetPaymentRows();
 }
 
 function openCashierProductPicker() {
@@ -1061,6 +1158,10 @@ function receiptPayload(result, reservation, productItems, payments) {
         customer: reservationCustomerName(reservation),
         queue: reservation.queue_number || reservation.booking_code,
         date: new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }),
+        therapists: [...new Set(reservationItems(reservation)
+            .filter((item) => item.work_status !== 'cancelled')
+            .flatMap((item) => itemStaff(item).map(employeeName))
+            .filter(Boolean))],
         items: [...treatments, ...products],
         payments: payments.map((payment) => {
             const method = paymentMethods().find((item) => Number(item.id) === Number(payment.payment_method_id));
@@ -1086,7 +1187,7 @@ function legacyPrintReceipt(receipt, format) {
     const paymentLines = receipt.payments.map((payment) => `<p>${escapeHtml(payment.name)}${payment.reference ? ` · ${escapeHtml(payment.reference)}` : ''}<b>${money(payment.amount)}</b></p>`).join('');
     const layout = compact ? 'thermal' : 'invoice';
     const title = compact ? 'STRUK PEMBAYARAN' : 'NOTA PEMBAYARAN';
-    const documentWindow = window.open('', '_blank', 'width=760,height=860');
+    const documentWindow = window.open('', '_blank', 'width=980,height=900');
     if (!documentWindow) {
         toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
         return;
@@ -1118,7 +1219,12 @@ function compactReceiptPrintLegacy(receipt, format) {
 
 function printReceipt(receipt, format) {
     const compact = format === 'struk';
-    const documentWindow = window.open('', '_blank', 'width=760,height=860');
+    if (!compact && receipt.transactionId) {
+        const preview = window.open(`/operasional/penjualan/${Number(receipt.transactionId)}/nota.pdf`, '_blank');
+        if (!preview) toast('Popup nota diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
+    const documentWindow = window.open('', '_blank', 'width=980,height=900');
     if (!documentWindow) {
         toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
         return;
@@ -1142,23 +1248,23 @@ function printReceipt(receipt, format) {
         `<p class="grand-total"><span>Grand Total</span><i>:</i><b>${money(receipt.total)}</b></p>`,
     ].join('');
     const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
-    const pageSize = compact ? '80mm auto' : 'A4';
+    const pageSize = compact ? '58mm auto' : 'A4';
     const sheetClass = compact ? 'thermal' : 'nota';
 
     documentWindow.document.write(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
 <style>
-@page{size:${pageSize};margin:${compact ? '3mm' : '16mm'}}
+@page{size:${pageSize};margin:${compact ? '2mm' : '16mm'}}
 *{box-sizing:border-box}
-body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:11px;line-height:1.25}
-.sheet{margin:0 auto}.sheet.thermal{width:74mm}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
-.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '39mm' : '56mm'};height:auto;margin:0 auto 5px;filter:grayscale(1) contrast(1.25)}
-.brand-name{margin:0;font-size:${compact ? '17px' : '21px'};font-weight:700;letter-spacing:.2px}.brand-subtitle{margin:1px 0 0;font-size:${compact ? '9px' : '11px'};font-weight:700;letter-spacing:.1px}.receipt-code{margin-top:2px;font-size:${compact ? '10px' : '12px'};font-weight:700}
-.dash{border-top:1px dashed #4d4d4d;margin:12px 0 9px}.dash.thin{margin:9px 0}
-.receipt-meta{margin:0}.receipt-meta p,.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr 4mm auto;gap:2px;margin:2px 0}.receipt-meta b,.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-meta i,.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
-.reprint{text-align:center;font-size:${compact ? '13px' : '15px'};font-weight:700;margin:0}
-.receipt-item{display:grid;grid-template-columns:1fr auto;gap:7px;padding:3px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:3mm;margin-top:1px}.receipt-item-total{align-self:end;white-space:nowrap}
-.receipt-totals{margin-top:1px}.receipt-totals p{margin:4px 0}.receipt-totals .grand-total{font-size:${compact ? '13px' : '16px'};margin-top:6px;font-weight:700}.receipt-payments p{margin:4px 0}.receipt-footer{text-align:center;margin-top:11px}.receipt-footer strong{display:block;font-size:${compact ? '13px' : '15px'};margin-bottom:9px}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '3mm' : '15mm'}}
+body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:12px;line-height:1.28}
+.sheet{margin:0 auto}.sheet.thermal{width:54mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
+.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '31mm' : '56mm'};height:auto;margin:0 auto 3px;filter:grayscale(1) contrast(1.25)}
+.brand-name{margin:0;font-size:${compact ? '16px' : '21px'};font-weight:700;letter-spacing:.15px}.brand-subtitle{margin:0;font-size:${compact ? '8.5px' : '11px'};font-weight:700;letter-spacing:0}.receipt-code{margin-top:2px;font-size:${compact ? '10px' : '12px'};font-weight:700}
+.dash{border-top:1px dashed #4d4d4d;margin:7px 0 6px}.dash.thin{margin:6px 0}
+.receipt-meta{margin:0;font-size:11px}.receipt-meta p{display:grid;grid-template-columns:max-content 3mm minmax(0,1fr);gap:1px;margin:1px 0}.receipt-meta span{text-align:right}.receipt-meta b{text-align:right;font-weight:700;white-space:nowrap}.receipt-meta i{font-style:normal;text-align:center}.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr 3mm auto;gap:1px;margin:1px 0}.receipt-totals span,.receipt-payments span{text-align:right}.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
+.reprint{text-align:center;font-size:${compact ? '10px' : '15px'};font-weight:700;margin:0}
+.receipt-item{display:grid;grid-template-columns:1fr auto;gap:4px;padding:1px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:2mm;margin-top:0}.receipt-item-total{align-self:end;white-space:nowrap}
+.receipt-totals{margin-top:0}.receipt-totals p{margin:0;padding:2px 0;border-bottom:1px dashed #4d4d4d}.receipt-totals .grand-total{font-size:${compact ? '13px' : '16px'};margin-top:2px;font-weight:700}.receipt-payments p{margin:2px 0}.receipt-footer{text-align:center;margin-top:7px}.receipt-footer strong{display:block;font-size:${compact ? '11px' : '15px'};margin-bottom:5px}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '2mm' : '15mm'}}
 @media print{body{background:#fff}}
 </style></head><body>
 <main class="sheet ${sheetClass}">
@@ -1180,7 +1286,6 @@ body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,mo
     <section class="receipt-items">${itemRows}</section>
     <div class="dash thin"></div>
     <section class="receipt-totals">${totals}</section>
-    <div class="dash thin"></div>
     <section class="receipt-payments">${paymentRows}</section>
     <div class="dash thin"></div>
     <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>Whatsapp&nbsp;&nbsp;: 081128702019</p><p>Instagram&nbsp;: @selesa.salonspa</p></footer>
@@ -1194,13 +1299,22 @@ function openReceiptPrintChoice(receipt, options = {}) {
     const title = options.title || 'Pembayaran berhasil';
     const description = options.description || `${receipt.number} · ${money(receipt.total)}`;
     const wrapper = document.createElement('div');
+    const showSuccessAnimation = options.successAnimation ?? title === 'Pembayaran berhasil';
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-print="struk"><i class="material-symbols-outlined">receipt_long</i><span><b>Cetak struk</b><small>Format ringkas untuk printer thermal.</small></span></button><button type="button" class="cashier-add-choice" data-print="nota"><i class="material-symbols-outlined">description</i><span><b>Cetak nota</b><small>Format rinci untuk kertas A4.</small></span></button></div><p class="print-choice-note">Dokumen dibuka di tab baru, lalu pilih printer atau simpan sebagai PDF.</p></div>`;
+    const printChoices = `<div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-print="struk"><i class="material-symbols-outlined">receipt_long</i><span><b>Cetak struk</b><small>Format ringkas untuk printer thermal.</small></span></button><button type="button" class="cashier-add-choice" data-print="nota"><i class="material-symbols-outlined">description</i><span><b>Cetak nota</b><small>Format rinci untuk kertas A4.</small></span></button></div><p class="print-choice-note">Dokumen dibuka di tab baru, lalu pilih printer atau simpan sebagai PDF.</p>`;
+    const transactionMeta = [receipt.date, receipt.therapists?.length ? `Terapis: ${receipt.therapists.join(', ')}` : null]
+        .filter(Boolean)
+        .map((detail) => `<span>${escapeHtml(detail)}</span>`)
+        .join('');
+    wrapper.innerHTML = showSuccessAnimation
+        ? `<div class="modal-box transaction-success-modal" role="status" style="position:relative;width:min(390px,calc(100vw - 32px));min-height:410px;overflow:hidden;border:0;border-radius:22px;background:#f2f1ee;"><button type="button" class="quick-close transaction-success-close" aria-label="Tutup" style="position:absolute;z-index:1;top:13px;right:13px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;cursor:pointer;"><span class="material-symbols-outlined">close</span></button><div class="transaction-success-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:295px;padding:52px 24px 30px;text-align:center;"><span class="transaction-success-emblem" aria-hidden="true" style="display:grid;place-items:center;width:90px;height:90px;margin-bottom:23px;background:#62c52f;clip-path:polygon(50% 0%,61% 9%,76% 6%,83% 20%,97% 25%,92% 40%,100% 50%,92% 60%,97% 75%,83% 80%,76% 94%,61% 91%,50% 100%,39% 91%,24% 94%,17% 80%,3% 75%,8% 60%,0 50%,8% 40%,3% 25%,17% 20%,24% 6%,39% 9%);"><svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="width:61px;height:61px;"><path d="M17 33l10 10 21-22"/></svg></span><h2 style="margin:0;color:#171513;font-size:21px;letter-spacing:.02em;">TRANSAKSI BERHASIL</h2><p style="margin:10px 0 0;color:#69635e;font-size:12px;font-weight:650;">${escapeHtml(description)}</p><div class="transaction-success-meta" style="display:grid;gap:4px;margin-top:12px;color:#827b75;font-size:9px;font-weight:600;line-height:1.35;">${transactionMeta}</div></div><div class="transaction-success-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:13px;padding:0 26px 30px;"><button type="button" class="success-print-button" data-print="struk" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak struk</button><button type="button" class="success-print-button" data-print="nota" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak nota</button></div></div>`
+        : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelectorAll('[data-print]').forEach((button) => {
         button.onclick = () => printReceipt(receipt, button.dataset.print);
     });
+
 }
 
 function renderTreatments() {
@@ -1216,13 +1330,25 @@ function renderTreatments() {
         <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
         <h3>${escapeHtml(treatment.name)}</h3>
         <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-        <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions">${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
+        <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
     </article>`;
     }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
 
     document.querySelectorAll('.recipe-button').forEach((button) => {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
         button.onclick = () => openRecipeChecklist(treatment);
+    });
+    document.querySelectorAll('.commission-edit').forEach((button) => {
+        const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
+        button.onclick = () => {
+            if (!treatment) return;
+            quickForm(`Ubah komisi: ${treatment.name}`, [
+                ['default_commission_percent', 'Komisi treatment (%)', 'number', [], Number(treatment.default_commission_percent ?? 0)],
+            ], (data) => api(`/operasional/treatment/${Number(treatment.id)}/komisi`, {
+                method: 'PATCH',
+                body: JSON.stringify(data),
+            }));
+        };
     });
     document.querySelectorAll('.recipe-info-button').forEach((button) => {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -1353,7 +1479,7 @@ function renderEmployees() {
 }
 
 function renderMembers() {
-    const members = array(state.members);
+    const members = memberPageState ? array(memberPageState.data) : array(state.members);
     const dashboard = state.dashboard || {};
     const box = document.getElementById('member-list');
     const events = document.getElementById('membership-events');
@@ -1377,6 +1503,17 @@ function renderMembers() {
         </div>`).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
 
+    const pagination = document.getElementById('member-pagination');
+    const meta = memberPageState?.meta;
+    if (pagination) {
+        pagination.innerHTML = meta && meta.last_page > 1
+            ? `<small>Menampilkan ${members.length} dari ${Number(meta.total).toLocaleString('id-ID')} member</small><div><button type="button" class="member-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="member-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} member</small>` : '');
+        pagination.querySelectorAll('.member-page').forEach((button) => {
+            button.onclick = () => loadMembersPage(Number(button.dataset.page));
+        });
+    }
+
     if (events && canManageMemberships) {
         events.innerHTML = array(state.promotions).map((promotion) => {
             const active = Number(promotion.is_active ?? 1) === 1;
@@ -1398,6 +1535,16 @@ function renderMembers() {
     }
 }
 
+async function loadMembersPage(page = 1) {
+    if (!canViewMemberships) return;
+
+    const search = document.getElementById('member-search')?.value.trim() || '';
+    const params = new URLSearchParams({ page: String(page), per_page: '10' });
+    if (search) params.set('search', search);
+    memberPageState = await api(`/operasional/member?${params.toString()}`);
+    renderMembers();
+}
+
 function renderStock() {
     const products = array(state.products);
     const movements = array(state.stock_movements);
@@ -1414,10 +1561,10 @@ function renderStock() {
             return `<div class="tr">
                 <span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || '-')}</small></span>
                 <span><b>${stock} ${escapeHtml(unit)}</b></span><span>${minimum} ${escapeHtml(unit)}</span>
-                <span class="product-price"><b>${money(product.selling_price)}</b><button class="link product-price-edit" data-id="${Number(product.id)}">Ubah harga</button></span>
+                <span class="product-price"><b>${money(product.selling_price)}</b></span>
                 <span><div class="progress"><i style="width:${Math.min(100, stock / Math.max(1, minimum) * 50)}%"></i></div></span>
                 <em class="pill">${stock <= minimum ? 'Menipis' : 'Aman'}</em>
-                <button class="link stock-edit" data-id="${Number(product.id)}">Ubah stok</button>
+                <span class="product-row-actions"><button type="button" class="secondary product-edit" data-id="${Number(product.id)}"><span class="material-symbols-outlined">edit</span> Edit</button><button type="button" class="link stock-edit" data-id="${Number(product.id)}">Stok</button></span>
             </div>`;
         }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
     }
@@ -1444,16 +1591,29 @@ function renderStock() {
         }));
     });
 
-    document.querySelectorAll('.product-price-edit').forEach((button) => {
+    document.querySelectorAll('.product-edit').forEach((button) => {
         const product = products.find((item) => Number(item.id) === Number(button.dataset.id));
         if (!product) return;
-        button.onclick = () => quickForm(`Ubah harga jual: ${product.name}`, [
-            ['selling_price', 'Harga jual (Rp)', 'number', null, Number(product.selling_price || 0)],
-        ], (data) => api(`/operasional/produk/${button.dataset.id}/harga`, {
-            method: 'PATCH',
-            body: JSON.stringify(data),
-        }));
+        button.onclick = () => openProductEdit(product);
     });
+}
+
+function openProductEdit(product) {
+    const form = document.getElementById('product-edit-form');
+    if (!form) return;
+
+    form.querySelector('[name="id"]').value = Number(product.id);
+    form.querySelector('[name="name"]').value = product.name || '';
+    form.querySelector('[name="category"]').value = product.category || '';
+    form.querySelector('[name="unit_id"]').innerHTML = productUnitOptions(product.usage_unit_id);
+    form.querySelector('[name="minimum_stock"]').value = Number(product.minimum_stock ?? 0);
+    form.querySelector('[name="selling_price"]').value = Number(product.selling_price ?? 0);
+    form.querySelector('[name="is_active"]').value = Number(product.is_active ?? 1) ? '1' : '0';
+    form.querySelector('[name="description"]').value = product.description || '';
+    const title = document.getElementById('product-edit-title');
+    if (title) title.textContent = `Edit produk: ${product.name}`;
+    modal('product-edit-modal');
+    requestAnimationFrame(() => form.querySelector('[name="name"]')?.focus());
 }
 
 function renderFinance() {
@@ -1469,8 +1629,8 @@ function renderFinance() {
     set('finance-expense', money(expense));
     set('finance-balance', money(dashboard.month_balance));
     set('finance-period', new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }));
-    set('finance-transaction-count', Number(dashboard.month_transaction_count || 0));
-    set('finance-transaction-average', `Rata-rata ${money(dashboard.month_transaction_average)}`);
+    set('finance-cash-entry-count', Number(dashboard.month_cash_entry_count || 0));
+    set('finance-cash-entry-note', 'Bulan berjalan');
 
     const flow = document.getElementById('cash-bars');
     const maximum = Math.max(income, expense, 1);
@@ -1496,6 +1656,15 @@ function renderFinance() {
         }).join('') || '<p class="empty-state">Belum ada transaksi hari ini.</p>';
     }
 
+    const categoryBox = document.getElementById('finance-category-bars');
+    if (categoryBox) {
+        const categories = array(dashboard.month_expense_categories);
+        const categoryMaximum = Math.max(1, ...categories.map((item) => Number(item.total || 0)));
+        categoryBox.innerHTML = categories.length
+            ? categories.map((item) => `<div class="cash-flow-row"><div class="cash-flow-head"><span>${escapeHtml(item.category)}</span><b>${money(item.total)}</b></div><div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${Number(item.total || 0) / categoryMaximum * 100}%"></i></div></div>`).join('')
+            : '<p class="empty-state">Belum ada pengeluaran kas pada bulan ini.</p>';
+    }
+
     renderCashEntryHistory();
 }
 
@@ -1507,6 +1676,7 @@ function transactionReceiptPayload(transaction) {
         : '-';
 
     return {
+        transactionId: Number(transaction.id),
         number: transaction.number,
         customer: transaction.customer_name || transaction.customer?.name || 'Pelanggan',
         date,
@@ -1541,7 +1711,7 @@ function formatTransactionDate(value) {
     });
 }
 
-function renderSales() {
+function renderSalesSnapshot() {
     const box = document.getElementById('sales-history');
     if (!box) return;
 
@@ -1598,6 +1768,64 @@ function renderSales() {
     });
 }
 
+async function loadSalesPage(page = 1) {
+    if (!canViewSales) return;
+
+    const search = document.getElementById('sales-search')?.value.trim() || '';
+    const paymentMethod = document.getElementById('sales-payment-filter')?.value || '';
+    const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    if (search) params.set('search', search);
+    if (paymentMethod) params.set('payment_method', paymentMethod);
+    salesPageState = await api(`/operasional/penjualan?${params.toString()}`);
+    renderSales();
+}
+
+function renderSales() {
+    const box = document.getElementById('sales-history');
+    const pagination = document.getElementById('sales-pagination');
+    if (!box) return;
+
+    const paymentFilter = document.getElementById('sales-payment-filter');
+    const selectedPayment = paymentFilter?.value || '';
+    const paymentOptions = array(salesPageState?.payment_options).length
+        ? array(salesPageState.payment_options)
+        : [...new Set(array(state.transactions).flatMap((transaction) => array(transaction.payments).map((payment) => payment.payment_method_name)).filter(Boolean))];
+    if (paymentFilter) {
+        paymentFilter.innerHTML = `<option value="">Semua pembayaran</option>${paymentOptions.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+        paymentFilter.value = paymentOptions.includes(selectedPayment) ? selectedPayment : '';
+    }
+
+    const transactions = array(salesPageState?.data).length
+        ? array(salesPageState.data)
+        : array(state.transactions).filter((transaction) => transaction.status === 'paid');
+    const rows = transactions.map((transaction) => {
+        const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name).filter(Boolean).join(' + ') || '-';
+        const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
+        const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
+        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><b class="align-right">${money(transaction.total)}</b><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button></div>`;
+    }).join('');
+    box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
+
+    box.querySelectorAll('.sales-reprint-button').forEach((button) => {
+        const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (!transaction) return;
+        button.onclick = () => openReceiptPrintChoice(transactionReceiptPayload(transaction), {
+            title: 'Cetak ulang nota',
+            description: `${transaction.number} \u00b7 ${money(transaction.total)}`,
+        });
+    });
+
+    const meta = salesPageState?.meta;
+    if (pagination) {
+        pagination.innerHTML = meta && meta.last_page > 1
+            ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} transaksi</small>` : '');
+        pagination.querySelectorAll('.sales-page').forEach((button) => {
+            button.onclick = () => loadSalesPage(Number(button.dataset.page));
+        });
+    }
+}
+
 function formatCashEntryDate(value) {
     if (!value) return '-';
 
@@ -1614,16 +1842,20 @@ function renderCashEntryHistory() {
 
     const typeFilter = document.getElementById('cash-entry-type-filter');
     const search = document.getElementById('cash-entry-search');
+    const from = document.getElementById('cash-entry-from')?.value || '';
+    const to = document.getElementById('cash-entry-to')?.value || '';
     const type = typeFilter?.value || '';
     const keyword = String(search?.value || '').trim().toLocaleLowerCase('id-ID');
     const entries = array(state.cash_entries).filter((entry) => {
         const matchesType = !type || entry.type === type;
+        const entryDate = String(entry.entry_date || '').slice(0, 10);
+        const matchesDate = (!from || entryDate >= from) && (!to || entryDate <= to);
         const haystack = [entry.category, entry.description, entry.created_by_name, entry.transaction_number]
             .filter(Boolean)
             .join(' ')
             .toLocaleLowerCase('id-ID');
 
-        return matchesType && (!keyword || haystack.includes(keyword));
+        return matchesType && matchesDate && (!keyword || haystack.includes(keyword));
     });
 
     const rows = entries.map((entry) => {
@@ -1647,12 +1879,12 @@ function openCashEntryForm() {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
     wrapper.innerHTML = `<div class="modal-box small finance-entry-modal">
-        <div class="modal-head"><div><h2>Catat arus kas</h2><p>Catat pemasukan atau pengeluaran di luar transaksi kasir.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="modal-head"><div><h2>Input kas</h2><p>Catat modal, pemasukan, pembelian, atau biaya operasional salon.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form>
             <div class="quick-fields">
                 <label>Jenis arus<select name="type"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
                 <label>Tanggal<input name="entry_date" type="date" value="${localDate()}" max="${localDate()}" required></label>
-                <label>Kategori<input name="category" maxlength="100" placeholder="Contoh: Operasional salon" required></label>
+                <label>Kategori<input name="category" list="cash-entry-categories" maxlength="100" placeholder="Pilih atau tulis kategori" required><datalist id="cash-entry-categories"><option value="Modal usaha"></option><option value="Pembelian bahan & produk"></option><option value="Biaya operasional"></option><option value="Gaji & komisi"></option><option value="Sewa & utilitas"></option></datalist></label>
                 <label>Nominal (Rp)<input name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
                 <label class="finance-entry-description">Catatan<textarea name="description" rows="3" maxlength="2000" placeholder="Contoh: Beli tisu dan air minum untuk operasional" required></textarea></label>
             </div>
@@ -1820,6 +2052,40 @@ function renderDashboard() {
     }
     set('metric-revenue-trend', trend);
 
+    const paymentRevenue = array(dashboard.revenue_by_payment_method_today);
+    const paymentRevenueList = document.getElementById('payment-revenue-list');
+    const totalPaymentRevenue = paymentRevenue.find((payment) => payment.key === 'total');
+    const paymentMethodsRevenue = paymentRevenue.filter((payment) => payment.key !== 'total');
+    const paymentCategoryMeta = {
+        cash: { name: 'TUNAI', icon: 'payments', order: 1 },
+        bank_transfer: { name: 'BANK', icon: 'account_balance', order: 2 },
+        card: { name: 'CC', icon: 'credit_card', order: 3 },
+        qris: { name: 'QRIS', icon: 'qr_code_2', order: 4 },
+    };
+    const paymentCategories = [...paymentMethodsRevenue.reduce((groups, payment) => {
+        const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
+        const meta = paymentCategoryMeta[key] || { name: String(key || 'LAINNYA').toUpperCase(), icon: 'payments', order: 99 };
+        const existing = groups.get(key) || { key, ...meta, total: 0, activeCount: 0 };
+        existing.total += Number(payment.total || 0);
+        existing.activeCount += payment.is_active === false ? 0 : 1;
+        groups.set(key, existing);
+        return groups;
+    }, new Map()).values()].sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));
+    set('payment-revenue-total', money(totalPaymentRevenue?.total || 0));
+    set('payment-revenue-note', `${paymentCategories.length} kategori pembayaran`);
+    if (paymentRevenueList) {
+        const total = Number(totalPaymentRevenue?.total || 0);
+        paymentRevenueList.innerHTML = paymentCategories.length ? paymentCategories.map((payment) => {
+            const amount = payment.total;
+            const percent = total > 0 ? Math.round((amount / total) * 100) : 0;
+            return `<article class="payment-revenue-item">
+                <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${payment.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${payment.activeCount ? `${percent}% dari pendapatan hari ini` : 'Kategori nonaktif · riwayat tetap tercatat'}</small></span></div>
+                <strong>${money(amount)}</strong>
+                <div class="payment-revenue-track" aria-label="${percent}% dari pendapatan"><i style="width:${percent}%"></i></div>
+            </article>`;
+        }).join('') : '<p class="empty-state">Belum ada metode pembayaran aktif.</p>';
+    }
+
     const low = Number(dashboard.low_stock_count || 0);
     set('metric-low-stock', `${low} produk`);
     set('metric-stock-note', low ? 'Perlu ditambah' : 'Stok aman');
@@ -1834,17 +2100,21 @@ function renderDashboard() {
     if (chart) {
         const maximum = Math.max(0, ...revenue.map((item) => Number(item.total || 0)));
         const scale = maximum || 1;
+        const weeklyTotal = revenue.reduce((sum, item) => sum + Number(item.total || 0), 0);
+        const average = revenue.length ? Math.round(weeklyTotal / revenue.length) : 0;
         const points = revenue.map((item, index) => ({
-            px: 4 + (index * (93 / Math.max(1, revenue.length - 1))),
-            py: 96 - (Number(item.total || 0) / scale * 90),
+            px: 3 + (index * (94 / Math.max(1, revenue.length - 1))),
+            py: 92 - (Number(item.total || 0) / scale * 76),
             total: Number(item.total || 0),
             label: item.label,
             date: item.date,
         }));
-        chart.innerHTML = `<span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(maximum / 2)}</span><span class="axis a3">Rp0</span><div class="chart-grid"></div><div class="chart-line"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Grafik pendapatan tujuh hari"><polyline points="${points.map((point) => `${point.px},${point.py}`).join(' ')}"></polyline></svg>${points.map((point) => `<button type="button" class="chart-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.label)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="chart-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${revenue.map((item) => `<span title="${escapeHtml(item.date)}">${escapeHtml(item.label)}</span>`).join('')}</div>`;
+        const line = points.map((point) => `${point.px},${point.py}`).join(' ');
+        const area = `${points[0]?.px ?? 0},100 ${line} ${points.at(-1)?.px ?? 100},100`;
+        chart.innerHTML = `<div class="revenue-chart-summary"><span><small>Total 7 hari</small><strong>${money(weeklyTotal)}</strong></span><span><small>Rata-rata / hari</small><strong>${money(average)}</strong></span></div><div class="revenue-line-canvas"><div class="revenue-line-plot"><span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(maximum / 2)}</span><span class="axis a3">Rp0</span><div class="chart-grid"></div><svg class="revenue-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Grafik pendapatan tujuh hari"><defs><linearGradient id="revenue-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map((point) => `<button type="button" class="revenue-line-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.label)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="revenue-line-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${revenue.map((item) => `<span title="${escapeHtml(item.date)}">${escapeHtml(item.label)}</span>`).join('')}</div></div>`;
 
-        const tooltip = chart.querySelector('.chart-tooltip');
-        chart.querySelectorAll('.chart-point').forEach((point) => {
+        const tooltip = chart.querySelector('.revenue-line-tooltip');
+        chart.querySelectorAll('.revenue-line-point').forEach((point) => {
             const showTooltip = () => {
                 tooltip.querySelector('small').textContent = point.dataset.date;
                 tooltip.querySelector('strong').textContent = point.dataset.total;
@@ -1859,28 +2129,69 @@ function renderDashboard() {
         });
     }
 
-    const treatments = array(dashboard.treatment_last_7_days);
+    const treatments = array(dashboard.treatment_daily_current_month);
     const performance = document.getElementById('treatment-performance');
+    const treatmentPeriod = document.getElementById('treatment-volume-period');
     if (performance) {
         const maximum = Math.max(0, ...treatments.map((item) => Number(item.total || 0)));
-        performance.innerHTML = treatments.length ? treatments.map((item) => `<div><span>${escapeHtml(item.name)}</span><i><b style="width:${maximum ? Number(item.total) / maximum * 100 : 0}%"></b></i><strong>${Number(item.total).toLocaleString('id-ID')}</strong></div>`).join('') : '<p class="empty-state">Belum ada treatment yang dibayar dalam 7 hari terakhir.</p>';
+        const total = treatments.reduce((sum, item) => sum + Number(item.total || 0), 0);
+        const firstDate = treatments[0]?.date ? new Date(`${treatments[0].date}T12:00:00`) : null;
+        if (treatmentPeriod && firstDate) {
+            treatmentPeriod.textContent = new Intl.DateTimeFormat('id-ID', { month: 'short', year: 'numeric' }).format(firstDate).toUpperCase();
+        }
+        const width = Math.max(390, treatments.length * 31);
+        performance.innerHTML = treatments.length ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-bar-scroll"><div class="treatment-bar-inner" style="--treatment-chart-width:${width}px;--treatment-chart-count:${treatments.length}"><div class="treatment-bar-yaxis"><span>${maximum}</span><span>${Math.round(maximum / 2)}</span><span>0</span></div><div class="treatment-bar-plot">${treatments.map((item, index) => {
+            const count = Number(item.total || 0);
+            const height = maximum ? Math.max(4, Math.round((count / maximum) * 100)) : 4;
+            const date = new Date(`${item.date}T12:00:00`);
+            const dateLabel = Number.isNaN(date.getTime())
+                ? item.date
+                : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+            const tooltip = `${dateLabel} \u00b7 ${count.toLocaleString('id-ID')} treatment`;
+            const positionClass = `${index === 0 ? ' is-first' : ''}${index === treatments.length - 1 ? ' is-current is-last' : ''}`;
+            return `<button type="button" class="treatment-day-bar${positionClass}" style="--bar-height:${height}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><span>${count || ''}</span><i></i></button>`;
+        }).join('')}</div></div></div>` : '<p class="empty-state">Belum ada treatment yang dibayar pada bulan ini.</p>';
+
+        let tooltip = document.getElementById('treatment-chart-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'treatment-chart-tooltip';
+            tooltip.className = 'treatment-chart-tooltip';
+            tooltip.hidden = true;
+            document.body.appendChild(tooltip);
+        }
+
+        const hideTooltip = () => { tooltip.hidden = true; };
+        const positionTooltip = (x, y) => {
+            tooltip.hidden = false;
+            const halfWidth = tooltip.offsetWidth / 2;
+            const left = Math.min(Math.max(x, halfWidth + 10), window.innerWidth - halfWidth - 10);
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${Math.max(10, y)}px`;
+        };
+        performance.querySelectorAll('.treatment-day-bar').forEach((bar) => {
+            const showTooltip = (event) => {
+                tooltip.textContent = bar.dataset.tooltip || '';
+                positionTooltip(event.clientX, event.clientY - 14);
+            };
+            bar.addEventListener('pointerenter', showTooltip);
+            bar.addEventListener('pointermove', showTooltip);
+            bar.addEventListener('pointerleave', hideTooltip);
+            bar.addEventListener('focus', () => {
+                tooltip.textContent = bar.dataset.tooltip || '';
+                const rect = bar.getBoundingClientRect();
+                positionTooltip(rect.left + (rect.width / 2), rect.top - 8);
+            });
+            bar.addEventListener('blur', hideTooltip);
+        });
     }
 
-    const availability = document.getElementById('therapist-availability');
-    if (availability) {
-        const today = localDate();
-        const activeReservations = array(state.reservations).filter((reservation) => (
-            reservationDate(reservation) === today
-            && !['cancelled', 'completed'].includes(reservationStatus(reservation))
-        ));
-        availability.innerHTML = serviceProviders().map((employee) => {
-            const reservation = activeReservations.find((item) => reservationStaffIds(item).includes(Number(employee.id)));
-            const initials = String(employee.name || '').split(' ').map((part) => part[0]).slice(0, 2).join('');
-            return `<div><i>${escapeHtml(initials)}</i><span><b>${escapeHtml(employee.name)}</b><small>${escapeHtml(employee.specialty || employee.position || 'Therapist')}</small></span><em class="${reservation ? 'busy' : ''}">${reservation ? `Melayani ${escapeHtml(reservation.queue_number || reservation.booking_code)}` : 'Tersedia'}</em></div>`;
-        }).join('') || '<p class="empty-state">Belum ada therapist.</p>';
-        if (low) {
-            availability.insertAdjacentHTML('beforeend', `<div class="stock-mini"><i>!</i><span><b>Peringatan stok menipis</b><small>${low} produk di bawah stok minimum</small></span><button class="link">Lihat detail</button></div>`);
-        }
+    const treatmentStockAlerts = document.getElementById('treatment-stock-alerts');
+    if (treatmentStockAlerts) {
+        const alerts = array(dashboard.treatment_stock_alerts);
+        treatmentStockAlerts.innerHTML = alerts.length
+            ? alerts.map((alert) => `<div class="treatment-stock-alert"><i class="material-symbols-outlined" aria-hidden="true">warning</i><span><b>${escapeHtml(alert.treatment_name)}</b><small>${escapeHtml(alert.product_name)} · tersisa ${Number(alert.current_stock || 0).toLocaleString('id-ID')} ${escapeHtml(alert.unit || '')}</small></span><em>Menipis</em></div>`).join('')
+            : '<p class="empty-state">Semua bahan resep aman. Menu treatment siap dijual.</p>';
     }
 }
 
@@ -2003,6 +2314,11 @@ function openReservationForm(values = {}) {
 
     const startTime = document.querySelector('#reservation-items .item-time');
     if (startTime && values.startTime) startTime.value = values.startTime;
+
+    const therapist = document.querySelector('#reservation-items .item-employee');
+    if (therapist && values.employeeId && [...therapist.options].some((option) => Number(option.value) === Number(values.employeeId))) {
+        therapist.value = String(values.employeeId);
+    }
 
     modal('reservation-modal');
     requestAnimationFrame(() => document.querySelector('#reservation-form [name="name"]')?.focus());
@@ -2155,20 +2471,93 @@ function paymentMethods() {
     return array(state.payment_methods).filter((method) => method.is_active !== false);
 }
 
+function paymentModeOptions() {
+    const methods = paymentMethods();
+    return [
+        { key: 'cash', label: 'Cash', methods: methods.filter((method) => Boolean(Number(method.is_cash))) },
+        { key: 'card', label: 'Kartu', methods: methods.filter((method) => method.type === 'card') },
+        { key: 'bank_transfer', label: 'Transfer', methods: methods.filter((method) => method.type === 'bank_transfer') },
+        { key: 'qris', label: 'QRIS', methods: methods.filter((method) => method.type === 'qris') },
+    ].filter((option) => option.methods.length);
+}
+
+function paymentSourceDetails(option) {
+    if (!option || option.key === 'cash') return '';
+
+    const method = option.methods.find((item) => Number(item.id) === Number(selectedPaymentMethodId)) || option.methods[0];
+    const sourceLabel = option.key === 'card' ? 'Mesin EDC' : option.key === 'bank_transfer' ? 'Bank tujuan' : 'QRIS tujuan';
+    const heading = option.key === 'card' ? 'Informasi kartu' : `Informasi ${sourceLabel.toLowerCase()}`;
+    const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.code)} | ${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
+
+    if (option.key === 'card') {
+        return `<section class="payment-source-details card-source-details"><h4>${heading}</h4><div class="payment-source-fields">${sourceSelect}<label>Nomor kartu<input class="payment-card-number" inputmode="numeric" maxlength="32" placeholder="Nomor kartu"></label><label>Nomor transaksi<input class="payment-card-reference" maxlength="100" placeholder="Nomor transaksi"></label></div></section>`;
+    }
+
+    return `<section class="payment-source-details"><h4>${heading}</h4><div class="payment-source-fields">${sourceSelect}<div class="payment-destination"><span><small>Nama pemilik rekening</small><b>${escapeHtml(method.account_name || '-')}</b></span><span><small>No. rekening tujuan</small><b>${escapeHtml(method.account_number || '-')}</b></span></div></div></section>`;
+}
+
+function renderPaymentModeChoices() {
+    const container = document.getElementById('payment-rows');
+    if (!container) return;
+    document.getElementById('payment-method-choices')?.remove();
+    const options = paymentModeOptions();
+    const canSplit = paymentMethods().length > 1;
+    if (!paymentMode || (!options.some((option) => option.key === paymentMode) && paymentMode !== 'split')) {
+        paymentMode = options[0]?.key || null;
+    }
+    const activeOption = options.find((option) => option.key === paymentMode);
+    selectedPaymentMethodId = activeOption?.methods.some((method) => Number(method.id) === Number(selectedPaymentMethodId))
+        ? selectedPaymentMethodId
+        : activeOption?.methods[0]?.id || null;
+
+    const choices = document.createElement('div');
+    choices.id = 'payment-method-choices';
+    choices.className = 'payment-method-choices';
+    choices.innerHTML = `<div class="payment-mode-list">${options.map((option) => `<button type="button" class="payment-mode${paymentMode === option.key ? ' active' : ''}" data-mode="${option.key}"><i></i>${escapeHtml(option.label)}</button>`).join('')}${canSplit ? `<button type="button" class="payment-mode${paymentMode === 'split' ? ' active' : ''}" data-mode="split"><i></i>Split</button>` : ''}</div>${paymentSourceDetails(activeOption)}`;
+    container.before(choices);
+    choices.querySelectorAll('.payment-mode').forEach((button) => {
+        button.onclick = () => {
+            paymentMode = button.dataset.mode;
+            selectedPaymentMethodId = null;
+            renderPaymentModeChoices();
+            renderPaymentRowsForMode();
+        };
+    });
+    choices.querySelectorAll('.payment-source-select').forEach((select) => {
+        select.onchange = () => {
+            selectedPaymentMethodId = Number(select.value);
+            renderPaymentModeChoices();
+            renderPaymentRowsForMode();
+        };
+    });
+}
+
 function addPaymentRow(values = {}) {
     const container = document.getElementById('payment-rows');
     if (!container) return;
     const methods = paymentMethods();
+    const selectedMethod = methods.find((method) => Number(method.id) === Number(values.payment_method_id));
     const row = document.createElement('div');
-    row.className = 'payment-row';
+    row.className = `payment-row${values.fixed_method ? ' fixed-method' : ''}${values.fixed_method && selectedMethod?.type === 'card' ? ' has-card-details' : ''}`;
+    row.dataset.autoBalance = values.auto_balance ? 'true' : 'false';
+    row.dataset.autoTendered = 'true';
     row.innerHTML = `<label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
         <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
         <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
         <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
-    row.querySelector('.payment-amount').addEventListener('input', updatePaymentReconciliation);
-    row.querySelector('.payment-tendered').addEventListener('input', updatePaymentReconciliation);
+    row.querySelector('.payment-amount').addEventListener('input', () => {
+        row.dataset.autoBalance = 'false';
+        syncCashTendered(row);
+        syncSplitAutoBalance();
+        updatePaymentReconciliation();
+    });
+    row.querySelector('.payment-tendered').addEventListener('input', () => {
+        row.dataset.autoTendered = 'false';
+        updatePaymentReconciliation();
+    });
+    row.querySelector('.payment-method').disabled = Boolean(values.fixed_method);
     row.querySelector('.payment-method').addEventListener('change', () => {
         syncPaymentReference(row);
         updatePaymentReconciliation();
@@ -2180,6 +2569,7 @@ function addPaymentRow(values = {}) {
             return;
         }
         row.remove();
+        syncSplitAutoBalance();
         updatePaymentReconciliation();
     };
     syncPaymentReference(row);
@@ -2193,26 +2583,65 @@ function syncPaymentReference(row) {
     const label = row.querySelector('.payment-reference-label');
     const tenderedInput = row.querySelector('.payment-tendered');
     const tenderedLabel = row.querySelector('.payment-tendered-label');
-    const required = Number(method?.requires_reference ?? 0) === 1;
     const isCash = Boolean(Number(method?.is_cash ?? 0));
-    input.required = required;
-    input.placeholder = required ? 'Wajib diisi' : 'Opsional';
-    if (label) label.firstChild.textContent = required ? 'Referensi *' : 'Referensi';
+    input.required = false;
+    input.placeholder = 'Opsional';
+    if (label) label.firstChild.textContent = 'Referensi (opsional)';
     row.classList.toggle('is-cash', isCash);
     tenderedLabel.hidden = !isCash;
     tenderedInput.disabled = !isCash;
     tenderedInput.required = isCash;
-    if (isCash && !Number(tenderedInput.value || 0)) {
-        tenderedInput.value = row.querySelector('.payment-amount').value;
+    if (isCash) {
+        syncCashTendered(row);
     }
 }
 
+function syncCashTendered(row) {
+    const tenderedInput = row.querySelector('.payment-tendered');
+    if (!row.classList.contains('is-cash') || !tenderedInput || row.dataset.autoTendered !== 'true') return;
+
+    tenderedInput.value = row.querySelector('.payment-amount')?.value || 0;
+}
+
+function splitRemainingAmount(excludedRow = null) {
+    const allocated = [...document.querySelectorAll('.payment-row')]
+        .filter((row) => row !== excludedRow)
+        .reduce((sum, row) => sum + Number(row.querySelector('.payment-amount')?.value || 0), 0);
+
+    return Math.max(0, selectedTotal() - allocated);
+}
+
+function syncSplitAutoBalance() {
+    if (paymentMode !== 'split') return;
+
+    const autoRow = [...document.querySelectorAll('.payment-row')]
+        .find((row) => row.dataset.autoBalance === 'true');
+    if (!autoRow) return;
+
+    const amountInput = autoRow.querySelector('.payment-amount');
+    if (!amountInput) return;
+    amountInput.value = splitRemainingAmount(autoRow);
+    syncCashTendered(autoRow);
+}
+
 function resetPaymentRows() {
+    paymentIdempotencyKey = newIdempotencyKey();
+    paymentMode = paymentModeOptions()[0]?.key || null;
+    selectedPaymentMethodId = null;
+    renderPaymentModeChoices();
+    renderPaymentRowsForMode();
+}
+
+function renderPaymentRowsForMode() {
     const container = document.getElementById('payment-rows');
     if (!container) return;
     container.innerHTML = '';
-    addPaymentRow({ amount: selectedTotal() });
-    paymentIdempotencyKey = newIdempotencyKey();
+    if (paymentMode === 'split') {
+        addPaymentRow({ amount: selectedTotal() });
+    } else if (selectedPaymentMethodId) {
+        addPaymentRow({ payment_method_id: selectedPaymentMethodId, amount: selectedTotal(), fixed_method: true });
+    }
+    document.getElementById('add-payment-row').hidden = paymentMode !== 'split';
 }
 
 function updatePaymentReconciliation() {
@@ -2225,10 +2654,6 @@ function updatePaymentReconciliation() {
     const change = Math.max(0, cashTendered - cashAllocated);
     const invalidCashTender = cashRows.some((row) => Number(row.querySelector('.payment-tendered')?.value || 0) < Number(row.querySelector('.payment-amount')?.value || 0));
     const difference = total - entered;
-    const missingReference = [...document.querySelectorAll('.payment-row')].some((row) => {
-        const method = paymentMethods().find((item) => Number(item.id) === Number(row.querySelector('.payment-method').value));
-        return Number(method?.requires_reference ?? 0) === 1 && !row.querySelector('.payment-reference').value.trim();
-    });
     const panel = document.querySelector('.payment-reconciliation');
     document.getElementById('payment-entered').textContent = money(entered);
     document.getElementById('payment-difference').textContent = money(difference);
@@ -2240,7 +2665,7 @@ function updatePaymentReconciliation() {
     panel?.classList.toggle('has-difference', difference !== 0);
     const button = document.getElementById('complete-payment');
     if (button) {
-        button.disabled = difference !== 0 || entered <= 0 || !paymentMethods().length || missingReference || invalidCashTender;
+        button.disabled = difference !== 0 || entered <= 0 || !paymentMethods().length || invalidCashTender;
         button.title = invalidCashTender ? 'Uang tunai yang diterima tidak boleh kurang dari nominal pembayaran.' : '';
     }
 }
@@ -2338,11 +2763,23 @@ function initReservationControls() {
         document.getElementById('reservation-calendar-view')?.classList.toggle('hidden', reservationView !== 'calendar');
         section?.querySelector('.calendar-controls')?.classList.toggle('hidden', reservationView !== 'calendar');
     };
+    const setCalendarMode = (mode) => {
+        calendarMode = mode === 'day' ? 'day' : 'week';
+        document.querySelectorAll('[data-calendar-mode]').forEach((item) => {
+            const active = item.dataset.calendarMode === calendarMode;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        renderReservations();
+    };
     setReservationView(reservationView);
     document.querySelectorAll('[data-reservation-view]').forEach((tab) => {
         tab.addEventListener('click', () => {
             setReservationView(tab.dataset.reservationView);
         });
+    });
+    document.querySelectorAll('[data-calendar-mode]').forEach((tab) => {
+        tab.addEventListener('click', () => setCalendarMode(tab.dataset.calendarMode));
     });
 }
 
@@ -2385,17 +2822,25 @@ document.getElementById('add-reservation-item')?.addEventListener('click', () =>
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
-document.getElementById('sales-search')?.addEventListener('input', renderSales);
-document.getElementById('sales-payment-filter')?.addEventListener('change', renderSales);
+document.getElementById('sales-search')?.addEventListener('input', () => {
+    clearTimeout(salesSearchTimer);
+    salesSearchTimer = setTimeout(() => loadSalesPage(1).catch((error) => toast(error.message, true)), 250);
+});
+document.getElementById('sales-payment-filter')?.addEventListener('change', () => loadSalesPage(1).catch((error) => toast(error.message, true)));
+document.getElementById('member-search')?.addEventListener('input', () => {
+    clearTimeout(memberSearchTimer);
+    memberSearchTimer = setTimeout(() => loadMembersPage(1).catch((error) => toast(error.message, true)), 250);
+});
 document.getElementById('cash-entry-type-filter')?.addEventListener('change', renderCashEntryHistory);
 document.getElementById('cash-entry-search')?.addEventListener('input', renderCashEntryHistory);
+document.getElementById('cash-entry-from')?.addEventListener('change', renderCashEntryHistory);
+document.getElementById('cash-entry-to')?.addEventListener('change', renderCashEntryHistory);
 document.getElementById('open-payment')?.addEventListener('click', () => {
     if (!selectedReservation) {
         toast('Pilih antrean terlebih dahulu.', true);
         return;
     }
-    resetPaymentRows();
-    modal('payment-modal');
+    document.getElementById('inline-payment')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 document.querySelectorAll('.close-modal').forEach((button) => {
     button.onclick = () => closeModal(button);
@@ -2479,26 +2924,84 @@ document.getElementById('product-form')?.addEventListener('submit', async (event
     }
 });
 
-document.getElementById('add-payment-row')?.addEventListener('click', () => addPaymentRow());
+document.getElementById('product-edit-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const id = form.querySelector('[name="id"]')?.value;
+    if (!id) return;
+
+    try {
+        const result = await api(`/operasional/produk/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                name: form.querySelector('[name="name"]')?.value,
+                category: form.querySelector('[name="category"]')?.value,
+                unit_id: Number(form.querySelector('[name="unit_id"]')?.value),
+                minimum_stock: form.querySelector('[name="minimum_stock"]')?.value,
+                selling_price: Number(form.querySelector('[name="selling_price"]')?.value),
+                is_active: Number(form.querySelector('[name="is_active"]')?.value),
+                description: form.querySelector('[name="description"]')?.value,
+            }),
+        });
+        form.closest('.modal')?.classList.remove('open');
+        toast(result.message);
+        await refresh();
+    } catch (error) {
+        toast(error.message, true);
+    }
+});
+
+function prepareInlinePayment() {
+    const modalElement = document.getElementById('payment-modal');
+    const cashier = document.getElementById('cashier-receipt');
+    if (!modalElement || !cashier) return;
+
+    const description = document.getElementById('payment-description');
+    const total = modalElement.querySelector('.payment-total');
+    const splitHead = modalElement.querySelector('.split-payment-head');
+    const rows = document.getElementById('payment-rows');
+    const reconciliation = modalElement.querySelector('.payment-reconciliation');
+    const stockImpact = modalElement.querySelector('.stock-impact');
+    const completeButton = document.getElementById('complete-payment');
+    if (!description || !total || !splitHead || !rows || !reconciliation || !stockImpact || !completeButton) return;
+
+    const inline = document.createElement('section');
+    inline.id = 'inline-payment';
+    inline.className = 'inline-payment';
+    const heading = document.createElement('div');
+    heading.className = 'inline-payment-head';
+    heading.innerHTML = '<h3>Pembayaran</h3>';
+    heading.append(description);
+    inline.append(heading, total, splitHead, rows, reconciliation, stockImpact, completeButton);
+    cashier.append(inline);
+    completeButton.textContent = 'Proses transaksi';
+    document.getElementById('open-payment').hidden = true;
+    modalElement.remove();
+}
+
+prepareInlinePayment();
+document.getElementById('add-payment-row')?.addEventListener('click', () => {
+    const remaining = splitRemainingAmount();
+    if (remaining <= 0) {
+        toast('Nominal pembayaran sudah lengkap. Ubah salah satu baris bila ingin membagi ulang.', true);
+        return;
+    }
+
+    addPaymentRow({ amount: remaining, auto_balance: true });
+});
 document.getElementById('complete-payment')?.addEventListener('click', async () => {
     const button = document.getElementById('complete-payment');
+    const cardNumber = document.querySelector('.payment-card-number')?.value.trim() || null;
+    const cardReference = document.querySelector('.payment-card-reference')?.value.trim() || null;
     const payments = [...document.querySelectorAll('.payment-row')].map((row) => ({
         payment_method_id: Number(row.querySelector('.payment-method').value),
         amount: Number(row.querySelector('.payment-amount').value),
         tendered_amount: row.classList.contains('is-cash')
             ? Number(row.querySelector('.payment-tendered').value)
             : Number(row.querySelector('.payment-amount').value),
-        reference_number: row.querySelector('.payment-reference').value.trim() || null,
+        reference_number: cardReference || row.querySelector('.payment-reference').value.trim() || null,
+        notes: cardNumber ? `Nomor kartu: ${cardNumber}` : null,
     }));
-    const invalidReference = [...document.querySelectorAll('.payment-row')].find((row) => {
-        const method = paymentMethods().find((item) => Number(item.id) === Number(row.querySelector('.payment-method').value));
-        return Number(method?.requires_reference ?? 0) === 1 && !row.querySelector('.payment-reference').value.trim();
-    });
-    if (invalidReference) {
-        invalidReference.querySelector('.payment-reference').focus();
-        toast('Nomor referensi wajib untuk metode pembayaran tersebut.', true);
-        return;
-    }
     button.disabled = true;
     try {
         const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
@@ -2512,9 +3015,9 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
                 idempotency_key: paymentIdempotencyKey,
             }),
         });
-        document.getElementById('payment-modal').classList.remove('open');
         toast(`${result.message}: ${result.number || result.transaction_number || ''}`.trim());
         receipt.number = result.number || result.transaction_number || receipt.number;
+        receipt.transactionId = Number(result.id || receipt.transactionId || 0) || null;
         receipt.total = Number(result.total || receipt.total);
         receipt.change = Number(result.change_amount || receipt.change || 0);
         receipt.cashier = result.cashier_name || receipt.cashier;
@@ -2579,7 +3082,8 @@ document.addEventListener('click', async (event) => {
     const promotionDelete = event.target.closest('.membership-delete-promotion');
 
     if (memberEdit) {
-        const member = array(state.members).find((item) => Number(item.id) === Number(memberEdit.dataset.id));
+        const member = [...array(memberPageState?.data), ...array(state.members)]
+            .find((item) => Number(item.id) === Number(memberEdit.dataset.id));
         if (!member) return;
         quickForm(`Edit member: ${member.name}`, [
             ['name', 'Nama pelanggan', 'text', [], member.name],
@@ -2589,7 +3093,8 @@ document.addEventListener('click', async (event) => {
     }
 
     if (memberDelete) {
-        const member = array(state.members).find((item) => Number(item.id) === Number(memberDelete.dataset.id));
+        const member = [...array(memberPageState?.data), ...array(state.members)]
+            .find((item) => Number(item.id) === Number(memberDelete.dataset.id));
         if (!member || !confirm(`Cabut status member untuk ${member.name}? Riwayat pelanggan tetap tersimpan.`)) return;
         try {
             const result = await api(`/operasional/member/${member.id}`, { method: 'DELETE' });
@@ -2639,7 +3144,7 @@ document.getElementById('open-stocktake')?.addEventListener('click', () => quick
 }));
 
 document.addEventListener('click', (event) => {
-    if (event.target.closest('.stock-mini .link')) openPage('stok');
+    if (event.target.closest('.go-stock-alerts')) openPage('stok');
 });
 
 document.querySelector('.search input')?.addEventListener('input', (event) => {

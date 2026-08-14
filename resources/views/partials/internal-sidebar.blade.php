@@ -58,6 +58,22 @@
             </details>
         @endcanany
 
+        @can('settings.manage')
+            <details class="access-menu" @if(request()->routeIs('settings.*')) open @endif>
+                <summary class="{{ request()->routeIs('settings.*') ? 'active' : '' }}">
+                    <b class="material-symbols-outlined nav-icon">settings</b>
+                    <span>Pengaturan</span>
+                    <i class="material-symbols-outlined">chevron_right</i>
+                </summary>
+                <div class="access-submenu">
+                    <a class="{{ request()->routeIs('settings.sale*') ? 'active' : '' }}" href="{{ route('settings.sale') }}"><span>Penjualan</span></a>
+                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'edc' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'edc') }}"><span>EDC</span></a>
+                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'bank' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'bank') }}"><span>Bank</span></a>
+                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'qris' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'qris') }}"><span>QRIS</span></a>
+                </div>
+            </details>
+        @endcan
+
         @can('activity.view')
             @if ($isDashboard)
                 <button type="button" data-page="log">

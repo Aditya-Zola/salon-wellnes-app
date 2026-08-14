@@ -14,6 +14,7 @@ use App\Http\Services\ReservationService;
 use App\Http\Services\SalonSnapshotService;
 use App\Http\Services\SpreadsheetExportService;
 use App\Http\Support\FixedPoint;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -50,6 +51,40 @@ class SalonController extends Controller
         }
 
         return response()->json($this->snapshots->forUser($request->user()));
+    }
+
+    public function salesPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'payment_method' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return response()->json($this->snapshots->salesPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+            $data['search'] ?? null,
+            $data['payment_method'] ?? null,
+        ));
+    }
+
+    public function membersPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return response()->json($this->snapshots->membersPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 10),
+            $data['search'] ?? null,
+        ));
     }
 
     public function exportSchedule(Request $request): StreamedResponse
@@ -485,6 +520,72 @@ class SalonController extends Controller
         return response()->json(['message' => 'Harga jual berhasil diperbarui.', 'selling_price' => $price]);
     }
 
+    public function updateProduct(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:150'],
+            'category' => ['nullable', 'string', 'max:100'],
+            'unit_id' => ['required', 'integer', 'exists:units,id'],
+            'minimum_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+            'selling_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'is_active' => ['required', 'boolean'],
+        ]);
+
+        DB::transaction(function () use ($data, $id, $request): void {
+            $product = DB::table('products')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($product, 404, 'Produk tidak ditemukan.');
+
+            $unitId = (int) $data['unit_id'];
+            $now = now();
+            $before = [
+                'name' => $product->name,
+                'category' => $product->category,
+                'unit_id' => (int) $product->usage_unit_id,
+                'minimum_stock' => $product->minimum_stock,
+                'selling_price' => (int) $product->selling_price,
+                'is_active' => (bool) $product->is_active,
+            ];
+
+            DB::table('products')->where('id', $id)->update([
+                'name' => $data['name'],
+                'category' => $data['category'] ?: null,
+                // Form edit ini memperbaiki satuan master tunggal produk. Jumlah stok
+                // tidak dikonversi otomatis agar tidak mengubah saldo tanpa persetujuan.
+                'purchase_unit_id' => $unitId,
+                'usage_unit_id' => $unitId,
+                'purchase_to_usage_factor' => FixedPoint::format(FixedPoint::parse('1', FixedPoint::STOCK_SCALE), FixedPoint::STOCK_SCALE),
+                'minimum_stock' => FixedPoint::format(
+                    FixedPoint::parse($data['minimum_stock'], FixedPoint::STOCK_SCALE),
+                    FixedPoint::STOCK_SCALE,
+                ),
+                'selling_price' => (int) $data['selling_price'],
+                'description' => $data['description'] ?: null,
+                'is_active' => (bool) $data['is_active'],
+                'updated_at' => $now,
+            ]);
+
+            if ((int) $product->usage_unit_id !== $unitId || (int) $product->purchase_unit_id !== $unitId) {
+                // Resep aktif harus selalu memakai satuan yang valid untuk produk.
+                // Riwayat pergerakan stok sengaja tidak diubah sebagai jejak audit.
+                DB::table('treatment_product_recipes')
+                    ->where('product_id', $id)
+                    ->update(['unit_id' => $unitId, 'updated_at' => $now]);
+            }
+
+            $this->logger->log(
+                $request,
+                'product.updated',
+                'product',
+                $id,
+                "Data produk {$product->name} diperbarui",
+                ['before' => $before, 'after' => ['name' => $data['name'], 'unit_id' => $unitId]],
+            );
+        }, 3);
+
+        return response()->json(['message' => 'Data produk berhasil diperbarui.', 'id' => $id]);
+    }
+
     public function adjustStock(Request $request, int $id): JsonResponse
     {
         $aliases = ['masuk' => 'in', 'keluar' => 'out', 'opname' => 'adjustment'];
@@ -586,6 +687,32 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Treatment berhasil ditambahkan.', 'id' => $id], 201);
+    }
+
+    public function updateTreatmentCommission(Request $request, int $id): JsonResponse
+    {
+        $treatment = DB::table('treatments')->where('id', $id)->first();
+        abort_unless($treatment, 404, 'Treatment tidak ditemukan.');
+        $data = $request->validate([
+            'default_commission_percent' => ['required', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
+        ]);
+        $commission = FixedPoint::parse($data['default_commission_percent'], FixedPoint::PERCENT_SCALE);
+        abort_if($commission > 100 * (10 ** FixedPoint::PERCENT_SCALE), 422, 'Persentase komisi tidak boleh lebih dari 100.');
+
+        DB::table('treatments')->where('id', $id)->update([
+            'default_commission_percent' => FixedPoint::normalizePercent($data['default_commission_percent']),
+            'updated_at' => now(),
+        ]);
+        $this->logger->log(
+            $request,
+            'treatment.commission_updated',
+            'treatment',
+            $id,
+            "Memperbarui komisi treatment {$treatment->name}",
+            ['default_commission_percent' => $data['default_commission_percent']],
+        );
+
+        return response()->json(['message' => 'Komisi treatment berhasil diperbarui.']);
     }
 
     public function updateRecipe(Request $request, int $id): JsonResponse
@@ -784,6 +911,49 @@ class SalonController extends Controller
                 : 'Pembayaran berhasil diproses.',
             ...$transaction,
         ], $status);
+    }
+
+    public function invoicePdf(int $transaction): \Symfony\Component\HttpFoundation\Response
+    {
+        $invoice = DB::table('transactions as transaction')
+            ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
+            ->leftJoin('users as cashier', 'cashier.id', '=', 'transaction.finalized_by')
+            ->where('transaction.id', $transaction)
+            ->where('transaction.status', 'paid')
+            ->first([
+                'transaction.*',
+                'customer.name as customer_name',
+                'cashier.name as cashier_name',
+            ]);
+        abort_unless($invoice, 404, 'Nota transaksi tidak ditemukan.');
+
+        $items = DB::table('transaction_items')
+            ->where('transaction_id', $invoice->id)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+        $payments = DB::table('transaction_payments as payment')
+            ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
+            ->where('payment.transaction_id', $invoice->id)
+            ->where('payment.status', 'confirmed')
+            ->orderBy('payment.id')
+            ->get(['payment.*', 'method.name as method_name', 'method.is_cash']);
+        $therapists = DB::table('transaction_items as transaction_item')
+            ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'transaction_item.reservation_item_id')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->where('transaction_item.transaction_id', $invoice->id)
+            ->orderBy('employee.name')
+            ->pluck('employee.name')
+            ->unique()
+            ->values();
+        $logoPath = public_path('images/selesa-logo.png');
+        $logoDataUri = is_file($logoPath)
+            ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
+            : null;
+
+        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri'))
+            ->setPaper('a4')
+            ->stream($invoice->number.'.pdf');
     }
 
     public function storeCashEntry(Request $request): JsonResponse

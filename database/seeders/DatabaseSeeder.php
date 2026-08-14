@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Employee;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
@@ -17,6 +18,10 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(AccessControlSeeder::class);
+        DB::table('sale_settings')->updateOrInsert(
+            ['key' => 'invoice_prefix'],
+            ['value' => 'INV', 'created_at' => now(), 'updated_at' => now()],
+        );
 
         $accounts = [
             ['name' => 'Owner Selesa', 'username' => 'owner.selesa', 'email' => 'superadmin@gmail.com', 'role' => 'super_admin'],

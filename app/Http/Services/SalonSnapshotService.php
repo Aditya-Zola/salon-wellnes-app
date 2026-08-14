@@ -47,6 +47,9 @@ class SalonSnapshotService
 
         if ($this->canAny($user, ['products.view', 'cashier.view', 'cashier.process', 'treatments.update'])) {
             $snapshot['products'] = $this->products();
+            $snapshot['units'] = DB::table('units')
+                ->orderBy('name')
+                ->get(['id', 'code', 'name', 'decimal_places']);
         }
 
         if ($this->can($user, 'products.view')) {
@@ -64,9 +67,8 @@ class SalonSnapshotService
         if ($this->canAny($user, ['cashier.view', 'cashier.process'])) {
             $snapshot['payment_methods'] = DB::table('payment_methods')
                 ->where('is_active', true)
-                ->orderBy('sort_order')
                 ->orderBy('name')
-                ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference']);
+                ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference', 'account_name', 'account_number']);
         }
 
         if ($this->can($user, 'payroll.view')) {
@@ -479,6 +481,134 @@ class SalonSnapshotService
             ]);
     }
 
+    public function salesPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $paymentMethod = null): array
+    {
+        abort_unless($this->can($user, 'sales.view'), 403);
+
+        $search = trim((string) $search);
+        $paymentMethod = trim((string) $paymentMethod);
+        $query = DB::table('transactions as transaction')
+            ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
+            ->where('transaction.status', 'paid')
+            ->when($search !== '', function ($builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder->where(function ($nested) use ($like): void {
+                    $nested->where('transaction.number', 'like', $like)
+                        ->orWhere('customer.name', 'like', $like);
+                });
+            })
+            ->when($paymentMethod !== '', function ($builder) use ($paymentMethod): void {
+                $builder->whereExists(function ($payment) use ($paymentMethod): void {
+                    $payment->selectRaw('1')
+                        ->from('transaction_payments as payment')
+                        ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
+                        ->whereColumn('payment.transaction_id', 'transaction.id')
+                        ->where('payment.status', 'confirmed')
+                        ->where('method.name', $paymentMethod);
+                });
+            })
+            ->latest('transaction.transacted_at');
+
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'transaction.id',
+            'transaction.number',
+            'transaction.reservation_id',
+            'transaction.customer_id',
+            'customer.name as customer_name',
+            'customer.is_member',
+            'transaction.status',
+            'transaction.transacted_at',
+            'transaction.subtotal',
+            'transaction.discount_percent',
+            'transaction.discount_amount',
+            'transaction.total',
+            'transaction.paid_amount',
+            'transaction.change_amount',
+            'transaction.notes',
+            'transaction.created_at',
+            'transaction.finalized_by',
+        ], 'page', $page);
+        $transactions = $paginator->getCollection();
+
+        if ($transactions->isNotEmpty()) {
+            $payments = DB::table('transaction_payments as payment')
+                ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
+                ->whereIn('payment.transaction_id', $transactions->pluck('id'))
+                ->where('payment.status', 'confirmed')
+                ->orderBy('payment.id')
+                ->get(['payment.id', 'payment.transaction_id', 'payment.amount', 'payment.tendered_amount', 'payment.reference_number', 'payment.paid_at', 'method.id as payment_method_id', 'method.code as payment_method_code', 'method.name as payment_method_name', 'method.is_cash as payment_method_is_cash'])
+                ->groupBy('transaction_id');
+            $items = DB::table('transaction_items')
+                ->whereIn('transaction_id', $transactions->pluck('id'))
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get(['id', 'transaction_id', 'item_type', 'name', 'quantity', 'unit_price', 'total_amount', 'sort_order'])
+                ->groupBy('transaction_id');
+            $cashiers = DB::table('users')
+                ->whereIn('id', $transactions->pluck('finalized_by')->filter()->unique())
+                ->pluck('name', 'id');
+            $transactions = $transactions->map(function (object $transaction) use ($payments, $items, $cashiers): object {
+                $transaction->payments = collect($payments->get($transaction->id, []))->values();
+                $transaction->payment_method = $transaction->payments->pluck('payment_method_name')->join(' + ');
+                $transaction->items = collect($items->get($transaction->id, []))->values();
+                $transaction->cashier_name = $cashiers->get($transaction->finalized_by) ?: 'Kasir Selesa';
+
+                return $transaction;
+            })->values();
+        }
+
+        return [
+            'data' => $transactions,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+            'payment_options' => DB::table('payment_methods')
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->pluck('name')
+                ->values(),
+        ];
+    }
+
+    public function membersPage(Authenticatable $user, int $page = 1, int $perPage = 10, ?string $search = null): array
+    {
+        abort_unless($this->canAny($user, ['memberships.view', 'memberships.manage']), 403);
+
+        $search = trim((string) $search);
+        $query = DB::table('customers')
+            ->where('is_member', true)
+            ->where('is_active', true)
+            ->when($search !== '', function ($builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder->where('phone', 'like', $like);
+            })
+            ->orderBy('name')
+            ->orderBy('id');
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'id',
+            'code',
+            'name',
+            'phone',
+            'email',
+            'member_since',
+            'visit_count',
+            'notes',
+        ], 'page', $page);
+
+        return [
+            'data' => $paginator->getCollection()->values(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
     private function transactions(bool $includeItems = false): mixed
     {
         $transactions = DB::table('transactions as transaction')
@@ -569,9 +699,8 @@ class SalonSnapshotService
     {
         return DB::table('cash_entries as entry')
             ->leftJoin('users as creator', 'creator.id', '=', 'entry.created_by')
-            ->leftJoin('transaction_payments as payment', 'payment.id', '=', 'entry.transaction_payment_id')
-            ->leftJoin('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
             ->where('entry.status', 'posted')
+            ->whereNull('entry.transaction_payment_id')
             ->orderByDesc('entry.entry_date')
             ->orderByDesc('entry.id')
             ->limit(100)
@@ -585,7 +714,6 @@ class SalonSnapshotService
                 'entry.entry_date',
                 'entry.created_at',
                 'creator.name as created_by_name',
-                'transaction.number as transaction_number',
             ]);
     }
 
@@ -613,6 +741,34 @@ class SalonSnapshotService
             $todayRevenue = (int) DB::table('transactions')->where('status', 'paid')->whereDate('transacted_at', $today)->sum('total');
             $data['revenue_today'] = $todayRevenue;
             $data['revenue_yesterday'] = (int) DB::table('transactions')->where('status', 'paid')->whereDate('transacted_at', $today->subDay())->sum('total');
+            $paymentRevenueTotals = DB::table('transaction_payments as payment')
+                ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+                ->where('transaction.status', 'paid')
+                ->where('payment.status', 'confirmed')
+                ->whereDate('payment.paid_at', $today)
+                ->select('payment.payment_method_id', DB::raw('SUM(payment.amount) as total'))
+                ->groupBy('payment.payment_method_id')
+                ->get()
+                ->mapWithKeys(fn (object $payment): array => [(int) $payment->payment_method_id => (int) $payment->total]);
+            $methods = DB::table('payment_methods')
+                ->where(function ($query) use ($paymentRevenueTotals): void {
+                    $query->where('is_active', true);
+                    if ($paymentRevenueTotals->isNotEmpty()) {
+                        $query->orWhereIn('id', $paymentRevenueTotals->keys()->all());
+                    }
+                })
+                ->orderBy('name')
+                ->get(['id', 'name', 'type', 'is_cash', 'is_active']);
+            $data['revenue_by_payment_method_today'] = collect([
+                ['key' => 'total', 'name' => 'Total pendapatan', 'total' => $todayRevenue, 'type' => 'total'],
+            ])->concat($methods->map(fn (object $method): array => [
+                'key' => 'method-'.$method->id,
+                'id' => (int) $method->id,
+                'name' => $method->name,
+                'type' => $method->type,
+                'total' => (int) $paymentRevenueTotals->get((int) $method->id, 0),
+                'is_active' => (bool) $method->is_active,
+            ]))->values()->all();
             $data['revenue_last_7_days'] = collect(range(0, 6))->map(function (int $offset) use ($start): array {
                 $date = $start->addDays($offset);
                 $dayNames = [1 => 'Sen', 2 => 'Sel', 3 => 'Rab', 4 => 'Kam', 5 => 'Jum', 6 => 'Sab', 7 => 'Min'];
@@ -635,6 +791,26 @@ class SalonSnapshotService
                 ->get()
                 ->map(fn (object $item): array => ['name' => $item->name, 'total' => (int) $item->total])
                 ->values();
+            $monthStart = $today->startOfMonth();
+            $treatmentsByDay = DB::table('transaction_items as item')
+                ->join('transactions as trx', 'trx.id', '=', 'item.transaction_id')
+                ->where('trx.status', 'paid')
+                ->where('item.item_type', 'treatment')
+                ->whereBetween('trx.transacted_at', [$monthStart->startOfDay(), $today->endOfDay()])
+                ->selectRaw('DATE(trx.transacted_at) as date, SUM(item.quantity) as total')
+                ->groupByRaw('DATE(trx.transacted_at)')
+                ->pluck('total', 'date');
+            $data['treatment_daily_current_month'] = collect(range(0, $monthStart->diffInDays($today)))
+                ->map(function (int $offset) use ($monthStart, $treatmentsByDay): array {
+                    $date = $monthStart->addDays($offset);
+
+                    return [
+                        'date' => $date->toDateString(),
+                        'label' => $date->format('d'),
+                        'total' => (int) ($treatmentsByDay->get($date->toDateString(), 0)),
+                    ];
+                })
+                ->all();
         }
 
         if ($this->can($user, 'products.view')) {
@@ -642,6 +818,38 @@ class SalonSnapshotService
                 ->where('is_active', true)
                 ->whereColumn('current_stock', '<=', 'minimum_stock')
                 ->count();
+
+            // Menu treatment yang terdampak bila salah satu bahan resepnya sudah di batas minimum.
+            $data['treatment_stock_alerts'] = DB::table('treatment_product_recipes as recipe')
+                ->join('treatments as treatment', 'treatment.id', '=', 'recipe.treatment_id')
+                ->join('products as product', 'product.id', '=', 'recipe.product_id')
+                ->join('units as unit', 'unit.id', '=', 'product.usage_unit_id')
+                ->where('treatment.is_active', true)
+                ->where('product.is_active', true)
+                ->whereColumn('product.current_stock', '<=', 'product.minimum_stock')
+                ->orderBy('product.current_stock')
+                ->orderBy('treatment.name')
+                ->limit(5)
+                ->get([
+                    'treatment.id as treatment_id',
+                    'treatment.name as treatment_name',
+                    'product.id as product_id',
+                    'product.name as product_name',
+                    'product.current_stock',
+                    'product.minimum_stock',
+                    'unit.code as unit',
+                ])
+                ->map(fn (object $item): array => [
+                    'treatment_id' => (int) $item->treatment_id,
+                    'treatment_name' => $item->treatment_name,
+                    'product_id' => (int) $item->product_id,
+                    'product_name' => $item->product_name,
+                    'current_stock' => (float) $item->current_stock,
+                    'minimum_stock' => (float) $item->minimum_stock,
+                    'unit' => $item->unit,
+                ])
+                ->values()
+                ->all();
         }
 
         if ($this->canAny($user, ['memberships.view', 'memberships.manage'])) {
@@ -673,17 +881,29 @@ class SalonSnapshotService
 
         if ($this->can($user, 'finance.view')) {
             $monthStart = $today->startOfMonth();
-            $income = (int) DB::table('cash_entries')->where('status', 'posted')->where('type', 'income')->whereBetween('entry_date', [$monthStart->toDateString(), $today->toDateString()])->sum('amount');
-            $expense = (int) DB::table('cash_entries')->where('status', 'posted')->where('type', 'expense')->whereBetween('entry_date', [$monthStart->toDateString(), $today->toDateString()])->sum('amount');
-            $transactions = DB::table('transactions')->where('status', 'paid')->whereBetween('transacted_at', [$monthStart->startOfDay(), $today->endOfDay()]);
-            $count = (clone $transactions)->count();
-            $sum = (int) (clone $transactions)->sum('total');
+            $manualCashEntries = DB::table('cash_entries')
+                ->where('status', 'posted')
+                ->whereNull('transaction_payment_id')
+                ->whereBetween('entry_date', [$monthStart->toDateString(), $today->toDateString()]);
+            $income = (int) (clone $manualCashEntries)->where('type', 'income')->sum('amount');
+            $expense = (int) (clone $manualCashEntries)->where('type', 'expense')->sum('amount');
+            $count = (clone $manualCashEntries)->count();
+            $expenseCategories = (clone $manualCashEntries)
+                ->where('type', 'expense')
+                ->select('category', DB::raw('SUM(amount) as total'))
+                ->groupBy('category')
+                ->orderByDesc('total')
+                ->limit(5)
+                ->get()
+                ->map(fn (object $item): array => ['category' => $item->category, 'total' => (int) $item->total])
+                ->values()
+                ->all();
             $data += [
                 'month_income' => $income,
                 'month_expense' => $expense,
                 'month_balance' => $income - $expense,
-                'month_transaction_count' => $count,
-                'month_transaction_average' => $count ? intdiv($sum + intdiv($count, 2), $count) : 0,
+                'month_cash_entry_count' => $count,
+                'month_expense_categories' => $expenseCategories,
             ];
         }
 
