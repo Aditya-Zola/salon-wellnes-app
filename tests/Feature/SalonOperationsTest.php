@@ -153,6 +153,55 @@ class SalonOperationsTest extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_checkout_refreshes_commission_on_an_existing_draft_payroll(): void
+    {
+        $employee = $this->employee('EMP-SARI');
+        $cash = $this->paymentMethod('CASH');
+        [$firstReservationId, $firstTotal] = $this->finishedTwoItemReservation('081290000098');
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $firstReservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => $firstTotal,
+                ]],
+            ])
+            ->assertCreated();
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian', [
+                'employee_id' => $employee->id,
+                'period' => today()->format('Y-m'),
+                'base_salary' => 3500000,
+                'bonus' => 0,
+                'overtime' => 0,
+                'late_duration_minutes' => 0,
+                'late_deduction' => 0,
+                'other_deduction' => 0,
+            ])
+            ->assertCreated();
+
+        [$secondReservationId, $secondTotal] = $this->finishedTwoItemReservation('081290000097');
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $secondReservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => $secondTotal,
+                ]],
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('payrolls', [
+            'employee_id' => $employee->id,
+            'period' => today()->format('Y-m'),
+            'commission' => 8000,
+            'net_salary' => 3508000,
+            'status' => 'draft',
+        ]);
+    }
+
     public function test_sales_history_includes_paid_invoice_details_for_reprinting(): void
     {
         [$reservationId, $total] = $this->finishedTwoItemReservation('081290000188');
@@ -181,6 +230,11 @@ class SalonOperationsTest extends TestCase
         $this->assertSame('Tunai', $transaction['payments'][0]['payment_method_name']);
         $this->assertSame($total + 10000, (int) $transaction['payments'][0]['tendered_amount']);
         $this->assertSame('Kasir Selesa', $transaction['cashier_name']);
+
+        $this->actingAs($this->cashier)
+            ->get("/operasional/penjualan/{$transaction['id']}/nota.pdf")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
     }
 
     public function test_schedule_and_stock_history_can_be_exported_as_excel(): void
@@ -453,7 +507,7 @@ class SalonOperationsTest extends TestCase
     {
         [$reservationId, $total] = $this->finishedTwoItemReservation('081290000040');
         $cash = $this->paymentMethod('CASH');
-        $qris = $this->paymentMethod('QRIS_BCA');
+        $qris = $this->paymentMethod('QRIS-001');
 
         $basePayload = [
             'reservation_id' => $reservationId,
@@ -462,7 +516,6 @@ class SalonOperationsTest extends TestCase
                 [
                     'payment_method_id' => $qris->id,
                     'amount' => $total - 80000,
-                    'reference_number' => 'QRIS-DEMO-001',
                 ],
             ],
         ];
@@ -499,8 +552,15 @@ class SalonOperationsTest extends TestCase
         );
         $this->assertSame(2, \DB::table('transaction_payments')->where('transaction_id', $transactionId)->count());
         $this->assertSame(2, \DB::table('transaction_items')->where('transaction_id', $transactionId)->count());
-        $this->assertSame(2, \DB::table('cash_entries')->count());
+        $this->assertSame(0, \DB::table('cash_entries')->count());
         $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'completed']);
+
+        $dashboard = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json('dashboard');
+        $revenueByMethod = collect($dashboard['revenue_by_payment_method_today']);
+        $this->assertSame($total, (int) $revenueByMethod->firstWhere('key', 'total')['total']);
+        $this->assertSame(80000, (int) $revenueByMethod->firstWhere('name', 'Tunai')['total']);
+        $this->assertSame($total - 80000, (int) $revenueByMethod->firstWhere('key', 'method-'.$qris->id)['total']);
+        $this->assertSame(0, (int) $revenueByMethod->firstWhere('type', 'bank_transfer')['total']);
     }
 
     public function test_cash_checkout_records_received_amount_and_change(): void
@@ -707,6 +767,56 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_edit_product_master_data_including_unit(): void
+    {
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $unit = \DB::table('units')->where('code', 'PCS')->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$product->id}", [
+                'name' => 'Herbal Drink Botol',
+                'category' => 'Konsumsi',
+                'unit_id' => $unit->id,
+                'minimum_stock' => '20',
+                'selling_price' => 12000,
+                'is_active' => true,
+                'description' => 'Data master dikoreksi.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Data produk berhasil diperbarui.');
+
+        $this->assertDatabaseHas('products', [
+            'id' => $product->id,
+            'name' => 'Herbal Drink Botol',
+            'purchase_unit_id' => $unit->id,
+            'usage_unit_id' => $unit->id,
+            'minimum_stock' => '20.0000',
+            'selling_price' => 12000,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'product.updated',
+            'subject_type' => 'product',
+            'subject_id' => $product->id,
+        ]);
+    }
+
+    public function test_admin_can_update_default_commission_for_a_treatment(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/treatment/{$treatment->id}/komisi", [
+                'default_commission_percent' => '12.5',
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Komisi treatment berhasil diperbarui.');
+
+        $this->assertDatabaseHas('treatments', [
+            'id' => $treatment->id,
+            'default_commission_percent' => '12.5000',
+        ]);
+    }
+
     public function test_repeated_checkout_replays_existing_invoice_without_duplicate_side_effects(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
@@ -750,7 +860,7 @@ class SalonOperationsTest extends TestCase
         $this->assertSame(1, \DB::table('transactions')->where('reservation_id', $reservationId)->count());
         $this->assertSame(1, \DB::table('transaction_items')->where('transaction_id', $transactionId)->count());
         $this->assertSame(1, \DB::table('transaction_payments')->where('transaction_id', $transactionId)->count());
-        $this->assertSame(1, \DB::table('cash_entries')->whereIn(
+        $this->assertSame(0, \DB::table('cash_entries')->whereIn(
             'transaction_payment_id',
             \DB::table('transaction_payments')->where('transaction_id', $transactionId)->select('id'),
         )->count());
@@ -975,6 +1085,48 @@ class SalonOperationsTest extends TestCase
             'invoice_date' => '2026-08-13',
             'last_number' => 2,
         ]);
+    }
+
+    public function test_payment_settings_drive_cashier_options_dashboard_cards_and_invoice_prefix(): void
+    {
+        $this->actingAs($this->admin)->get('/pengaturan/penjualan')
+            ->assertOk()
+            ->assertSee('Prefix invoice');
+        $this->actingAs($this->admin)->get('/pengaturan/bank')
+            ->assertOk()
+            ->assertSee('Daftar Bank');
+
+        $this->actingAs($this->admin)
+            ->post('/pengaturan/bank', [
+                'source_name' => 'Mandiri',
+                'account_name' => 'Selesa Salon',
+                'account_number' => '1234567890',
+                'is_active' => '1',
+            ])
+            ->assertRedirect(route('settings.payment-methods.index', 'bank'));
+
+        $this->assertDatabaseHas('payment_methods', ['code' => 'BANK-002', 'name' => 'Mandiri']);
+
+        $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+        $this->assertTrue(collect($snapshot['payment_methods'])->contains('name', 'Mandiri'));
+        $bankCard = collect($snapshot['dashboard']['revenue_by_payment_method_today'])->firstWhere('name', 'Mandiri');
+        $this->assertSame(0, (int) $bankCard['total']);
+
+        $this->actingAs($this->admin)
+            ->patch('/pengaturan/penjualan', ['invoice_prefix' => 'SLS'])
+            ->assertSessionHas('success');
+
+        Carbon::setTestNow('2026-08-13 10:00:00');
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000073');
+        $response = $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'payments' => [[
+                'payment_method_id' => $this->paymentMethod('CASH')->id,
+                'amount' => $total,
+            ]],
+        ])->assertCreated();
+
+        $this->assertSame('SLS-20260813-001', $response->json('number'));
     }
 
     public function test_members_and_membership_events_can_be_managed_without_losing_history(): void

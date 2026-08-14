@@ -65,6 +65,9 @@ class AccessControlSeeder extends Seeder
         'Log Aktivitas' => [
             'activity.view' => 'Lihat log aktivitas',
         ],
+        'Pengaturan' => [
+            'settings.manage' => 'Kelola pengaturan penjualan dan metode pembayaran',
+        ],
         'Hak Akses - Peran' => [
             'access.roles.view' => 'Lihat daftar peran',
             'access.roles.manage' => 'Tambah, ubah, dan hapus peran',

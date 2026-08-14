@@ -166,9 +166,9 @@ class SalonOperationSeeder extends Seeder
 
             foreach ([
                 ['code' => 'CASH', 'name' => 'Tunai', 'type' => 'cash', 'is_cash' => true, 'requires_reference' => false, 'sort_order' => 10],
-                ['code' => 'QRIS_BCA', 'name' => 'QRIS BCA', 'type' => 'qris', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 20],
-                ['code' => 'TRANSFER_BCA', 'name' => 'Transfer BCA', 'type' => 'bank_transfer', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 30],
-                ['code' => 'DEBIT', 'name' => 'Kartu Debit', 'type' => 'card', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 40],
+                ['code' => 'QRIS-001', 'name' => 'BCA', 'type' => 'qris', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 20],
+                ['code' => 'BANK-001', 'name' => 'BCA', 'type' => 'bank_transfer', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 30],
+                ['code' => 'EDC-001', 'name' => 'BCA', 'type' => 'card', 'is_cash' => false, 'requires_reference' => true, 'sort_order' => 40],
             ] as $attributes) {
                 PaymentMethod::firstOrCreate(
                     ['code' => $attributes['code']],
