@@ -100,6 +100,57 @@ function toast(message, error = false) {
     toastTimer = setTimeout(() => element.classList.remove('show'), 3500);
 }
 
+function confirmAction({
+    title,
+    message,
+    confirmLabel = 'Konfirmasi',
+    icon = 'check',
+}) {
+    return new Promise((resolve) => {
+        const previousFocus = document.activeElement;
+        const dialog = document.createElement('div');
+        dialog.className = 'modal open action-confirm-overlay';
+        dialog.setAttribute('role', 'presentation');
+        dialog.innerHTML = `<section class="action-confirm" role="alertdialog" aria-modal="true" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-message">
+            <div class="action-confirm-icon" aria-hidden="true"><span class="material-symbols-outlined">${escapeHtml(icon)}</span></div>
+            <div class="action-confirm-copy">
+                <span class="action-confirm-eyebrow">Konfirmasi tindakan</span>
+                <h2 id="action-confirm-title">${escapeHtml(title)}</h2>
+                <p id="action-confirm-message">${escapeHtml(message)}</p>
+            </div>
+            <div class="action-confirm-actions">
+                <button type="button" class="secondary action-confirm-cancel">Kembali</button>
+                <button type="button" class="primary action-confirm-submit"><span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(icon)}</span>${escapeHtml(confirmLabel)}</button>
+            </div>
+        </section>`;
+
+        const cancelButton = dialog.querySelector('.action-confirm-cancel');
+        const confirmButton = dialog.querySelector('.action-confirm-submit');
+        const finish = (confirmed) => {
+            document.removeEventListener('keydown', onKeydown, true);
+            dialog.remove();
+            previousFocus?.focus?.();
+            resolve(confirmed);
+        };
+        const onKeydown = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                finish(false);
+            }
+        };
+
+        cancelButton.onclick = () => finish(false);
+        confirmButton.onclick = () => finish(true);
+        dialog.onclick = (event) => {
+            if (event.target === dialog) finish(false);
+        };
+        document.addEventListener('keydown', onKeydown, true);
+        document.body.appendChild(dialog);
+        confirmButton.focus();
+    });
+}
+
 async function api(url, options = {}) {
     const response = await fetch(url, {
         ...options,
@@ -820,7 +871,11 @@ function openReservationDetail(reservation) {
         button.onclick = async () => {
             const nextStatus = button.dataset.nextStatus;
             const isFinishing = nextStatus === 'finished';
-            if (isFinishing && !window.confirm('Tandai treatment ini sudah selesai?')) return;
+            if (isFinishing && !await confirmAction({
+                title: 'Selesaikan treatment?',
+                message: 'Status pengerjaan akan ditandai selesai dan tersimpan di riwayat reservasi.',
+                confirmLabel: 'Ya, selesaikan',
+            })) return;
 
             button.disabled = true;
             try {
