@@ -26,6 +26,7 @@ const canUpdateReservations = Boolean(capabilities.update_reservation);
 const canManageFinance = Boolean(capabilities.manage_finance);
 const canManageMemberships = Boolean(capabilities.manage_memberships);
 const canViewSales = Boolean(capabilities.view_sales);
+const canRefundSales = Boolean(capabilities.refund_sales);
 const canViewMemberships = Boolean(capabilities.view_memberships);
 const headerStatusLabels = {
     paid: 'Lunas',
@@ -1850,14 +1851,17 @@ function renderSales() {
         paymentFilter.value = paymentOptions.includes(selectedPayment) ? selectedPayment : '';
     }
 
-    const transactions = array(salesPageState?.data).length
-        ? array(salesPageState.data)
+    const transactions = Array.isArray(salesPageState?.data)
+        ? salesPageState.data
         : array(state.transactions).filter((transaction) => transaction.status === 'paid');
     const rows = transactions.map((transaction) => {
         const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name).filter(Boolean).join(' + ') || '-';
         const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
-        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><b class="align-right">${money(transaction.total)}</b><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button></div>`;
+        const refundedAmount = Number(transaction.refunded_amount || 0);
+        const refundableProducts = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
+        const returnReceipts = array(transaction.returns).map((salesReturn) => `<button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}" title="Cetak ${escapeHtml(salesReturn.number)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span>${escapeHtml(salesReturn.number)}</button>`).join('');
+        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${refundedAmount > 0 ? ` · <em class="sales-return-status">diretur ${money(refundedAmount)}</em>` : ''}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button>${canRefundSales && refundableProducts.length ? `<button type="button" class="sales-return-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Retur</button>` : ''}${returnReceipts}</div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
@@ -1869,6 +1873,13 @@ function renderSales() {
             description: `${transaction.number} \u00b7 ${money(transaction.total)}`,
         });
     });
+    box.querySelectorAll('.sales-return-button').forEach((button) => {
+        const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (transaction) button.onclick = () => openSalesReturn(transaction);
+    });
+    box.querySelectorAll('.sales-return-receipt').forEach((button) => {
+        button.onclick = () => window.open(`/operasional/retur/${Number(button.dataset.returnId)}/struk.pdf`, '_blank', 'noopener');
+    });
 
     const meta = salesPageState?.meta;
     if (pagination) {
@@ -1879,6 +1890,99 @@ function renderSales() {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
         });
     }
+}
+
+function openSalesReturn(transaction) {
+    const products = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
+    if (!products.length) {
+        toast('Tidak ada produk yang masih dapat diretur.', true);
+        return;
+    }
+
+    const methods = array(salesPageState?.refund_payment_options);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal sales-return-overlay';
+    wrapper.innerHTML = `<div class="modal-box sales-return-modal">
+        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">Retur produk</span><h2>${escapeHtml(transaction.number)}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} · Pilih produk dan jumlah yang dikembalikan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <form class="sales-return-form">
+            <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
+                <div><strong>${escapeHtml(item.name)}</strong><small>Terjual ${Number(item.quantity).toLocaleString('id-ID')} · Sudah diretur ${Number(item.returned_quantity || 0).toLocaleString('id-ID')}</small></div>
+                <label>Qty retur<input class="sales-return-quantity" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
+                <label class="sales-return-restock"><input type="checkbox" class="sales-return-restock-input" checked><span>Kembali ke stok</span></label>
+                <b class="sales-return-line-total">${money(0)}</b>
+            </article>`).join('')}</div>
+            <div class="sales-return-fields">
+                <label>Metode pengembalian dana<select name="payment_method_id" required><option value="">Pilih metode</option>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}">${escapeHtml(method.name)}</option>`).join('')}</select></label>
+                <label class="sales-return-reference" hidden>Nomor referensi<input name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
+                <label class="sales-return-reason">Alasan retur<textarea name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: Produk tidak sesuai atau kemasan rusak"></textarea></label>
+            </div>
+            <div class="sales-return-summary"><span><small>Total pengembalian dana</small><strong class="sales-return-total">${money(0)}</strong></span><p>Nominal dihitung otomatis dari harga pada invoice.</p></div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary sales-return-submit"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    const form = wrapper.querySelector('form');
+    const totalElement = wrapper.querySelector('.sales-return-total');
+    const methodSelect = form.elements.payment_method_id;
+    const referenceLabel = wrapper.querySelector('.sales-return-reference');
+    const referenceInput = form.elements.reference_number;
+    const calculate = () => {
+        let total = 0;
+        wrapper.querySelectorAll('.sales-return-product').forEach((row) => {
+            const quantity = Math.max(0, Number(row.querySelector('.sales-return-quantity').value || 0));
+            const amount = Math.round(quantity * Number(row.dataset.price || 0));
+            row.querySelector('.sales-return-line-total').textContent = money(amount);
+            total += amount;
+        });
+        totalElement.textContent = money(total);
+        return total;
+    };
+    wrapper.querySelectorAll('.sales-return-quantity').forEach((input) => input.addEventListener('input', calculate));
+    methodSelect.onchange = () => {
+        const requiresReference = methodSelect.selectedOptions[0]?.dataset.reference === '1';
+        referenceLabel.hidden = !requiresReference;
+        referenceInput.required = requiresReference;
+        if (!requiresReference) referenceInput.value = '';
+    };
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.onclick = (event) => { if (event.target === wrapper) wrapper.remove(); };
+    form.onsubmit = async (event) => {
+        event.preventDefault();
+        const items = [...wrapper.querySelectorAll('.sales-return-product')].map((row) => ({
+            transaction_item_id: Number(row.dataset.itemId),
+            quantity: Number(row.querySelector('.sales-return-quantity').value || 0).toFixed(4),
+            restock: row.querySelector('.sales-return-restock-input').checked,
+        })).filter((item) => Number(item.quantity) > 0);
+        if (!items.length || calculate() <= 0) {
+            toast('Isi jumlah pada minimal satu produk.', true);
+            return;
+        }
+
+        const button = wrapper.querySelector('.sales-return-submit');
+        button.disabled = true;
+        try {
+            const result = await api(`/operasional/penjualan/${Number(transaction.id)}/retur`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    items,
+                    payment_method_id: Number(methodSelect.value),
+                    reference_number: referenceInput.value.trim() || null,
+                    reason: form.elements.reason.value.trim(),
+                    idempotency_key: `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`,
+                }),
+            });
+            await refresh();
+            wrapper.innerHTML = `<div class="modal-box sales-return-success"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk retur</button><button type="button" class="secondary sales-return-done">Selesai</button></div>`;
+            wrapper.querySelector('.sales-return-print').onclick = () => window.open(`/operasional/retur/${Number(result.id)}/struk.pdf`, '_blank', 'noopener');
+            wrapper.querySelector('.sales-return-done').onclick = () => wrapper.remove();
+            toast('Retur dan refund berhasil diproses.');
+        } catch (error) {
+            toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    wrapper.querySelector('.sales-return-quantity')?.focus();
 }
 
 function formatCashEntryDate(value) {
@@ -1915,7 +2019,7 @@ function renderCashEntryHistory() {
 
     const rows = entries.map((entry) => {
         const isIncome = entry.type === 'income';
-        const automated = Boolean(entry.transaction_payment_id);
+        const automated = Boolean(entry.automated || entry.transaction_payment_id);
         return `<div class="tr finance-history-row">
             <span>${escapeHtml(formatCashEntryDate(entry.entry_date))}</span>
             <span><em class="finance-type ${isIncome ? 'income' : 'expense'}">${isIncome ? 'Pemasukan' : 'Pengeluaran'}</em></span>

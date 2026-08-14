@@ -646,6 +646,162 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_partially_return_product_refund_money_restock_and_print_receipt(): void
+    {
+        Carbon::setTestNow('2026-08-14 14:30:00');
+        [$transactionId, $product, $stockBeforeSale, $transactionTotal] = $this->paidProductTransaction('081290000074');
+        $cash = $this->paymentMethod('CASH');
+        $transactionItem = \DB::table('transaction_items')
+            ->where('transaction_id', $transactionId)
+            ->where('item_type', 'product')
+            ->firstOrFail();
+
+        $response = $this->actingAs($this->admin)
+            ->postJson("/operasional/penjualan/{$transactionId}/retur", [
+                'items' => [[
+                    'transaction_item_id' => $transactionItem->id,
+                    'quantity' => '1.0000',
+                    'restock' => true,
+                ]],
+                'payment_method_id' => $cash->id,
+                'reason' => 'Kemasan produk rusak saat diterima pelanggan.',
+                'idempotency_key' => 'return-product-partial-test',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('total_amount', (int) $product->selling_price);
+
+        $returnId = (int) $response->json('id');
+        $this->assertStringStartsWith('RTN-20260814-', $response->json('number'));
+        $this->assertDatabaseHas('sales_returns', [
+            'id' => $returnId,
+            'transaction_id' => $transactionId,
+            'refund_payment_method_id' => $cash->id,
+            'total_amount' => $product->selling_price,
+            'status' => 'posted',
+        ]);
+        $this->assertDatabaseHas('sales_return_items', [
+            'sales_return_id' => $returnId,
+            'transaction_item_id' => $transactionItem->id,
+            'product_id' => $product->id,
+            'quantity' => '1.0000',
+            'restocked' => true,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'id' => $transactionId,
+            'refunded_amount' => $product->selling_price,
+        ]);
+        $this->assertSame(
+            $stockBeforeSale - 1,
+            (float) \DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'in',
+            'source_type' => 'sales_return',
+            'source_id' => $returnId,
+            'reference' => $response->json('number'),
+        ]);
+
+        $sales = $this->actingAs($this->admin)->getJson('/operasional/penjualan')->assertOk()->json('data.0');
+        $this->assertSame($transactionTotal - (int) $product->selling_price, $sales['net_total']);
+        $this->assertSame(1.0, (float) collect($sales['items'])->firstWhere('id', $transactionItem->id)['returned_quantity']);
+        $this->assertCount(1, $sales['returns']);
+
+        $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+        $this->assertSame($transactionTotal - (int) $product->selling_price, $snapshot['dashboard']['revenue_today']);
+        $this->assertSame($transactionTotal, $snapshot['dashboard']['month_income']);
+        $this->assertSame((int) $product->selling_price, $snapshot['dashboard']['month_expense']);
+        $this->assertSame($transactionTotal - (int) $product->selling_price, $snapshot['dashboard']['month_balance']);
+        $this->assertTrue(collect($snapshot['cash_entries'])->contains(
+            fn (array $entry): bool => $entry['category'] === 'Retur penjualan' && (int) $entry['amount'] === (int) $product->selling_price,
+        ));
+
+        $this->actingAs($this->admin)
+            ->get("/operasional/retur/{$returnId}/struk.pdf")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->actingAs($this->admin)
+            ->postJson("/operasional/penjualan/{$transactionId}/retur", [
+                'items' => [[
+                    'transaction_item_id' => $transactionItem->id,
+                    'quantity' => '1.0000',
+                    'restock' => true,
+                ]],
+                'payment_method_id' => $cash->id,
+                'reason' => 'Kemasan produk rusak saat diterima pelanggan.',
+                'idempotency_key' => 'return-product-partial-test',
+            ])
+            ->assertOk()
+            ->assertJsonPath('idempotent_replay', true);
+        $this->assertSame(1, \DB::table('sales_returns')->count());
+    }
+
+    public function test_product_return_rejects_unauthorized_and_excess_quantities_atomically(): void
+    {
+        [$transactionId, $product, $stockBeforeSale] = $this->paidProductTransaction('081290000075');
+        $cash = $this->paymentMethod('CASH');
+        $transactionItem = \DB::table('transaction_items')
+            ->where('transaction_id', $transactionId)
+            ->where('item_type', 'product')
+            ->firstOrFail();
+        $payload = [
+            'items' => [[
+                'transaction_item_id' => $transactionItem->id,
+                'quantity' => '3.0000',
+                'restock' => true,
+            ]],
+            'payment_method_id' => $cash->id,
+            'reason' => 'Jumlah retur tidak valid.',
+        ];
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/penjualan/{$transactionId}/retur", $payload)
+            ->assertForbidden();
+
+        $this->actingAs($this->admin)
+            ->postJson("/operasional/penjualan/{$transactionId}/retur", $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('items');
+
+        $this->assertSame(0, \DB::table('sales_returns')->count());
+        $this->assertSame(0, (int) \DB::table('transactions')->where('id', $transactionId)->value('refunded_amount'));
+        $this->assertSame(
+            $stockBeforeSale - 2,
+            (float) \DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseMissing('stock_movements', ['source_type' => 'sales_return']);
+    }
+
+    public function test_product_return_can_refund_without_restocking_damaged_goods(): void
+    {
+        [$transactionId, $product, $stockBeforeSale] = $this->paidProductTransaction('081290000076');
+        $cash = $this->paymentMethod('CASH');
+        $transactionItem = \DB::table('transaction_items')
+            ->where('transaction_id', $transactionId)
+            ->where('item_type', 'product')
+            ->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->postJson("/operasional/penjualan/{$transactionId}/retur", [
+                'items' => [[
+                    'transaction_item_id' => $transactionItem->id,
+                    'quantity' => '1.0000',
+                    'restock' => false,
+                ]],
+                'payment_method_id' => $cash->id,
+                'reason' => 'Barang rusak dan tidak layak dijual kembali.',
+            ])
+            ->assertCreated();
+
+        $this->assertSame(
+            $stockBeforeSale - 2,
+            (float) \DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseHas('sales_return_items', ['restocked' => false]);
+        $this->assertDatabaseMissing('stock_movements', ['source_type' => 'sales_return']);
+    }
+
     public function test_cashier_product_order_persists_before_payment_and_survives_snapshot_refresh(): void
     {
         $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
@@ -1305,5 +1461,38 @@ class SalonOperationsTest extends TestCase
     private function paymentMethod(string $code): object
     {
         return \DB::table('payment_methods')->where('code', $code)->firstOrFail();
+    }
+
+    private function paidProductTransaction(string $phone): array
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $employee = $this->employee('EMP-SARI');
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $cash = $this->paymentMethod('CASH');
+        $stockBeforeSale = (float) $product->current_stock;
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '15:00', [
+                ['employee_id' => $employee->id, 'role' => 'primary'],
+            ]),
+        ], ['phone' => $phone])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+        \DB::table('reservation_items')->where('reservation_id', $reservationId)->update([
+            'work_status' => 'finished',
+            'finished_at' => now(),
+        ]);
+        $total = (int) $treatment->normal_price + ((int) $product->selling_price * 2);
+        $checkout = $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'product_items' => [[
+                'product_id' => $product->id,
+                'quantity' => '2.0000',
+            ]],
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'amount' => $total,
+            ]],
+        ])->assertCreated();
+
+        return [(int) $checkout->json('id'), $product, $stockBeforeSale, $total];
     }
 }
