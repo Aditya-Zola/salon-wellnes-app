@@ -22,10 +22,6 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (Throwable $exception): void {
-            if (getenv('VERCEL') === false) {
-                return;
-            }
-
             error_log('[vercel-laravel] '.json_encode([
                 'exception' => $exception::class,
                 'message' => $exception->getMessage(),
