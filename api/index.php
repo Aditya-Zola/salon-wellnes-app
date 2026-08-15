@@ -27,8 +27,10 @@ register_shutdown_function(static function (): void {
 // Vercel Functions only provide a writable /tmp directory. Laravel needs a
 // writable storage path for compiled Blade views and other temporary files.
 $storagePath = '/tmp/laravel-storage';
+$bootstrapCachePath = '/tmp/laravel-bootstrap-cache';
 
 foreach ([
+    $bootstrapCachePath,
     $storagePath.'/framework/cache/data',
     $storagePath.'/framework/sessions',
     $storagePath.'/framework/testing',
@@ -38,6 +40,18 @@ foreach ([
     if (! is_dir($directory)) {
         mkdir($directory, 0755, true);
     }
+}
+
+foreach ([
+    'APP_CONFIG_CACHE' => $bootstrapCachePath.'/config.php',
+    'APP_EVENTS_CACHE' => $bootstrapCachePath.'/events.php',
+    'APP_PACKAGES_CACHE' => $bootstrapCachePath.'/packages.php',
+    'APP_ROUTES_CACHE' => $bootstrapCachePath.'/routes.php',
+    'APP_SERVICES_CACHE' => $bootstrapCachePath.'/services.php',
+] as $key => $value) {
+    $_ENV[$key] = $value;
+    $_SERVER[$key] = $value;
+    putenv($key.'='.$value);
 }
 
 require __DIR__.'/../vendor/autoload.php';
