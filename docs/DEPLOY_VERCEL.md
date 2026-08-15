@@ -45,12 +45,13 @@ Setelah URL Vercel pertama tersedia, perbarui `APP_URL` lalu redeploy.
 
 ## Menyiapkan database
 
-Jalankan migration dari komputer lokal dengan kredensial cloud yang sudah
-dipasang sementara pada `.env` lokal:
+Salin `.env.example` menjadi `.env.tidb`, lalu isi kredensial cloud pada file
+tersebut. File ini diabaikan Git. Jalankan migration menggunakan environment
+khusus itu agar konfigurasi database lokal pada `.env` tidak berubah:
 
 ```bash
-php artisan migrate --force
-php artisan db:seed --force
+php artisan migrate --force --env=tidb
+php artisan db:seed --force --env=tidb
 ```
 
 Pastikan target benar-benar database demo sebelum menjalankan seeder. Jangan
