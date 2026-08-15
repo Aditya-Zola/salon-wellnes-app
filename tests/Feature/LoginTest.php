@@ -19,6 +19,17 @@ class LoginTest extends TestCase
             ->assertDontSee('name="role"', false);
     }
 
+    public function test_login_assets_use_https_when_the_request_is_forwarded_over_https(): void
+    {
+        $this->get('/login', [
+            'X-Forwarded-Proto' => 'https',
+        ])
+            ->assertOk()
+            ->assertSee('href="https://localhost/css/login.css', false)
+            ->assertSee('href="https://localhost/css/login-redesign.css', false)
+            ->assertSee('href="https://localhost/css/typography.css"', false);
+    }
+
     public function test_user_can_login_with_username_and_password_only(): void
     {
         $user = User::factory()->create([
