@@ -59,7 +59,13 @@ class SalonOperationsTest extends TestCase
             'notes' => 'Satu kunjungan, dua layanan',
         ])->assertCreated()
             ->assertJsonPath('status', 'scheduled')
-            ->assertJsonCount(2, 'items');
+            ->assertJsonCount(2, 'items')
+            ->assertJsonPath('reservation.customer_name', 'Pelanggan Multi Layanan')
+            ->assertJsonPath('reservation.status', 'scheduled')
+            ->assertJsonPath('reservation.items.0.treatment_name', $facial->name)
+            ->assertJsonPath('reservation.items.0.staff.0.employee_name', $dita->name)
+            ->assertJsonCount(2, 'reservation.items')
+            ->assertJsonCount(2, 'reservation.items.0.staff');
 
         $reservationId = (int) $response->json('id');
         $reservationItems = \DB::table('reservation_items')

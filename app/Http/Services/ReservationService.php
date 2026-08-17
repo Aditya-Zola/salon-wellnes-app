@@ -135,8 +135,11 @@ class ReservationService
                     'updated_at' => $now,
                 ]);
 
+                $createdStaff = [];
+
                 foreach ($candidate['input']['staff'] as $staff) {
                     $employeeId = (int) $staff['employee_id'];
+                    $employee = $employees->get($employeeId);
                     $assignmentKey = $itemIndex.':'.$employeeId;
                     $wasOverridden = isset($conflictAssignments[$assignmentKey]);
                     $isPrimary = $staff['role'] === 'primary';
@@ -155,15 +158,40 @@ class ReservationService
                         'created_at' => $now,
                         'updated_at' => $now,
                     ]);
+
+                    $createdStaff[] = [
+                        'employee_id' => $employeeId,
+                        'employee_code' => $employee->code,
+                        'employee_name' => $employee->name,
+                        'position' => $employee->position,
+                        'specialty' => $employee->specialty,
+                        'role' => $staff['role'],
+                        'conflict_overridden' => $wasOverridden,
+                        ...($wasOverridden ? [
+                            'conflict_override_reason' => $data['override_reason'],
+                            'conflict_overridden_at' => $now->toDateTimeString(),
+                        ] : []),
+                    ];
                 }
 
                 $createdItems[] = [
                     'id' => $itemId,
                     'treatment_id' => (int) $treatment->id,
                     'treatment_name' => $treatment->name,
+                    'duration_minutes' => (int) $treatment->duration_minutes,
+                    'normal_price' => (int) $treatment->normal_price,
+                    'unit_price' => $unitPrice,
+                    'discount_percent' => FixedPoint::normalizePercent(0),
+                    'discount_amount' => 0,
+                    'net_price' => $unitPrice,
+                    'scheduled_start_at' => $candidate['start']->format('Y-m-d H:i:s'),
+                    'scheduled_end_at' => $candidate['end']->format('Y-m-d H:i:s'),
                     'start_at' => $candidate['start']->toIso8601String(),
                     'end_at' => $candidate['end']->toIso8601String(),
                     'work_status' => 'waiting',
+                    'notes' => $candidate['input']['notes'] ?? null,
+                    'sort_order' => $itemIndex,
+                    'staff' => $createdStaff,
                 ];
             }
 
@@ -201,12 +229,53 @@ class ReservationService
                 ],
             );
 
+            $firstItem = $createdItems[0] ?? null;
+            $primaryStaff = collect($firstItem['staff'] ?? [])->firstWhere('role', 'primary')
+                ?? collect($firstItem['staff'] ?? [])->first();
+            $createdReservation = [
+                'id' => $reservationId,
+                'booking_code' => $bookingCode,
+                'queue_number' => $queueNumber,
+                'customer_id' => $customerId,
+                'customer_name' => $customer->name,
+                'is_member' => (bool) $customer->is_member,
+                'reservation_date' => $data['date'],
+                'reservation_time' => $reservationTime,
+                'source' => $data['source'],
+                'status' => 'scheduled',
+                'notes' => $data['notes'] ?? null,
+                'cancelled_at' => null,
+                'cancellation_reason' => null,
+                'created_at' => $now->toDateTimeString(),
+                'updated_at' => $now->toDateTimeString(),
+                'is_paid' => false,
+                'items' => $createdItems,
+                'product_items' => [],
+                'treatment_id' => $firstItem['treatment_id'] ?? null,
+                'treatment_name' => $firstItem['treatment_name'] ?? null,
+                'price' => $firstItem['unit_price'] ?? 0,
+                'therapist_id' => $primaryStaff['employee_id'] ?? null,
+                'therapist_name' => $primaryStaff['employee_name'] ?? null,
+            ];
+
+            if ($request->user()?->can('memberships.view') || $request->user()?->can('memberships.manage')) {
+                $createdReservation['phone'] = $customer->phone;
+            }
+
+            if ($request->user()?->can('cashier.view')
+                || $request->user()?->can('cashier.process')
+                || $request->user()?->can('finance.view')) {
+                $createdReservation['transaction_id'] = null;
+                $createdReservation['transaction_status'] = null;
+            }
+
             return [
                 'id' => $reservationId,
                 'booking_code' => $bookingCode,
                 'queue_number' => $queueNumber,
                 'status' => 'scheduled',
                 'items' => $createdItems,
+                'reservation' => $createdReservation,
             ];
         }, 3);
     }
