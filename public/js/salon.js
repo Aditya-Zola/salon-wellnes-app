@@ -186,6 +186,19 @@ async function refresh() {
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
 }
 
+function upsertReservation(reservation) {
+    if (!reservation?.id) return false;
+
+    state.reservations = [
+        ...array(state.reservations).filter((item) => Number(item.id) !== Number(reservation.id)),
+        reservation,
+    ];
+    renderReservations();
+    renderCashier();
+
+    return true;
+}
+
 function array(value) {
     return Array.isArray(value) ? value : [];
 }
@@ -2608,7 +2621,9 @@ async function submitReservation(payload) {
         document.getElementById('reservation-modal')?.classList.remove('open');
         resetReservationForm();
         toast(result.message || 'Reservasi berhasil disimpan.');
-        await refresh();
+        if (!upsertReservation(result.reservation)) {
+            await refresh();
+        }
     } catch (error) {
         if (error.status === 409 && error.data?.code === 'schedule_conflict') {
             pendingReservationPayload = payload;
