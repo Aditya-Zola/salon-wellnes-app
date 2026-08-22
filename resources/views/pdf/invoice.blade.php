@@ -7,7 +7,7 @@
         * { box-sizing: border-box; }
         body { color: #2d2926; font-family: DejaVu Sans, sans-serif; font-size: 10px; }
         .header { padding-bottom: 14px; border-bottom: 2px solid #765039; }
-        .brand-logo { display: block; width: 124px; height: auto; margin: 0 0 4px; }
+        .brand-logo { display: block; width: 170px; height: auto; margin: 0 0 8px; }
         .brand { margin: 0; color: #765039; font-size: 27px; font-weight: bold; letter-spacing: 1px; }
         .subtitle { display: none; }
         .title { margin: 22px 0 5px; color: #1f1b18; font-size: 17px; }

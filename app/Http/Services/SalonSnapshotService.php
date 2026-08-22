@@ -215,6 +215,7 @@ class SalonSnapshotService
                 'net_price',
                 'scheduled_start_at',
                 'scheduled_end_at',
+                'scheduled_ready_at',
                 'started_at',
                 'continued_at',
                 'ready_at',
@@ -274,6 +275,7 @@ class SalonSnapshotService
                 'net_price' => (int) $item->net_price,
                 'scheduled_start_at' => $item->scheduled_start_at,
                 'scheduled_end_at' => $item->scheduled_end_at,
+                'scheduled_ready_at' => $item->scheduled_ready_at,
                 'started_at' => $item->started_at,
                 'continued_at' => $item->continued_at,
                 'ready_at' => $item->ready_at,
@@ -610,6 +612,68 @@ class SalonSnapshotService
         ];
     }
 
+    public function salesReturnsPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $paymentMethod = null): array
+    {
+        abort_unless($this->can($user, 'sales.view'), 403);
+
+        $search = trim((string) $search);
+        $paymentMethod = trim((string) $paymentMethod);
+        $query = DB::table('sales_returns as sales_return')
+            ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
+            ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
+            ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
+            ->leftJoin('users as creator', 'creator.id', '=', 'sales_return.created_by')
+            ->where('sales_return.status', 'posted')
+            ->when($search !== '', function ($builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder->where(function ($nested) use ($like): void {
+                    $nested->where('sales_return.number', 'like', $like)
+                        ->orWhere('transaction.number', 'like', $like)
+                        ->orWhere('customer.name', 'like', $like);
+                });
+            })
+            ->when($paymentMethod !== '', fn ($builder) => $builder->where('method.name', $paymentMethod))
+            ->latest('sales_return.returned_at');
+
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'sales_return.id',
+            'sales_return.number',
+            'sales_return.total_amount',
+            'sales_return.reason',
+            'sales_return.reference_number',
+            'sales_return.returned_at',
+            'transaction.number as transaction_number',
+            'customer.name as customer_name',
+            'method.name as payment_method_name',
+            'creator.name as created_by_name',
+        ], 'page', $page);
+        $returns = $paginator->getCollection();
+
+        if ($returns->isNotEmpty()) {
+            $items = DB::table('sales_return_items')
+                ->whereIn('sales_return_id', $returns->pluck('id'))
+                ->orderBy('id')
+                ->get(['sales_return_id', 'product_name', 'quantity', 'amount'])
+                ->groupBy('sales_return_id');
+            $returns = $returns->map(function (object $salesReturn) use ($items): object {
+                $salesReturn->items = collect($items->get($salesReturn->id, []))->values();
+
+                return $salesReturn;
+            })->values();
+        }
+
+        return [
+            'data' => $returns,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+            'payment_options' => DB::table('payment_methods')->where('is_active', true)->orderBy('name')->pluck('name')->values(),
+        ];
+    }
+
     public function membersPage(Authenticatable $user, int $page = 1, int $perPage = 10, ?string $search = null): array
     {
         abort_unless($this->canAny($user, ['memberships.view', 'memberships.manage']), 403);
@@ -735,7 +799,7 @@ class SalonSnapshotService
 
     private function cashEntries(): mixed
     {
-        $manual = DB::table('cash_entries as entry')
+        return DB::table('cash_entries as entry')
             ->leftJoin('users as creator', 'creator.id', '=', 'entry.created_by')
             ->where('entry.status', 'posted')
             ->whereNull('entry.transaction_payment_id')
@@ -752,47 +816,12 @@ class SalonSnapshotService
                 'entry.entry_date',
                 'entry.created_at',
                 'creator.name as created_by_name',
-            ]);
-        $refunds = DB::table('sales_returns as sales_return')
-            ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
-            ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
-            ->leftJoin('users as creator', 'creator.id', '=', 'sales_return.created_by')
-            ->where('sales_return.status', 'posted')
-            ->where('method.is_cash', true)
-            ->latest('sales_return.returned_at')
-            ->limit(100)
-            ->get([
-                'sales_return.id',
-                'sales_return.number',
-                'sales_return.reason',
-                'sales_return.total_amount',
-                'sales_return.returned_at',
-                'transaction.number as transaction_number',
-                'creator.name as created_by_name',
             ])
-            ->map(fn (object $refund): object => (object) [
-                'id' => 'return-'.$refund->id,
-                'transaction_payment_id' => null,
-                'type' => 'expense',
-                'category' => 'Retur penjualan',
-                'description' => "{$refund->number} · {$refund->reason}",
-                'amount' => (int) $refund->total_amount,
-                'entry_date' => substr((string) $refund->returned_at, 0, 10),
-                'created_at' => $refund->returned_at,
-                'created_by_name' => $refund->created_by_name,
-                'transaction_number' => $refund->transaction_number,
-                'automated' => true,
-            ]);
-
-        return $manual
             ->map(function (object $entry): object {
                 $entry->automated = false;
 
                 return $entry;
             })
-            ->concat($refunds)
-            ->sortByDesc('created_at')
-            ->take(100)
             ->values();
     }
 
@@ -985,32 +1014,11 @@ class SalonSnapshotService
                 ->map(fn (object $item): array => ['category' => $item->category, 'total' => (int) $item->total])
                 ->values()
                 ->all();
-            $cashSales = (int) DB::table('transaction_payments as payment')
-                ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
-                ->where('payment.status', 'confirmed')
-                ->where('method.is_cash', true)
-                ->whereBetween('payment.paid_at', [$monthStart->startOfDay(), $today->endOfDay()])
-                ->sum('payment.amount');
-            $cashRefunds = (int) DB::table('sales_returns as sales_return')
-                ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
-                ->where('sales_return.status', 'posted')
-                ->where('method.is_cash', true)
-                ->whereBetween('sales_return.returned_at', [$monthStart->startOfDay(), $today->endOfDay()])
-                ->sum('sales_return.total_amount');
-            if ($cashRefunds > 0) {
-                array_unshift($expenseCategories, ['category' => 'Retur penjualan', 'total' => $cashRefunds]);
-                $expenseCategories = array_slice($expenseCategories, 0, 5);
-            }
             $data += [
-                'month_income' => $income + $cashSales,
-                'month_expense' => $expense + $cashRefunds,
-                'month_balance' => $income + $cashSales - $expense - $cashRefunds,
-                'month_cash_entry_count' => $count + (int) DB::table('sales_returns as sales_return')
-                    ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
-                    ->where('sales_return.status', 'posted')
-                    ->where('method.is_cash', true)
-                    ->whereBetween('sales_return.returned_at', [$monthStart->startOfDay(), $today->endOfDay()])
-                    ->count(),
+                'month_income' => $income,
+                'month_expense' => $expense,
+                'month_balance' => $income - $expense,
+                'month_cash_entry_count' => $count,
                 'month_expense_categories' => $expenseCategories,
             ];
         }

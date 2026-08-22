@@ -192,6 +192,7 @@ class CheckoutService
                 [
                     'reservation_id' => $reservationId,
                     'promotion_id' => $promotionId,
+                    'manual_discount_percent' => $data['manual_discount_percent'] ?? null,
                     'subtotal' => $subtotal,
                     'product_item_ids' => $productLines->map(fn (array $line): int => (int) $line['product']->id)->all(),
                     'discount_amount' => $discountAmount,
@@ -279,6 +280,12 @@ class CheckoutService
     private function resolveDiscount(array $data, object $customer, int $subtotal): array
     {
         $promotion = null;
+
+        if (isset($data['manual_discount_percent']) && FixedPoint::parse((string) $data['manual_discount_percent'], FixedPoint::PERCENT_SCALE) > 0) {
+            $percent = FixedPoint::normalizePercent((string) $data['manual_discount_percent']);
+
+            return [$percent, FixedPoint::percentOf($subtotal, $percent), null, 'percent'];
+        }
 
         if (! empty($data['promotion_id'])) {
             $promotion = DB::table('promotions')

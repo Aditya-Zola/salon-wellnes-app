@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/scheduling.css') }}?v={{ filemtime(public_path('css/scheduling.css')) }}">
     <style>
         @cannot('reservations.view') #reservasi,.go-reservation{display:none!important} @endcannot
         @cannot('cashier.view') #kasir{display:none!important} @endcannot
@@ -43,7 +44,7 @@
     @include('partials.internal-sidebar')
 
     <main>
-        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><label class="search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input placeholder="Cari pada halaman aktif..."></label>@can('products.view')<button type="button" class="bell go-stock" title="Buka daftar stok menipis" aria-label="Buka daftar stok menipis"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup>0</sup></button>@endcan</div></header>
+        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions">@can('products.view')<button type="button" class="bell go-stock" title="Buka daftar stok menipis" aria-label="Buka daftar stok menipis"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup>0</sup></button>@endcan</div></header>
 
         <section class="page active" id="dashboard">
             <div class="welcome"><div><small>SABTU, 1 AGUSTUS 2026</small><h2>Selamat pagi, Owner.</h2><p>Hari ini ada <b>8 reservasi</b> dan <b>2 stok produk</b> perlu diperhatikan.</p></div><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Buat reservasi</button></div>
@@ -73,11 +74,12 @@
                     <h2>Reservasi</h2>
                     <p>Kelola antrean pelanggan dan jadwal treatment.</p>
                 </div>
-                <div class="reservation-toolbar-actions"><button type="button" class="secondary" id="export-schedule"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor jadwal</button><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button></div>
+                <div class="reservation-toolbar-actions"><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button></div>
             </div>
             <div class="reservation-view-tabs" role="tablist" aria-label="Tampilan reservasi">
                 <button type="button" class="active" data-reservation-view="queue" role="tab">Antrean hari ini</button>
                 <button type="button" data-reservation-view="calendar" role="tab">Kalender</button>
+                <button type="button" data-reservation-view="attendance" role="tab">Kehadiran therapist</button>
             </div>
             <div class="calendar-controls card">
                 <div class="calendar-period">
@@ -102,19 +104,24 @@
                 </div>
                 <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar" aria-label="Kalender reservasi mingguan"></div></div>
             </div>
+            <div id="reservation-attendance-view" class="reservation-view hidden"><div class="card therapist-attendance-page"><div id="therapist-attendance" aria-live="polite"></div></div></div>
         </section>
 
-        <section class="page" id="kasir"><div class="cashier-grid cashier-awaiting-selection"><div class="card"><div class="card-head"><div><h3>Pilih antrean</h3><p>Pilih satu reservasi untuk membuka transaksi dan pembayaran.</p></div></div><div id="cashier-queue"></div></div><div class="card receipt empty" id="cashier-receipt" hidden><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih antrean terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambahkan</button><p class="cashier-add-note">Pilih produk retail atau treatment tambahan sebelum pembayaran.</p><div class="promo"><b class="material-symbols-outlined">campaign</b><span><strong>Diskon membership</strong><small>Event tersedia untuk member</small></span><select id="discount" disabled><option value="0">Tidak menggunakan diskon</option></select></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon member</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div></div></section>
+        <section class="page" id="kasir"><div class="cashier-grid cashier-awaiting-selection"><div class="card"><div class="card-head"><div><h3>Pilih antrean</h3><p>Pilih satu reservasi untuk membuka transaksi dan pembayaran.</p></div></div><div id="cashier-queue"></div></div><div class="card receipt empty" id="cashier-receipt" hidden><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih antrean terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambahkan</button><p class="cashier-add-note">Pilih produk retail atau treatment tambahan sebelum pembayaran.</p><div class="promo"><b class="material-symbols-outlined">campaign</b><span><strong>Diskon</strong><small>Gunakan event atau masukkan persentase manual.</small></span><select id="discount" disabled><option value="0">Tidak menggunakan event</option></select><input id="manual-discount" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="Manual %" disabled aria-label="Diskon manual persen"></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div></div></section>
 
         <section class="page" id="penjualan">
+            <div class="sales-view-tabs" role="tablist" aria-label="Tampilan penjualan">
+                <button type="button" class="active" data-sales-view="sales" role="tab">Riwayat penjualan</button>
+                <button type="button" data-sales-view="returns" role="tab">Riwayat retur</button>
+            </div>
             <div class="toolbar sales-toolbar">
-                <div><h3>Riwayat penjualan</h3><p>Invoice lunas, retur produk, dan struk pengembalian dana.</p></div>
+                <div><h3 id="sales-history-title">Riwayat penjualan</h3><p id="sales-history-subtitle">Invoice lunas dan cetak ulang nota.</p></div>
                 <div class="sales-filters"><input id="sales-search" type="search" placeholder="Cari invoice atau pelanggan..." aria-label="Cari riwayat penjualan"><select id="sales-payment-filter" aria-label="Filter metode pembayaran"><option value="">Semua pembayaran</option></select></div>
             </div>
             <div class="card sales-history-card"><div class="table sales-history-table" id="sales-history"></div><div class="table-pagination" id="sales-pagination"></div></div>
         </section>
 
-        <section class="page" id="treatment"><div class="toolbar"><div><h3>Daftar treatment <b id="treatment-count">0</b></h3><p>Filter jenis layanan akan tersedia saat klasifikasi treatment sudah ditetapkan.</p></div><button class="primary" id="open-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div><div class="treatment-grid" id="treatment-grid"></div></section>
+        <section class="page" id="treatment"><div class="card treatment-list-card"><div class="toolbar treatment-toolbar"><div><h3>Daftar treatment <b id="treatment-count">0</b></h3><p>Cari atau kelola menu treatment dan resepnya.</p></div><div class="page-toolbar-actions"><label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="treatment-search" type="search" placeholder="Cari treatment..." aria-label="Cari treatment"></label><button class="primary" id="open-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div></div><div class="treatment-grid treatment-card-grid" id="treatment-grid"></div></div></section>
 
         <section class="page" id="membership">
             <div class="metrics three"><article><i class="material-symbols-outlined clay">workspace_premium</i><div><small>Member aktif</small><strong id="member-count">0</strong><span id="new-member-count">0 bulan ini</span></div></article><article><i class="material-symbols-outlined gold">campaign</i><div><small>Event aktif</small><strong id="promotion-count">0</strong><span id="ending-promotion-count">0 berakhir bulan ini</span></div></article><article><i class="material-symbols-outlined green">payments</i><div><small>Transaksi member</small><strong id="member-transaction-percent">0%</strong><span>Dari total bulan ini</span></div></article></div>
@@ -138,6 +145,7 @@
                 </div>
                 <div class="stock-toolbar-actions">
                     <div id="stock-list-actions" class="stock-action-group">
+                        <label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stock-search" type="search" placeholder="Cari produk..." aria-label="Cari produk"></label>
                         <button class="secondary" id="open-stocktake">Stok opname</button>
                         <button class="primary" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
                     </div>
@@ -152,7 +160,7 @@
             </div>
         </section>
 
-        <section class="page" id="keuangan"><div class="metrics"><article><i class="material-symbols-outlined green">trending_up</i><div><small>Pemasukan kas</small><strong id="finance-income">Rp0</strong><span>Penjualan tunai & kas masuk</span></div></article><article><i class="material-symbols-outlined rose">trending_down</i><div><small>Pengeluaran kas</small><strong id="finance-expense">Rp0</strong><span>Biaya & refund tunai</span></div></article><article><i class="material-symbols-outlined gold">account_balance_wallet</i><div><small>Saldo kas</small><strong id="finance-balance">Rp0</strong><span id="finance-period">Bulan berjalan</span></div></article><article><i class="material-symbols-outlined clay">receipt_long</i><div><small>Catatan kas</small><strong id="finance-cash-entry-count">0</strong><span id="finance-cash-entry-note">Bulan berjalan</span></div></article></div><div class="two-column"><div class="card"><div class="card-head"><div><h3>Ringkasan kas</h3><p>Arus kas bersih termasuk penjualan dan refund tunai.</p></div></div><div class="cash-bars" id="cash-bars"></div></div><div class="card"><div class="card-head"><div><h3>Pengeluaran per kategori</h3><p>Pengeluaran kas bulan berjalan</p></div></div><div class="cash-bars finance-category-bars" id="finance-category-bars"></div></div></div><div class="card finance-history-card"><div class="card-head"><div><h3>Data kas</h3><p>Catat modal, pemasukan, pembelian, biaya, dan pantau refund tunai.</p></div><button class="primary" id="open-cash-entry"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input kas</button></div><div class="finance-history-filters"><input id="cash-entry-from" type="date" aria-label="Tanggal awal"><input id="cash-entry-to" type="date" aria-label="Tanggal akhir"><select id="cash-entry-type-filter" aria-label="Filter jenis arus kas"><option value="">Semua jenis</option><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select><input id="cash-entry-search" type="search" placeholder="Cari kategori atau deskripsi..." aria-label="Cari data kas"></div><div class="table finance-history-table" id="cash-entry-history"></div></div></section>
+        <section class="page" id="keuangan"><div class="metrics"><article><i class="material-symbols-outlined green">trending_up</i><div><small>Pemasukan kas</small><strong id="finance-income">Rp0</strong><span>Input manual</span></div></article><article><i class="material-symbols-outlined rose">trending_down</i><div><small>Pengeluaran kas</small><strong id="finance-expense">Rp0</strong><span>Input manual</span></div></article><article><i class="material-symbols-outlined gold">account_balance_wallet</i><div><small>Saldo kas</small><strong id="finance-balance">Rp0</strong><span id="finance-period">Bulan berjalan</span></div></article><article><i class="material-symbols-outlined clay">receipt_long</i><div><small>Catatan kas</small><strong id="finance-cash-entry-count">0</strong><span id="finance-cash-entry-note">Bulan berjalan</span></div></article></div><div class="two-column"><div class="card"><div class="card-head"><div><h3>Ringkasan kas</h3><p>Rekap dari seluruh input kas manual.</p></div></div><div class="cash-bars" id="cash-bars"></div></div><div class="card"><div class="card-head"><div><h3>Pengeluaran per kategori</h3><p>Pengeluaran kas manual bulan berjalan</p></div></div><div class="cash-bars finance-category-bars" id="finance-category-bars"></div></div></div><div class="card finance-history-card"><div class="card-head"><div><h3>Data kas</h3><p>Catat modal, pemasukan, pembelian, dan biaya operasional secara manual.</p></div><button class="primary" id="open-cash-entry"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input kas</button></div><div class="finance-history-filters"><input id="cash-entry-from" type="date" aria-label="Tanggal awal"><input id="cash-entry-to" type="date" aria-label="Tanggal akhir"><select id="cash-entry-type-filter" aria-label="Filter jenis arus kas"><option value="">Semua jenis</option><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select><input id="cash-entry-search" type="search" placeholder="Cari kategori atau deskripsi..." aria-label="Cari data kas"></div><div class="table finance-history-table" id="cash-entry-history"></div></div></section>
 
         <section class="page" id="penggajian"><div class="toolbar"><div><h3>Periode Agustus 2026</h3><p>Data dapat diubah sebelum ditutup</p></div><div class="payroll-toolbar-actions"><p>Komisi diambil otomatis dari layanan yang sudah dibayar.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input penggajian</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Gaji pokok, bonus, lembur, serta potongan dicatat manual. Komisi dihitung otomatis dari layanan yang sudah dibayar pada periode tersebut.</div></section>
 
@@ -202,6 +210,7 @@
         'view_sales' => auth()->user()->can('sales.view'),
         'refund_sales' => auth()->user()->can('cashier.refund'),
         'view_memberships' => auth()->user()->can('memberships.view') || auth()->user()->can('memberships.manage'),
+        'manage_therapist_attendance' => auth()->user()->can('employees.update'),
     ];
 @endphp
 <div id="toast"></div>

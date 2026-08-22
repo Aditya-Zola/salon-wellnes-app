@@ -1,0 +1,386 @@
+.therapist-attendance-modal .modal-box { width: min(430px, calc(100vw - 32px)); }
+.therapist-attendance-page { max-width: 860px; }
+.therapist-attendance-head { align-items: end; }
+.therapist-attendance-head label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.therapist-attendance-head input { min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); font: inherit; font-size: 12px; }
+.therapist-attendance-table { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.therapist-attendance-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 16px; min-height: 58px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.therapist-attendance-row:last-child { border-bottom: 0; }
+.therapist-attendance-row > span b, .therapist-attendance-row > span small { display: block; }
+.therapist-attendance-row > span b { font-size: 12px; }
+.therapist-attendance-row > span small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.therapist-attendance-row select { min-height: 35px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; font: inherit; font-size: 12px; }
+.therapist-attendance-table-head { min-height: 38px; padding: 7px 14px; background: #faf9f8; color: var(--muted); font-size: 10px; font-weight: 700; }
+.therapist-attendance-page form > footer { display: flex; justify-content: flex-end; padding: 16px 0 0; }
+.therapist-attendance-modal .modal-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.therapist-attendance-modal-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.therapist-attendance-form-list { display: grid; gap: 2px; margin-top: 14px; }
+.therapist-attendance-form-list label { display: flex; align-items: center; gap: 9px; padding: 9px 4px; border-bottom: 1px solid var(--line); font-size: 12px; cursor: pointer; }
+.therapist-attendance-form-list input { width: 16px; height: 16px; margin: 0; accent-color: #765039; }
+
+#manual-discount { width: 94px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.recipe-modal { width: min(680px, calc(100vw - 32px)); }
+.recipe-modal .modal-head { padding: 20px 24px 18px; }
+.recipe-modal .modal-head h2 { font-size: 20px; }
+.recipe-modal .modal-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.recipe-product-search { display: block; margin: 16px 24px 0; color: #5e5b68; font-size: 10px; font-weight: 700; }
+.recipe-product-search input { display: block; width: 100%; height: 38px; margin-top: 6px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font: inherit; font-size: 12px; }
+.recipe-checklist { display: grid; gap: 0; max-height: min(390px, calc(100vh - 260px)); margin: 14px 24px 16px; padding: 0; border: 1px solid #e8e6ef; border-radius: 8px; background: #fff; }
+.recipe-product { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(172px, .42fr); align-items: center; gap: 12px; min-height: 68px; padding: 10px 12px; border: 0; border-bottom: 1px solid #efedf4; border-radius: 0; background: #fff; }
+.recipe-product:last-child { border-bottom: 0; }
+.recipe-product.selected { background: #f7f5ff; box-shadow: inset 3px 0 #7656e7; }
+.recipe-modal .recipe-product-toggle-wrap { display: grid; place-items: center; width: 22px; height: 22px; margin: 0; }
+.recipe-modal .recipe-product-toggle { width: 17px; height: 17px; margin: 0; cursor: pointer; accent-color: var(--purple); }
+.recipe-product-info b { font-size: 11px; }
+.recipe-product-info small { margin-top: 3px; font-size: 9px; }
+.recipe-modal .recipe-product-quantity { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; margin: 0; }
+.recipe-modal .recipe-product-quantity-input { height: 34px; min-height: 34px; margin: 0; padding: 0 10px; border: 1px solid #dedbe8; border-radius: 6px; background: #fff; font-size: 11px; }
+.recipe-modal .recipe-product-quantity small { min-width: 24px; color: #69657a; font-size: 9px; font-weight: 700; }
+.recipe-modal footer { padding: 15px 24px 20px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.page-toolbar-actions { display: flex; align-items: center; gap: 10px; }
+.page-search { display: flex; align-items: center; gap: 7px; min-width: 205px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
+.page-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); }
+.stock-action-group .page-search { margin-right: 2px; }
+.treatment-list-card { padding: 0; overflow: hidden; }
+.treatment-list-card .treatment-toolbar { margin: 0; padding: 14px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+.treatment-card-grid { padding: 14px; margin: 0; }
+
+/* Queue dashboard: keep the code, time, customer, and status in stable columns. */
+#queue-short .queue-row {
+    display: grid;
+    grid-template-columns: 88px 52px minmax(0, 1fr) auto 18px;
+    align-items: center;
+    gap: 12px;
+    min-height: 64px;
+    padding: 12px 4px;
+}
+#queue-short .queue-code {
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 750;
+    letter-spacing: -.02em;
+    white-space: nowrap;
+}
+#queue-short .queue-time {
+    color: var(--purple);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+#queue-short .queue-row > span:nth-of-type(1) { min-width: 0; }
+#queue-short .queue-row > span:nth-of-type(1) b,
+#queue-short .queue-row > span:nth-of-type(1) small {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#queue-short .queue-row > span:nth-of-type(1) b { font-size: 12px; }
+#queue-short .queue-row > span:nth-of-type(1) small {
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 10px;
+}
+#queue-short .queue-status {
+    justify-self: end;
+    margin: 0;
+    white-space: nowrap;
+    font-size: 9px;
+}
+#queue-short .material-symbols-outlined {
+    color: #9994ae;
+    font-size: 18px;
+}
+
+@media (max-width: 700px) {
+    .page-toolbar-actions { width: 100%; flex-wrap: wrap; }
+    .page-search { flex: 1 1 100%; }
+    .recipe-modal .modal-head { padding: 17px 18px; }
+    .recipe-product-search { margin: 14px 18px 0; }
+    .recipe-checklist { margin: 12px 18px 14px; }
+    .recipe-product { grid-template-columns: 30px minmax(0, 1fr); gap: 8px; padding: 10px; }
+    .recipe-modal .recipe-product-quantity { grid-column: 2; }
+    .therapist-attendance-head { align-items: flex-start; flex-direction: column; }
+    .therapist-attendance-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 10px; }
+    .recipe-modal footer { padding: 14px 18px 18px; }
+    #queue-short .queue-row { grid-template-columns: 78px 46px minmax(0, 1fr) 16px; gap: 8px; }
+    #queue-short .queue-status { display: none; }
+}
+
+/*
+ * Skala tipografi aplikasi.
+ * Sebelumnya banyak komponen memakai 8–10px, sementara judul dan angka
+ * langsung meloncat ke 20px+. Lapisan ini menyatukan tiga tingkat utama:
+ * isi 13–14px, keterangan 11–12px, dan judul 18–26px.
+ */
+:root {
+    --app-body-size: 14px;
+    --app-meta-size: 12px;
+    --app-label-size: 11px;
+    --app-section-size: 18px;
+}
+
+body { font-size: var(--app-body-size); line-height: 1.45; }
+header {
+    height: 74px;
+    margin-bottom: 16px;
+}
+header h1 { font-size: 22px; line-height: 1.2; }
+header p { font-size: 11px; line-height: 1.35; }
+#reservasi .reservation-calendar-toolbar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    justify-content: flex-end;
+    margin: 0;
+}
+#reservasi .reservation-calendar-toolbar > div:first-child { display: none; }
+#reservasi .reservation-view-tabs {
+    min-height: 52px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+#reservasi { position: relative; }
+.reservation-calendar-toolbar p,
+.toolbar p,
+.card-head p,
+.analytics-head p { font-size: var(--app-meta-size); line-height: 1.45; }
+.reservation-calendar-toolbar h2 { font-size: 22px; line-height: 1.25; }
+.card-head h3,
+.toolbar h3,
+.analytics-head h3 { font-size: var(--app-section-size); line-height: 1.3; }
+
+main input,
+main select,
+main textarea,
+main button,
+.primary,
+.secondary { font-size: 13px; }
+main label,
+.quick-fields label,
+.payment-source-details label { font-size: var(--app-label-size); }
+.table .th,
+.sales-history-table .th,
+.finance-history-table .th { font-size: var(--app-label-size); }
+.table .tr:not(.th),
+.sales-history-table .tr:not(.th),
+.finance-history-table .tr:not(.th),
+.member-row,
+.queue-row { font-size: 13px; }
+.table .tr:not(.th) small,
+.sales-history-table .tr:not(.th) small,
+.finance-history-table .tr:not(.th) small,
+.member-row small { font-size: var(--app-label-size); }
+
+/* Dashboard dan daftar operasional. */
+.metrics small,
+.payment-revenue-item small { font-size: 12px; }
+.metrics span,
+.payment-revenue-item span,
+.treatment-stock-alert small { font-size: var(--app-label-size); }
+.metrics strong,
+.payment-revenue-item strong { font-size: 22px; }
+.queue-status,
+.treatment-stock-alert em,
+.sales-payment,
+.finance-type,
+.finance-source { font-size: var(--app-label-size); }
+#queue-short .queue-code { font-size: 13px; }
+#queue-short .queue-time { font-size: 13px; }
+#queue-short .queue-row > span:nth-of-type(1) b { font-size: 13px; }
+#queue-short .queue-row > span:nth-of-type(1) small { font-size: var(--app-label-size); }
+
+/* Kalender dan kehadiran therapist: tetap padat, tetapi terbaca pada layar kerja. */
+.calendar-period strong,
+.calendar-filters input,
+.calendar-filters select,
+.calendar-today,
+.reservation-view-tabs button,
+.calendar-mode-tabs button { font-size: 13px; }
+.calendar-week-hint,
+.calendar-day-view-head small,
+.calendar-day-view-head .secondary { font-size: var(--app-meta-size); }
+.calendar-day-view-head b { font-size: 16px; }
+.therapist-attendance-group > strong { font-size: 13px; }
+.therapist-attendance-group span { font-size: var(--app-meta-size); }
+.therapist-attendance-group button { font-size: var(--app-label-size); }
+.therapist-day-corner,
+.therapist-day-time,
+.calendar-hour { font-size: var(--app-label-size); }
+.therapist-day-head b { font-size: 13px; }
+.therapist-day-head small { font-size: var(--app-label-size); }
+.calendar-event .calendar-event-main time,
+.therapist-day-event.calendar-event b { font-size: 12px; }
+.calendar-event .calendar-event-main b { font-size: 12px; }
+.calendar-event > small,
+.therapist-day-event.calendar-event small { font-size: 10px; }
+.calendar-event.status-paid::after { font-size: 9px; }
+
+/* Header kolom cukup menampilkan nama; jeda kerja divisualkan pada blok jadwalnya. */
+.therapist-day-head {
+    display: flex;
+    align-items: center;
+    min-height: 42px;
+}
+.therapist-day-head.is-off {
+    background: #fbf1f1;
+    color: #a84949;
+}
+.therapist-day-head.is-off::after {
+    content: "Libur";
+    margin-left: auto;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: #f5dede;
+    color: #a84949;
+    font-size: 10px;
+    font-weight: 700;
+}
+.therapist-day-event.calendar-event {
+    --service-ratio: 100%;
+    --service-bg: #f0ecff;
+    --rest-bg: #faf8f6;
+    background: linear-gradient(to bottom, var(--service-bg) 0 var(--service-ratio), var(--rest-bg) var(--service-ratio) 100%);
+}
+.therapist-day-event.status-arrived { --service-bg: #eaf6ff; }
+.therapist-day-event.status-in_service { --service-bg: #fff5df; }
+.therapist-day-event.status-completed,
+.therapist-day-event.status-paid { --service-bg: #ecfaef; }
+.therapist-day-event.status-cancelled { --service-bg: #fff0f0; }
+.therapist-day-event.calendar-event small { color: #625f70; }
+.therapist-day-event .calendar-event-treatment {
+    display: block;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.therapist-day-event .calendar-rest-label {
+    position: absolute;
+    right: 6px;
+    bottom: 5px;
+    left: 6px;
+    display: flex;
+    justify-content: center;
+    padding: 3px 5px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: #e4ebff;
+    color: #3153c5;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Garis kalender dibuat lebih tegas agar kolom therapist dan jam mudah dipindai. */
+.therapist-day-calendar { box-shadow: inset 0 0 0 1px #d6dce6; }
+.therapist-day-corner,
+.therapist-day-head { border-bottom-color: #cfd6e1; }
+.therapist-day-head,
+.therapist-create-slot,
+.therapist-grid-slot,
+.therapist-off-slot { border-left-color: #d6dce6; }
+.therapist-day-time,
+.therapist-create-slot,
+.therapist-grid-slot,
+.therapist-off-slot { border-bottom-color: #dce2ea; }
+.therapist-day-time { border-right: 1px solid #d6dce6; }
+.therapist-grid-slot,
+.therapist-off-slot {
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+    border-left: 1px solid #d6dce6;
+    border-bottom: 1px solid #dce2ea;
+}
+.therapist-off-slot { background: transparent; }
+.therapist-off-slot { border-bottom: 0; }
+.therapist-off-column {
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgb(200 91 91 / .055), rgb(200 91 91 / .022));
+    box-shadow: inset 10px 0 18px -18px rgb(171 66 66 / .48), inset -10px 0 18px -18px rgb(171 66 66 / .38);
+}
+
+/* Penjualan dan retur berbagi satu area agar audit tetap dekat dengan invoice asal. */
+.sales-view-tabs { display: flex; gap: 8px; margin: 0 0 10px; }
+.sales-view-tabs button {
+    min-height: 38px;
+    padding: 8px 14px;
+    border: 1px solid var(--ui-line);
+    border-radius: 7px;
+    background: #fff;
+    color: #626777;
+    font: 650 12px/1.2 inherit;
+    cursor: pointer;
+}
+.sales-view-tabs button.active { border-color: var(--ui-purple); background: var(--ui-purple); color: #fff; }
+.sales-return-amount { color: #a23f36; }
+#penjualan { position: relative; }
+#penjualan .sales-toolbar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+#penjualan .sales-toolbar > div:first-child { display: none; }
+#penjualan .sales-view-tabs { min-height: 42px; align-items: center; margin-bottom: 12px; }
+
+@media (max-width: 700px) {
+    #penjualan .sales-toolbar { position: static; margin: 0 0 10px; }
+    #penjualan .sales-view-tabs { min-height: 0; }
+}
+
+/* Form, resep, kasir, dan dialog. */
+.quick-fields input,
+.quick-fields select,
+.payment-source-details select,
+.payment-source-details input,
+.sales-filters input,
+.sales-filters select,
+.finance-history-filters input,
+.finance-history-filters select { font-size: 13px; }
+.recipe-product-search,
+.recipe-product-info small,
+.recipe-modal .recipe-product-quantity small,
+.recipe-modal .recipe-product-quantity-input { font-size: var(--app-label-size); }
+.recipe-product-info b { font-size: 13px; }
+.recipe-modal .modal-head p,
+.recipe-info-modal .modal-head p,
+.cashier-cart .cashier-add-note,
+.cashier-customer-summary small,
+.cashier-payment-note,
+.inline-payment-head p { font-size: var(--app-meta-size); }
+.cashier-customer-summary strong,
+.payment-source-details h4,
+.payment-destination b { font-size: 13px; }
+.payment-destination small { font-size: var(--app-label-size); }
+.payment-method-choices h3 { font-size: 15px; }
+.payment-mode,
+.payment-source { font-size: 12px; }
+
+@media (max-width: 700px) {
+    header { height: 68px; margin-bottom: 14px; }
+    header h1 { font-size: 20px; }
+    .reservation-calendar-toolbar h2 { font-size: 20px; }
+    .card-head h3,
+    .toolbar h3,
+    .analytics-head h3 { font-size: 17px; }
+    #reservasi .reservation-calendar-toolbar {
+        position: static;
+        width: 100%;
+        margin: 0 0 10px;
+    }
+    #reservasi .reservation-view-tabs { min-height: 0; margin-bottom: 10px; }
+}
