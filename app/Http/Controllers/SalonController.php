@@ -75,6 +75,24 @@ class SalonController extends Controller
         ));
     }
 
+    public function salesReturnsPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'payment_method' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return response()->json($this->snapshots->salesReturnsPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+            $data['search'] ?? null,
+            $data['payment_method'] ?? null,
+        ));
+    }
+
     public function membersPage(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -111,6 +129,7 @@ class SalonController extends Controller
                 'item.treatment_name',
                 'item.scheduled_start_at',
                 'item.scheduled_end_at',
+                'item.scheduled_ready_at',
                 'item.unit_price',
                 'customer.name as customer_name',
                 'reservation.queue_number',
@@ -146,6 +165,7 @@ class SalonController extends Controller
                 $item->treatment_name,
                 $item->scheduled_start_at ? CarbonImmutable::parse($item->scheduled_start_at)->format('H:i') : '-',
                 $item->scheduled_end_at ? CarbonImmutable::parse($item->scheduled_end_at)->format('H:i') : '-',
+                $item->scheduled_ready_at ? CarbonImmutable::parse($item->scheduled_ready_at)->format('H:i') : '-',
                 $therapists ?: '-',
                 $item->payment_status === 'paid' ? 'Lunas' : 'Belum dibayar',
                 $payments ?: '-',
@@ -160,9 +180,9 @@ class SalonController extends Controller
             $filename,
             'Jadwal '.CarbonImmutable::parse($date)->translatedFormat('d F Y'),
             'Jadwal',
-            ['No', 'Antrean', 'Nama pelanggan', 'Treatment', 'Mulai', 'Selesai', 'Terapis', 'Status bayar', 'Metode bayar', 'Nominal', 'Invoice'],
+            ['No', 'Antrean', 'Nama pelanggan', 'Treatment', 'Mulai', 'Selesai (+ persiapan)', 'Terapis siap', 'Terapis', 'Status bayar', 'Metode bayar', 'Nominal', 'Invoice'],
             $rows,
-            [9],
+            [10],
         );
     }
 
@@ -289,6 +309,93 @@ class SalonController extends Controller
             'employees' => $employees,
             'therapists' => $employees,
         ]);
+    }
+
+    public function therapistAttendance(Request $request): JsonResponse
+    {
+        $data = $request->validate(['date' => ['required', 'date_format:Y-m-d']]);
+
+        $attendance = DB::table('employees as employee')
+            ->leftJoin('employee_attendances as attendance', function ($join) use ($data): void {
+                $join->on('attendance.employee_id', '=', 'employee.id')
+                    ->where('attendance.attendance_date', '=', $data['date']);
+            })
+            ->where('employee.active', true)
+            ->where('employee.is_service_provider', true)
+            ->orderBy('employee.name')
+            ->get([
+                'employee.id as employee_id',
+                'employee.name',
+                'employee.specialty',
+                'attendance.status',
+                'attendance.notes',
+            ])
+            ->map(fn (object $employee): array => [
+                'employee_id' => (int) $employee->employee_id,
+                'name' => $employee->name,
+                'specialty' => $employee->specialty,
+                // Belum diatur berarti dianggap masuk, sehingga tidak mengubah
+                // alur reservasi yang sudah berjalan.
+                'status' => $employee->status ?: 'present',
+                'notes' => $employee->notes,
+            ])
+            ->values();
+
+        return response()->json([
+            'date' => $data['date'],
+            'therapists' => $attendance,
+            'present' => $attendance->where('status', 'present')->values(),
+            'off' => $attendance->where('status', 'off')->values(),
+        ]);
+    }
+
+    public function updateTherapistAttendance(Request $request, int $employee): JsonResponse
+    {
+        $data = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'status' => ['required', Rule::in(['present', 'off'])],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+        $therapist = DB::table('employees')
+            ->where('id', $employee)
+            ->where('active', true)
+            ->where('is_service_provider', true)
+            ->first(['id', 'name']);
+        abort_unless($therapist, 404, 'Therapist aktif tidak ditemukan.');
+
+        if ($data['status'] === 'off') {
+            $hasSchedule = DB::table('reservation_item_staff as staff')
+                ->join('reservation_items as item', 'item.id', '=', 'staff.reservation_item_id')
+                ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
+                ->where('staff.employee_id', $employee)
+                ->where('reservation.reservation_date', $data['date'])
+                ->whereNotIn('reservation.status', ['cancelled', 'completed'])
+                ->whereNotIn('item.work_status', ['cancelled', 'finished'])
+                ->exists();
+            abort_if($hasSchedule, 422, 'Therapist masih memiliki jadwal aktif; pindahkan atau batalkan jadwal terlebih dahulu.');
+        }
+
+        $now = now();
+        DB::table('employee_attendances')->updateOrInsert(
+            ['employee_id' => $employee, 'attendance_date' => $data['date']],
+            [
+                'status' => $data['status'],
+                'notes' => ($data['notes'] ?? null) ? trim($data['notes']) : null,
+                'updated_by' => $request->user()?->id,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ],
+        );
+        $this->logger->log(
+            $request,
+            'therapist.attendance_updated',
+            'employee',
+            $employee,
+            "Menandai {$therapist->name} sebagai ".($data['status'] === 'off' ? 'libur' : 'masuk'),
+            ['date' => $data['date'], 'status' => $data['status']],
+        );
+
+        return response()->json(['message' => 'Status kehadiran therapist diperbarui.']);
     }
 
     public function storeReservationItem(StoreReservationItemRequest $request, int $reservation): JsonResponse
@@ -1010,8 +1117,11 @@ class SalonController extends Controller
             ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
             : null;
 
+        $reasonLines = max(1, (int) ceil(strlen((string) $return->reason) / 42));
+        $receiptHeight = max(440, 370 + ($items->count() * 38) + ($reasonLines * 12));
+
         return Pdf::loadView('pdf.sales-return', compact('return', 'items', 'logoDataUri'))
-            ->setPaper('a4')
+            ->setPaper([0, 0, 164.41, $receiptHeight])
             ->stream($return->number.'.pdf');
     }
 

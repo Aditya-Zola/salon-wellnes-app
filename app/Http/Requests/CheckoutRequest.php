@@ -26,6 +26,7 @@ class CheckoutRequest extends FormRequest
             'reservation_id' => ['required', 'integer', 'exists:reservations,id'],
             'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
             'discount_percent' => ['nullable', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
+            'manual_discount_percent' => ['nullable', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
             'product_items' => ['nullable', 'array', 'max:50'],
             'product_items.*.product_id' => ['required', 'integer', 'distinct', 'exists:products,id'],
             'product_items.*.quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
@@ -44,14 +45,16 @@ class CheckoutRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            if ($validator->errors()->has('discount_percent') || ! $this->filled('discount_percent')) {
-                return;
-            }
+            foreach (['discount_percent', 'manual_discount_percent'] as $field) {
+                if ($validator->errors()->has($field) || ! $this->filled($field)) {
+                    continue;
+                }
 
-            $percent = FixedPoint::parse((string) $this->input('discount_percent'), FixedPoint::PERCENT_SCALE);
+                $percent = FixedPoint::parse((string) $this->input($field), FixedPoint::PERCENT_SCALE);
 
-            if ($percent > 100 * (10 ** FixedPoint::PERCENT_SCALE)) {
-                $validator->errors()->add('discount_percent', 'Persentase diskon tidak boleh lebih dari 100.');
+                if ($percent > 100 * (10 ** FixedPoint::PERCENT_SCALE)) {
+                    $validator->errors()->add($field, 'Persentase diskon tidak boleh lebih dari 100.');
+                }
             }
         }];
     }

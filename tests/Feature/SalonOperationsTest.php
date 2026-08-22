@@ -715,12 +715,19 @@ class SalonOperationsTest extends TestCase
 
         $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
         $this->assertSame($transactionTotal - (int) $product->selling_price, $snapshot['dashboard']['revenue_today']);
-        $this->assertSame($transactionTotal, $snapshot['dashboard']['month_income']);
-        $this->assertSame((int) $product->selling_price, $snapshot['dashboard']['month_expense']);
-        $this->assertSame($transactionTotal - (int) $product->selling_price, $snapshot['dashboard']['month_balance']);
-        $this->assertTrue(collect($snapshot['cash_entries'])->contains(
-            fn (array $entry): bool => $entry['category'] === 'Retur penjualan' && (int) $entry['amount'] === (int) $product->selling_price,
+        $this->assertSame(0, $snapshot['dashboard']['month_income']);
+        $this->assertSame(0, $snapshot['dashboard']['month_expense']);
+        $this->assertSame(0, $snapshot['dashboard']['month_balance']);
+        $this->assertFalse(collect($snapshot['cash_entries'])->contains(
+            fn (array $entry): bool => $entry['category'] === 'Retur penjualan',
         ));
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/retur')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $returnId)
+            ->assertJsonPath('data.0.transaction_number', $sales['number'])
+            ->assertJsonPath('data.0.total_amount', (int) $product->selling_price);
 
         $this->actingAs($this->admin)
             ->get("/operasional/retur/{$returnId}/struk.pdf")
@@ -1388,6 +1395,50 @@ class SalonOperationsTest extends TestCase
             'phone' => '081290000091',
         ]);
         $this->assertDatabaseMissing('customers', ['phone' => '000000000000']);
+    }
+
+    public function test_schedule_includes_preparation_and_rest_before_therapist_is_available(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+        $date = today()->addDays(30)->toDateString();
+        $first = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['date' => $date, 'phone' => '081290000301'])->assertCreated();
+        $item = \DB::table('reservation_items')->where('reservation_id', $first->json('id'))->first();
+
+        $expectedEnd = Carbon::parse("{$date} 10:00:00")->addMinutes((int) $treatment->duration_minutes + 15);
+        $this->assertSame($expectedEnd->format('Y-m-d H:i:s'), Carbon::parse($item->scheduled_end_at)->format('Y-m-d H:i:s'));
+        $this->assertSame($expectedEnd->copy()->addMinutes(45)->format('Y-m-d H:i:s'), Carbon::parse($item->scheduled_ready_at)->format('Y-m-d H:i:s'));
+
+        $this->createReservation($this->admin, [
+            $this->item($treatment->id, $expectedEnd->copy()->addMinutes(30)->format('H:i'), [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['date' => $date, 'phone' => '081290000302'])->assertStatus(409);
+    }
+
+    public function test_therapist_off_day_blocks_new_reservations_and_manual_cashier_discount_is_allowed(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+        $date = today()->addDays(31)->toDateString();
+        $this->actingAs($this->admin)->putJson("/operasional/therapist-kehadiran/{$therapist->id}", [
+            'date' => $date,
+            'status' => 'off',
+        ])->assertOk();
+        $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['date' => $date, 'phone' => '081290000303'])->assertUnprocessable()->assertJsonValidationErrors('items');
+
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000304');
+        $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'manual_discount_percent' => '10',
+            'payments' => [[
+                'payment_method_id' => $this->paymentMethod('CASH')->id,
+                'amount' => $total - (int) round($total * .1),
+            ]],
+        ])->assertCreated();
+        $this->assertDatabaseHas('transactions', ['reservation_id' => $reservationId, 'discount_amount' => (int) round($total * .1)]);
     }
 
     private function createReservation(User $actor, array $items, array $overrides = []): TestResponse

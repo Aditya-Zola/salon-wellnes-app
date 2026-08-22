@@ -28,6 +28,7 @@ const canManageMemberships = Boolean(capabilities.manage_memberships);
 const canViewSales = Boolean(capabilities.view_sales);
 const canRefundSales = Boolean(capabilities.refund_sales);
 const canViewMemberships = Boolean(capabilities.view_memberships);
+const canManageTherapistAttendance = Boolean(capabilities.manage_therapist_attendance);
 const headerStatusLabels = {
     paid: 'Lunas',
     scheduled: 'Terjadwal',
@@ -39,10 +40,10 @@ const headerStatusLabels = {
     no_show: 'Tidak hadir',
 };
 const workStatusLabels = {
-    waiting: 'Menunggu',
-    in_progress: 'Mulai dikerjakan',
+    waiting: 'Menunggu jadwal',
+    in_progress: 'Sedang dilayani',
     continue: 'Dilanjutkan',
-    ready: 'Siap diselesaikan',
+    ready: 'Persiapan / istirahat',
     finished: 'Selesai',
     overtime: 'Lembur',
     cancelled: 'Batal',
@@ -58,6 +59,8 @@ const headerStatusTransitions = {
 
 let state = window.SALON_DATA || {};
 let salesPageState = null;
+let salesReturnsPageState = null;
+let salesView = 'sales';
 let salesSearchTimer;
 let memberPageState = null;
 let memberSearchTimer;
@@ -74,6 +77,8 @@ let toastTimer;
 let reservationCalendarTooltipTimer;
 let reservationCalendarTooltipListenersBound = false;
 let reservationCalendarTooltipAnchor = null;
+let therapistAttendanceDate = null;
+let therapistAttendance = [];
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
@@ -182,7 +187,7 @@ async function refresh() {
     state = await api('/operasional/data');
     populateSelects();
     renderAll();
-    if (canViewSales) await loadSalesPage(salesPageState?.meta?.current_page || 1);
+    if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesPageState)?.meta?.current_page || 1);
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
 }
 
@@ -341,6 +346,36 @@ function itemEndTime(item, reservation) {
     return String(value).slice(11, 16);
 }
 
+function itemReadyTime(item, reservation) {
+    const value = item?.scheduled_ready_at || item?.ready_at;
+    if (!value) {
+        const [hour = 0, minute = 0] = itemEndTime(item, reservation).split(':').map(Number);
+        const total = (hour * 60) + minute + 45;
+        return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    }
+    if (/^\d{2}:\d{2}/.test(value)) return value.slice(0, 5);
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value).slice(11, 16) : date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+}
+
+function automaticWorkStatus(item, reservation, now = new Date()) {
+    if (item?.work_status === 'cancelled') return 'cancelled';
+    const at = (value) => {
+        if (!value) return null;
+        const parsed = new Date(String(value).includes('T') ? value : String(value).replace(' ', 'T'));
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+    const start = at(item?.scheduled_start_at || item?.start_at);
+    const end = at(item?.scheduled_end_at || item?.end_at);
+    const ready = at(item?.scheduled_ready_at) || (end ? new Date(end.getTime() + (45 * 60 * 1000)) : null);
+
+    if (!start || !end || !ready) return item?.work_status || 'waiting';
+    if (now < start) return 'waiting';
+    if (now < end) return 'in_progress';
+    if (now < ready) return 'ready';
+    return 'finished';
+}
+
 function clockMinutes(value) {
     const match = String(value || '').match(/(\d{1,2})[:.](\d{2})/);
     if (!match) return null;
@@ -468,7 +503,7 @@ function showReservationCalendarTooltip(anchor, reservation, item) {
     const status = reservationCalendarStatus(reservation);
     const paymentLabel = isAlreadyPaid(reservation) ? 'Lunas' : 'Belum dibayar';
     const staff = itemStaff(item).map(employeeName).join(', ') || '-';
-    const workStatus = workStatusLabels[item?.work_status] || item?.work_status || '-';
+    const workStatus = workStatusLabels[automaticWorkStatus(item, reservation)] || '-';
     const scheduleDate = reservationItemDate(item, reservation);
     const date = new Date(`${scheduleDate}T12:00:00`);
     const dateLabel = Number.isNaN(date.getTime())
@@ -484,7 +519,7 @@ function showReservationCalendarTooltip(anchor, reservation, item) {
     <dl>
         <div><dt>Treatment</dt><dd>${escapeHtml(itemTreatmentName(item))}</dd></div>
         <div><dt>Therapist</dt><dd>${escapeHtml(staff)}</dd></div>
-        <div><dt>Status pekerjaan</dt><dd>${escapeHtml(workStatus)}</dd></div>
+        <div><dt>Status otomatis</dt><dd>${escapeHtml(workStatus)}</dd></div>
         <div><dt>Status layanan</dt><dd>${escapeHtml(statusLabel(serviceStatus))}</dd></div>
         <div><dt>Pembayaran</dt><dd>${escapeHtml(paymentLabel)}</dd></div>
     </dl>
@@ -633,10 +668,10 @@ function renderReservations() {
         short.innerHTML = todayRows.slice(0, 5).map((reservation) => {
             const status = reservationStatus(reservation);
             return `<div class="queue-row">
-                <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
-                <span class="time">${escapeHtml(reservationTime(reservation))}</span>
+                <strong class="queue-code">${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
+                <time class="queue-time">${escapeHtml(reservationTime(reservation))}</time>
                 <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))} · ${escapeHtml(reservationStaffSummary(reservation))}</small></span>
-                <em class="${statusClass(status)}">${escapeHtml(statusLabel(status))}</em>
+                <em class="queue-status ${statusClass(status)}">${escapeHtml(statusLabel(status))}</em>
                 <span class="material-symbols-outlined">chevron_right</span>
             </div>`;
         }).join('') || '<p class="empty-state">Belum ada reservasi hari ini.</p>';
@@ -769,17 +804,47 @@ function renderReservations() {
                 : serviceProviders();
             const dailyTherapists = therapists.length ? therapists : serviceProviders();
             const dayRows = calendarReservations.filter((entry) => reservationItemDate(entry.item, entry.reservation) === selectedDate);
-            const dailyHeaders = dailyTherapists.map((employee, index) => `<div class="therapist-day-head" style="grid-column:${index + 2}"><b>${escapeHtml(employee.name)}</b><small>${escapeHtml(employee.specialty || 'Therapist')}</small></div>`).join('');
+            const offTherapistIds = therapistAttendanceDate === selectedDate
+                ? therapistAttendance.filter((therapist) => therapist.status === 'off').map((therapist) => Number(therapist.employee_id))
+                : [];
+            const availableSlots = (employeeId) => {
+                if (offTherapistIds.includes(Number(employeeId))) return [];
+                const occupied = dayRows
+                    .filter(({ item }) => itemStaff(item).some((staff) => Number(staff.employee_id ?? staff.employee?.id ?? staff.id) === Number(employeeId)))
+                    .map(({ reservation, item, start }) => [start, clockMinutes(itemReadyTime(item, reservation)) ?? start])
+                    .sort((left, right) => left[0] - right[0]);
+                let cursor = openingMinutes;
+                const slots = [];
+                occupied.forEach(([start, end]) => {
+                    if (start > cursor) slots.push([cursor, Math.min(start, openingMinutes + visibleMinutes)]);
+                    cursor = Math.max(cursor, end);
+                });
+                if (cursor < openingMinutes + visibleMinutes) slots.push([cursor, openingMinutes + visibleMinutes]);
+                const format = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+                return slots.filter(([, end]) => end > openingMinutes).map(([start, end]) => `${format(start)}–${format(end)} (${end - start}m)`);
+            };
+            const dailyHeaders = dailyTherapists.map((employee, index) => {
+                const isOff = offTherapistIds.includes(Number(employee.id));
+                return `<div class="therapist-day-head${isOff ? ' is-off' : ''}" style="grid-column:${index + 2}" aria-label="${escapeHtml(employee.name)}${isOff ? ', libur' : ''}"><b>${escapeHtml(employee.name)}</b></div>`;
+            }).join('');
             const dailyTimes = slots.map((slot) => {
                 const minutes = openingMinutes + (slot * 30);
                 const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
                 return `<div class="therapist-day-time" style="grid-column:1;grid-row:${slot + 2}">${slot % 2 === 0 ? time.replace(':', '.') : ''}</div>`;
             }).join('');
-            const dailySlots = canCreateReservations ? dailyTherapists.flatMap((employee, index) => slots.map((slot) => {
+            const dailySlots = dailyTherapists.flatMap((employee, index) => slots.map((slot) => {
                 const minutes = openingMinutes + (slot * 30);
                 const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+                const isOff = offTherapistIds.includes(Number(employee.id));
+                if (isOff) return `<div class="therapist-off-slot" aria-hidden="true" style="grid-column:${index + 2};grid-row:${slot + 2}"></div>`;
+                if (!canCreateReservations) return `<div class="therapist-grid-slot" aria-hidden="true" style="grid-column:${index + 2};grid-row:${slot + 2}"></div>`;
                 return `<button type="button" class="therapist-create-slot" data-date="${selectedDate}" data-time="${time}" data-employee-id="${Number(employee.id)}" aria-label="Tambah reservasi ${escapeHtml(employee.name)}, ${time}" style="grid-column:${index + 2};grid-row:${slot + 2}"></button>`;
-            })).join('') : '';
+            })).join('');
+            const offColumnShades = dailyTherapists.map((employee, index) => (
+                offTherapistIds.includes(Number(employee.id))
+                    ? `<div class="therapist-off-column" aria-hidden="true" style="grid-column:${index + 2};grid-row:2 / -1"></div>`
+                    : ''
+            )).join('');
             const dailyEvents = dayRows.flatMap(({ reservation, item, itemIndex, timing, start, end }) => {
                 const staff = itemStaff(item);
                 return staff.map((assignment) => {
@@ -788,15 +853,17 @@ function renderReservations() {
                     if (therapistIndex < 0) return '';
                     const status = reservationCalendarStatus(reservation);
                     const startRow = Math.max(2, Math.floor((start - openingMinutes) / 30) + 2);
-                    const span = Math.max(1, Math.ceil((end - start) / 30));
+                    const readyMinutes = clockMinutes(itemReadyTime(item, reservation)) ?? end;
+                    const span = Math.max(1, Math.ceil((readyMinutes - start) / 30));
+                    const serviceRatio = Math.min(100, Math.max(0, ((end - start) / Math.max(1, readyMinutes - start)) * 100));
                     const staffName = employeeName(assignment);
-                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
-                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span}"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small>${escapeHtml(itemTreatmentName(item))}</small></button>`;
+                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, siap lagi ${itemReadyTime(item, reservation)}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
+                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--service-ratio:${serviceRatio}%"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(item))}</small><span class="calendar-rest-label">Istirahat · siap lagi ${escapeHtml(itemReadyTime(item, reservation))}</span></button>`;
                 });
             }).join('');
             const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty">Belum ada therapist aktif untuk ditampilkan.</p>';
             calendar.setAttribute('aria-label', 'Kalender harian per therapist');
-            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik <strong>+</strong> pada slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${dailyEvents}</div>`;
+            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik <strong>+</strong> pada slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${offColumnShades}${dailyEvents}</div>`;
         }
         bindReservationCalendarTooltips(calendar, all);
         bindReservationCalendarCreateSlots(calendar);
@@ -853,58 +920,46 @@ function openReservationDetail(reservation) {
             <p><span>Catatan</span><b>${escapeHtml(reservation.general_notes || reservation.notes || '-')}</b></p>
         </div>
         <div class="reservation-detail-items">${items.map((item, index) => {
-            const currentStatus = item.work_status || 'waiting';
-            const nextStatus = currentStatus === 'waiting'
-                ? 'in_progress'
-                : ['in_progress', 'continue', 'ready', 'overtime'].includes(currentStatus)
-                    ? 'finished'
-                    : null;
-            const actionLabel = nextStatus === 'in_progress' ? 'Mulai treatment' : 'Selesaikan treatment';
-            const actionIcon = nextStatus === 'in_progress' ? 'play_arrow' : 'check';
-            const action = nextStatus && canUpdateReservations
-                ? `<button type="button" class="treatment-progress-action ${nextStatus === 'finished' ? 'primary' : ''}" data-item-id="${Number(item.id)}" data-next-status="${nextStatus}"><span class="material-symbols-outlined">${actionIcon}</span>${actionLabel}</button>`
-                : '';
+            const currentStatus = automaticWorkStatus(item, reservation);
 
             return `<article class="reservation-item-card">
                 <div class="reservation-item-title"><strong>${index + 1}. ${escapeHtml(itemTreatmentName(item))}</strong><b>${money(itemPrice(item))}</b></div>
                 <div class="reservation-detail-meta">
-                    <span>Jadwal <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
-                    <span>Durasi <b>${Number(item.duration_minutes || 0)} menit</b></span>
+                    <span>Mulai <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
+                    <span>Selesai <b>${escapeHtml(itemEndTime(item, reservation))}</b></span>
+                    <span>Siap lagi <b>${escapeHtml(itemReadyTime(item, reservation))}</b></span>
                     <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
                 </div>
-                <div class="reservation-work-status"><span><small>Status pengerjaan</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span>${action}</div>
+                <div class="reservation-work-status"><span><small>Status otomatis berdasarkan jadwal</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Berubah otomatis mengikuti jam mulai, selesai, dan siap therapist.</small></div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
-        <footer><button type="button" class="primary quick-close">Tutup</button></footer>
+        <footer>${canUpdateReservations && !paid && !['cancelled', 'completed'].includes(reservation.status)
+            ? '<button type="button" class="secondary reservation-cancel">Batalkan reservasi</button>'
+            : ''}<button type="button" class="primary quick-close">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
     });
-    wrapper.querySelectorAll('.treatment-progress-action').forEach((button) => {
-        button.onclick = async () => {
-            const nextStatus = button.dataset.nextStatus;
-            const isFinishing = nextStatus === 'finished';
-            if (isFinishing && !await confirmAction({
-                title: 'Selesaikan treatment?',
-                message: 'Status pengerjaan akan ditandai selesai dan tersimpan di riwayat reservasi.',
-                confirmLabel: 'Ya, selesaikan',
-            })) return;
+    wrapper.querySelector('.reservation-cancel')?.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            title: 'Batalkan reservasi?',
+            message: 'Reservasi belum dibayar akan dibatalkan. Alasan pembatalan wajib dicatat.',
+            confirmLabel: 'Lanjutkan',
+            icon: 'cancel',
+        });
+        if (!confirmed) return;
 
-            button.disabled = true;
-            try {
-                await api(`/operasional/reservasi/${Number(reservation.id)}/item/${Number(button.dataset.itemId)}/status`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: nextStatus }),
-                });
-                wrapper.remove();
-                await refresh();
-                toast(isFinishing ? 'Treatment ditandai selesai.' : 'Treatment dimulai.');
-            } catch (error) {
-                toast(error.message, true);
-                button.disabled = false;
-            }
-        };
+        quickForm('Alasan pembatalan', [
+            ['reason', 'Alasan pembatalan', 'text'],
+        ], async (data) => {
+            const result = await api(`/operasional/reservasi/${Number(reservation.id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: 'cancelled', reason: data.reason }),
+            });
+            wrapper.remove();
+            return result;
+        });
     });
 }
 
@@ -926,13 +981,16 @@ function resetCashier() {
     const customerName = document.getElementById('cashier-customer-name');
     if (customerName) customerName.textContent = 'Belum dipilih';
     document.getElementById('discount').disabled = true;
+    document.getElementById('manual-discount').disabled = true;
+    document.getElementById('manual-discount').value = '';
     document.getElementById('open-payment').disabled = true;
     document.getElementById('add-extra').disabled = true;
     resetPaymentRows();
 }
 
 function selectedDiscount() {
-    return Number(document.getElementById('discount')?.value || 0);
+    const manual = Number(document.getElementById('manual-discount')?.value || 0);
+    return manual > 0 ? manual : Number(document.getElementById('discount')?.value || 0);
 }
 
 function selectedTotal() {
@@ -973,6 +1031,9 @@ function renderCashier() {
 }
 
 function selectCashier(id) {
+    if (Number(selectedReservation) !== Number(id)) {
+        document.getElementById('manual-discount').value = '';
+    }
     selectedReservation = id;
     document.querySelectorAll('.cashier-item').forEach((element) => {
         element.classList.toggle('active', Number(element.dataset.id) === Number(id));
@@ -1016,7 +1077,8 @@ function selectCashier(id) {
         <button type="button" class="link remove-cashier-product" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
     </div>`).join('');
     document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
-    document.getElementById('discount').disabled = !reservation.is_member;
+    document.getElementById('discount').disabled = false;
+    document.getElementById('manual-discount').disabled = false;
     document.getElementById('open-payment').disabled = false;
     document.getElementById('add-extra').disabled = !array(state.products).some((product) => (
         Number(product.is_active ?? 1) === 1 && productStock(product) > 0
@@ -1323,24 +1385,22 @@ function printReceipt(receipt, format) {
     documentWindow.document.write(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
 <style>
-@page{size:${pageSize};margin:${compact ? '2mm' : '16mm'}}
+@page{size:${pageSize};margin:${compact ? '3mm 4mm' : '16mm'}}
 *{box-sizing:border-box}
-body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:12px;line-height:1.28}
-.sheet{margin:0 auto}.sheet.thermal{width:54mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
-.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '31mm' : '56mm'};height:auto;margin:0 auto 3px;filter:grayscale(1) contrast(1.25)}
-.brand-name{margin:0;font-size:${compact ? '16px' : '21px'};font-weight:700;letter-spacing:.15px}.brand-subtitle{margin:0;font-size:${compact ? '8.5px' : '11px'};font-weight:700;letter-spacing:0}.receipt-code{margin-top:2px;font-size:${compact ? '10px' : '12px'};font-weight:700}
-.dash{border-top:1px dashed #4d4d4d;margin:7px 0 6px}.dash.thin{margin:6px 0}
-.receipt-meta{margin:0;font-size:11px}.receipt-meta p{display:grid;grid-template-columns:max-content 3mm minmax(0,1fr);gap:1px;margin:1px 0}.receipt-meta span{text-align:right}.receipt-meta b{text-align:right;font-weight:700;white-space:nowrap}.receipt-meta i{font-style:normal;text-align:center}.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr 3mm auto;gap:1px;margin:1px 0}.receipt-totals span,.receipt-payments span{text-align:right}.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
-.reprint{text-align:center;font-size:${compact ? '10px' : '15px'};font-weight:700;margin:0}
-.receipt-item{display:grid;grid-template-columns:1fr auto;gap:4px;padding:1px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:2mm;margin-top:0}.receipt-item-total{align-self:end;white-space:nowrap}
-.receipt-totals{margin-top:0}.receipt-totals p{margin:0;padding:2px 0;border-bottom:1px dashed #4d4d4d}.receipt-totals .grand-total{font-size:${compact ? '13px' : '16px'};margin-top:2px;font-weight:700}.receipt-payments p{margin:2px 0}.receipt-footer{text-align:center;margin-top:7px}.receipt-footer strong{display:block;font-size:${compact ? '11px' : '15px'};margin-bottom:5px}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '2mm' : '15mm'}}
+body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:${compact ? '10px' : '12px'};line-height:${compact ? '1.22' : '1.28'}}
+.sheet{margin:0 auto}.sheet.thermal{width:50mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
+.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '24mm' : '56mm'};height:auto;margin:0 auto 3px;filter:grayscale(1) contrast(1.35)}
+.receipt-code{margin-top:1px;font-size:${compact ? '9px' : '12px'};font-weight:700}
+.dash{border-top:1px dashed #4d4d4d;margin:${compact ? '4px 0 3px' : '7px 0 6px'}.dash.thin{margin:${compact ? '3px 0' : '6px 0'}}
+.receipt-meta{margin:0;font-size:${compact ? '9px' : '11px'}}.receipt-meta p{display:grid;grid-template-columns:max-content ${compact ? '2.5mm' : '3mm'} minmax(0,1fr);gap:1px;margin:1px 0}.receipt-meta span{text-align:right}.receipt-meta b{text-align:right;font-weight:700;white-space:nowrap}.receipt-meta i{font-style:normal;text-align:center}.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr ${compact ? '2.5mm' : '3mm'} auto;gap:1px;margin:1px 0}.receipt-totals span,.receipt-payments span{text-align:right}.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
+.reprint{text-align:center;font-size:${compact ? '9px' : '15px'};font-weight:700;margin:0}
+.receipt-item{display:grid;grid-template-columns:1fr auto;gap:${compact ? '2px' : '4px'};padding:1px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:${compact ? '1.5mm' : '2mm'};margin-top:0}.receipt-item-total{align-self:end;white-space:nowrap}
+.receipt-totals{margin-top:0}.receipt-totals p{margin:0;padding:${compact ? '1px 0' : '2px 0'};border-bottom:1px dashed #4d4d4d}.receipt-totals .grand-total{font-size:${compact ? '11px' : '16px'};margin-top:2px;font-weight:700}.receipt-payments p{margin:${compact ? '1px 0' : '2px 0'}}.receipt-footer{text-align:center;margin-top:${compact ? '4px' : '7px'}}.receipt-footer strong{display:block;font-size:${compact ? '9px' : '15px'};margin-bottom:${compact ? '3px' : '5px'}}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '1.5mm' : '15mm'}}
 @media print{body{background:#fff}}
 </style></head><body>
 <main class="sheet ${sheetClass}">
     <header class="receipt-header">
         <img src="${escapeHtml(logoUrl)}" alt="Logo Selesa">
-        <p class="brand-name">selesa</p>
-        <p class="brand-subtitle">SALON. SPA. WELLNESS. NAIL. EYELASH</p>
         <p class="receipt-code">${escapeHtml(receipt.number)}</p>
     </header>
     <div class="dash"></div>
@@ -1387,7 +1447,12 @@ function openReceiptPrintChoice(receipt, options = {}) {
 }
 
 function renderTreatments() {
-    const treatments = array(state.treatments);
+    const query = document.getElementById('treatment-search')?.value.trim().toLowerCase() || '';
+    const treatments = array(state.treatments).filter((treatment) => !query || [
+        treatment.name,
+        treatment.category,
+        treatment.description,
+    ].some((value) => String(value || '').toLowerCase().includes(query)));
     const box = document.getElementById('treatment-grid');
     const count = document.getElementById('treatment-count');
     if (count) count.textContent = treatments.length;
@@ -1396,11 +1461,11 @@ function renderTreatments() {
     box.innerHTML = treatments.map((treatment) => {
         const recipeCount = array(treatment.recipes).length;
         return `<article class="treatment-card">
-        <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
-        <h3>${escapeHtml(treatment.name)}</h3>
-        <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-        <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
-    </article>`;
+            <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
+            <h3>${escapeHtml(treatment.name)}</h3>
+            <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
+            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
+        </article>`;
     }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
 
     document.querySelectorAll('.recipe-button').forEach((button) => {
@@ -1457,15 +1522,16 @@ function openRecipeChecklist(treatment) {
     wrapper.innerHTML = `<div class="modal-box recipe-modal">
         <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>
         <form>
+            <label class="recipe-product-search">Cari produk<input type="search" id="recipe-product-search" placeholder="Nama atau kategori produk..."></label>
             <div class="recipe-checklist">${products.map((product) => {
                 const recipe = recipes.get(Number(product.id));
                 const checked = Boolean(recipe);
                 const quantity = recipe ? String(Number(recipe.quantity)) : '';
-                return `<label class="recipe-product${checked ? ' selected' : ''}">
-                    <input class="recipe-product-toggle" type="checkbox" data-id="${Number(product.id)}" ${checked ? 'checked' : ''}>
-                    <span class="recipe-product-info"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || 'Produk')} · stok ${escapeHtml(productStock(product))} ${escapeHtml(productUnit(product))}</small></span>
-                    <span class="recipe-product-quantity"><input class="recipe-product-quantity-input" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Jumlah" value="${escapeHtml(quantity)}" ${checked ? 'required' : 'disabled'}><small>${escapeHtml(productUnit(product))}</small></span>
-                </label>`;
+                return `<div class="recipe-product${checked ? ' selected' : ''}">
+                    <label class="recipe-product-toggle-wrap" aria-label="Pakai ${escapeHtml(product.name)}"><input class="recipe-product-toggle" type="checkbox" data-id="${Number(product.id)}" ${checked ? 'checked' : ''}></label>
+                    <div class="recipe-product-info"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || 'Produk')} · stok ${escapeHtml(productStock(product))} ${escapeHtml(productUnit(product))}</small></div>
+                    <label class="recipe-product-quantity"><span class="sr-only">Jumlah ${escapeHtml(product.name)}</span><input class="recipe-product-quantity-input" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Jumlah" value="${escapeHtml(quantity)}" ${checked ? 'required' : 'disabled'}><small>${escapeHtml(productUnit(product))}</small></label>
+                </div>`;
             }).join('')}</div>
             <footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" type="submit">Simpan resep</button></footer>
         </form>
@@ -1484,6 +1550,12 @@ function openRecipeChecklist(treatment) {
             quantity.disabled = !checkbox.checked;
             quantity.required = checkbox.checked;
             if (checkbox.checked) quantity.focus();
+        });
+    });
+    wrapper.querySelector('#recipe-product-search')?.addEventListener('input', (event) => {
+        const query = event.target.value.trim().toLowerCase();
+        wrapper.querySelectorAll('.recipe-product').forEach((row) => {
+            row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
         });
     });
     wrapper.querySelector('form').onsubmit = async (event) => {
@@ -1615,7 +1687,12 @@ async function loadMembersPage(page = 1) {
 }
 
 function renderStock() {
-    const products = array(state.products);
+    const query = document.getElementById('stock-search')?.value.trim().toLowerCase() || '';
+    const products = array(state.products).filter((product) => !query || [
+        product.name,
+        product.category,
+        product.code,
+    ].some((value) => String(value || '').toLowerCase().includes(query)));
     const movements = array(state.stock_movements);
     const box = document.getElementById('stock-list');
     const history = document.getElementById('stock-history');
@@ -1780,6 +1857,28 @@ function formatTransactionDate(value) {
     });
 }
 
+function setSalesView(view) {
+    salesView = view === 'returns' ? 'returns' : 'sales';
+    document.querySelectorAll('[data-sales-view]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.salesView === salesView);
+        button.setAttribute('aria-selected', String(button.dataset.salesView === salesView));
+    });
+    const title = document.getElementById('sales-history-title');
+    const subtitle = document.getElementById('sales-history-subtitle');
+    const search = document.getElementById('sales-search');
+    const payment = document.getElementById('sales-payment-filter');
+    if (title) title.textContent = salesView === 'returns' ? 'Riwayat retur' : 'Riwayat penjualan';
+    if (subtitle) subtitle.textContent = salesView === 'returns'
+        ? 'Catatan pengembalian produk dan cetak struk retur.'
+        : 'Invoice lunas dan cetak ulang nota.';
+    if (search) {
+        search.placeholder = salesView === 'returns' ? 'Cari nomor retur, invoice, atau pelanggan...' : 'Cari invoice atau pelanggan...';
+        search.setAttribute('aria-label', salesView === 'returns' ? 'Cari riwayat retur' : 'Cari riwayat penjualan');
+    }
+    if (payment) payment.value = '';
+    loadSalesPage(1).catch((error) => toast(error.message, true));
+}
+
 function renderSalesSnapshot() {
     const box = document.getElementById('sales-history');
     if (!box) return;
@@ -1845,11 +1944,21 @@ async function loadSalesPage(page = 1) {
     const params = new URLSearchParams({ page: String(page), per_page: '20' });
     if (search) params.set('search', search);
     if (paymentMethod) params.set('payment_method', paymentMethod);
+    if (salesView === 'returns') {
+        salesReturnsPageState = await api(`/operasional/retur?${params.toString()}`);
+        renderSalesReturns();
+        return;
+    }
+
     salesPageState = await api(`/operasional/penjualan?${params.toString()}`);
     renderSales();
 }
 
 function renderSales() {
+    if (salesView === 'returns') {
+        renderSalesReturns();
+        return;
+    }
     const box = document.getElementById('sales-history');
     const pagination = document.getElementById('sales-pagination');
     if (!box) return;
@@ -1872,9 +1981,10 @@ function renderSales() {
         const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
         const refundedAmount = Number(transaction.refunded_amount || 0);
-        const refundableProducts = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
-        const returnReceipts = array(transaction.returns).map((salesReturn) => `<button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}" title="Cetak ${escapeHtml(salesReturn.number)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span>${escapeHtml(salesReturn.number)}</button>`).join('');
-        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${refundedAmount > 0 ? ` · <em class="sales-return-status">diretur ${money(refundedAmount)}</em>` : ''}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button>${canRefundSales && refundableProducts.length ? `<button type="button" class="sales-return-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Retur</button>` : ''}${returnReceipts}</div></div>`;
+        const returnStatus = refundedAmount > 0
+            ? `<em class="sales-return-status">${refundedAmount >= Number(transaction.total) ? 'Retur penuh' : 'Retur sebagian'}</em>`
+            : '';
+        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
@@ -1886,19 +1996,48 @@ function renderSales() {
             description: `${transaction.number} \u00b7 ${money(transaction.total)}`,
         });
     });
-    box.querySelectorAll('.sales-return-button').forEach((button) => {
-        const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
-        if (transaction) button.onclick = () => openSalesReturn(transaction);
-    });
-    box.querySelectorAll('.sales-return-receipt').forEach((button) => {
-        button.onclick = () => window.open(`/operasional/retur/${Number(button.dataset.returnId)}/struk.pdf`, '_blank', 'noopener');
-    });
-
     const meta = salesPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
             ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} transaksi</small>` : '');
+        pagination.querySelectorAll('.sales-page').forEach((button) => {
+            button.onclick = () => loadSalesPage(Number(button.dataset.page));
+        });
+    }
+}
+
+function renderSalesReturns() {
+    const box = document.getElementById('sales-history');
+    const pagination = document.getElementById('sales-pagination');
+    if (!box) return;
+
+    const paymentFilter = document.getElementById('sales-payment-filter');
+    const selectedPayment = paymentFilter?.value || '';
+    const paymentOptions = array(salesReturnsPageState?.payment_options);
+    if (paymentFilter) {
+        paymentFilter.innerHTML = `<option value="">Semua metode refund</option>${paymentOptions.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+        paymentFilter.value = paymentOptions.includes(selectedPayment) ? selectedPayment : '';
+    }
+
+    const returns = array(salesReturnsPageState?.data);
+    const rows = returns.map((salesReturn) => {
+        const items = array(salesReturn.items);
+        const itemNames = items.map((item) => item.product_name).filter(Boolean);
+        const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
+        const itemQuantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
+        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(salesReturn.transaction_number)}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
+    }).join('');
+    box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>PRODUK & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
+    box.querySelectorAll('.sales-return-receipt').forEach((button) => {
+        button.onclick = () => window.open(`/operasional/retur/${Number(button.dataset.returnId)}/struk.pdf`, '_blank', 'noopener');
+    });
+
+    const meta = salesReturnsPageState?.meta;
+    if (pagination) {
+        pagination.innerHTML = meta && meta.last_page > 1
+            ? `<small>Menampilkan ${returns.length} dari ${Number(meta.total).toLocaleString('id-ID')} retur</small><div><button type="button" class="sales-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} retur</small>` : '');
         pagination.querySelectorAll('.sales-page').forEach((button) => {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
         });
@@ -2159,6 +2298,23 @@ function openPayrollForm() {
     periodInput.addEventListener('change', refreshEmployeeOptions);
 }
 
+function activityCategory(action) {
+    const value = String(action || '').toLowerCase();
+    if (value.startsWith('reservation')) return 'Reservasi';
+    if (value.startsWith('stock')) return 'Stok opname';
+    if (value.startsWith('product')) return 'Produk';
+    if (value.startsWith('treatment')) return 'Treatment';
+    if (value.startsWith('transaction')) return value.includes('refund') ? 'Retur' : 'Penjualan';
+    if (value.startsWith('finance')) return 'Arus kas';
+    if (value.startsWith('payroll')) return 'Penggajian';
+    if (value.startsWith('membership')) return 'Membership';
+    if (value.startsWith('promotion')) return 'Promo membership';
+    if (value.startsWith('employee')) return 'Pegawai';
+    if (value.startsWith('therapist')) return 'Kehadiran therapist';
+    if (value.startsWith('settings')) return 'Pengaturan';
+    return 'Aktivitas sistem';
+}
+
 function renderActivity() {
     const box = document.getElementById('activity-list');
     if (!box) return;
@@ -2167,7 +2323,7 @@ function renderActivity() {
     const userFilter = document.getElementById('activity-filter-user');
     const actionFilter = document.getElementById('activity-filter-action');
     const users = [...new Set(activities.map((activity) => activity.user_name || 'Sistem'))].sort((a, b) => a.localeCompare(b, 'id'));
-    const actions = [...new Set(activities.map((activity) => activity.action).filter(Boolean))].sort();
+    const actions = [...new Set(activities.map((activity) => activityCategory(activity.action)))].sort((a, b) => a.localeCompare(b, 'id'));
 
     if (userFilter) {
         const selected = userFilter.value;
@@ -2176,20 +2332,20 @@ function renderActivity() {
     }
     if (actionFilter) {
         const selected = actionFilter.value;
-        actionFilter.innerHTML = `<option value="">Semua jenis aktivitas</option>${actions.map((action) => `<option value="${escapeHtml(action)}">${escapeHtml(action.replaceAll('.', ' · '))}</option>`).join('')}`;
+        actionFilter.innerHTML = `<option value="">Semua jenis aktivitas</option>${actions.map((action) => `<option value="${escapeHtml(action)}">${escapeHtml(action)}</option>`).join('')}`;
         actionFilter.value = actions.includes(selected) ? selected : '';
     }
 
     const rows = activities.filter((activity) => (
         (!dateFilter?.value || String(activity.created_at || '').slice(0, 10) === dateFilter.value)
         && (!userFilter?.value || (activity.user_name || 'Sistem') === userFilter.value)
-        && (!actionFilter?.value || activity.action === actionFilter.value)
+        && (!actionFilter?.value || activityCategory(activity.action) === actionFilter.value)
     ));
 
     box.innerHTML = rows.map((activity) => `<div class="activity">
         <time>${new Date(activity.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
         <i class="material-symbols-outlined">work_history</i>
-        <span><b>${escapeHtml(activity.description)}</b><p>${escapeHtml(activity.action)}</p><small>${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small></span>
+        <span><b>${escapeHtml(activityCategory(activity.action))}</b><small>${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small></span>
     </div>`).join('') || '<p class="empty-state">Tidak ada aktivitas yang sesuai filter.</p>';
 }
 
@@ -2415,8 +2571,8 @@ function addStaffRow(container, role = 'primary') {
 
 function reservationTimeOptions(selected = '09:00') {
     selected = String(selected).slice(0, 5);
-    return Array.from({ length: 26 }, (_, index) => {
-        const totalMinutes = (9 * 60) + (index * 30);
+    return Array.from({ length: 157 }, (_, index) => {
+        const totalMinutes = (9 * 60) + (index * 5);
         const hour = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
         const minute = String(totalMinutes % 60).padStart(2, '0');
         const value = `${hour}:${minute}`;
@@ -2433,7 +2589,7 @@ function addReservationItem(values = {}) {
     card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment"><span class="material-symbols-outlined">delete</span></button></div>
         <div class="reservation-item-grid">
             <label>Treatment<select class="item-treatment" required><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select></label>
-            <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 30 menit</small></label>
+            <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
             ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : '<span class="reservation-price-note"><small>Harga</small><b>Mengikuti harga normal</b></span>'}
         </div>
         <label class="item-notes">Catatan treatment<textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label>
@@ -2898,6 +3054,104 @@ function populateSelects() {
     }
 }
 
+function renderTherapistAttendance() {
+    const box = document.getElementById('therapist-attendance');
+    if (!box || !therapistAttendanceDate) return;
+    const dateLabel = new Intl.DateTimeFormat('id-ID', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
+    const editable = canManageTherapistAttendance;
+    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran therapist</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>THERAPIST</span><span>STATUS</span></div>${therapistAttendance.map((therapist) => `<label class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Therapist')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option></select></label>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
+        loadTherapistAttendance(event.currentTarget.value);
+    });
+    box.querySelector('#therapist-attendance-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submit = event.currentTarget.querySelector('[type="submit"]');
+        const statuses = [...box.querySelectorAll('select[data-employee-id]')].map((select) => ({
+            employeeId: Number(select.dataset.employeeId),
+            status: select.value,
+        }));
+        const changes = statuses.filter((item) => therapistAttendance.some((therapist) => (
+            Number(therapist.employee_id) === item.employeeId && therapist.status !== item.status
+        )));
+        if (!changes.length) {
+            toast('Tidak ada perubahan kehadiran.');
+            return;
+        }
+        submit.disabled = true;
+        try {
+            await Promise.all(changes.map((item) => api(`/operasional/therapist-kehadiran/${item.employeeId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ date: therapistAttendanceDate, status: item.status }),
+            })));
+            toast('Kehadiran therapist diperbarui.');
+            await loadTherapistAttendance(therapistAttendanceDate);
+            renderReservations();
+        } catch (error) {
+            toast(error.message, true);
+            submit.disabled = false;
+        }
+    });
+}
+
+function openTherapistAttendanceManager() {
+    if (!therapistAttendanceDate) return;
+    const dateLabel = new Intl.DateTimeFormat('id-ID', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal therapist-attendance-modal';
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Atur kehadiran</h2><p>${escapeHtml(dateLabel)}</p></div><button type="button" class="quick-close" aria-label="Tutup">×</button></div><form><p class="therapist-attendance-modal-note">Centang therapist yang libur. Therapist yang tidak dicentang dianggap masuk.</p><div class="therapist-attendance-form-list">${therapistAttendance.map((therapist) => `<label><input type="checkbox" value="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''}><span>${escapeHtml(therapist.name)}</span></label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => {
+        button.addEventListener('click', () => wrapper.remove());
+    });
+    wrapper.addEventListener('click', (event) => {
+        if (event.target === wrapper) wrapper.remove();
+    });
+    wrapper.querySelector('form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submit = event.currentTarget.querySelector('[type="submit"]');
+        const offIds = new Set([...wrapper.querySelectorAll('input[type="checkbox"]:checked')].map((input) => Number(input.value)));
+        const changes = therapistAttendance.filter((therapist) => (
+            (therapist.status === 'off') !== offIds.has(Number(therapist.employee_id))
+        ));
+        if (!changes.length) return wrapper.remove();
+
+        submit.disabled = true;
+        try {
+            await Promise.all(changes.map((therapist) => api(`/operasional/therapist-kehadiran/${Number(therapist.employee_id)}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    date: therapistAttendanceDate,
+                    status: offIds.has(Number(therapist.employee_id)) ? 'off' : 'present',
+                }),
+            })));
+            wrapper.remove();
+            toast('Kehadiran therapist diperbarui.');
+            await loadTherapistAttendance(therapistAttendanceDate);
+            renderReservations();
+        } catch (error) {
+            toast(error.message, true);
+            submit.disabled = false;
+        }
+    });
+}
+
+async function loadTherapistAttendance(date) {
+    if (!date) return;
+    try {
+        const data = await api(`/operasional/therapist-kehadiran?date=${encodeURIComponent(date)}`);
+        therapistAttendanceDate = date;
+        therapistAttendance = array(data.therapists);
+        renderTherapistAttendance();
+        if (calendarMode === 'day') renderReservations();
+    } catch (error) {
+        // Jadwal tetap dapat digunakan bila endpoint tambahan ini belum tersedia.
+    }
+}
+
 function initReservationControls() {
     const section = document.getElementById('reservasi');
     const date = document.getElementById('reservation-calendar-date');
@@ -2907,6 +3161,7 @@ function initReservationControls() {
     [date, employee, status].filter(Boolean).forEach((filter) => filter.addEventListener('change', () => {
         reservationStatusGroup = null;
         renderReservations();
+        if (filter === date) loadTherapistAttendance(date.value);
     }));
 
     const moveWeek = (direction) => {
@@ -2916,6 +3171,7 @@ function initReservationControls() {
         date.value = `${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, '0')}-${String(selected.getDate()).padStart(2, '0')}`;
         reservationStatusGroup = null;
         renderReservations();
+        loadTherapistAttendance(date.value);
     };
     document.getElementById('calendar-prev')?.addEventListener('click', () => moveWeek(-1));
     document.getElementById('calendar-next')?.addEventListener('click', () => moveWeek(1));
@@ -2924,6 +3180,7 @@ function initReservationControls() {
         date.value = localDate();
         reservationStatusGroup = null;
         renderReservations();
+        loadTherapistAttendance(date.value);
     });
 
     const setReservationView = (view) => {
@@ -2935,6 +3192,7 @@ function initReservationControls() {
         });
         document.getElementById('reservation-queue-view')?.classList.toggle('hidden', reservationView !== 'queue');
         document.getElementById('reservation-calendar-view')?.classList.toggle('hidden', reservationView !== 'calendar');
+        document.getElementById('reservation-attendance-view')?.classList.toggle('hidden', reservationView !== 'attendance');
         section?.querySelector('.calendar-controls')?.classList.toggle('hidden', reservationView !== 'calendar');
     };
     const setCalendarMode = (mode) => {
@@ -2947,6 +3205,7 @@ function initReservationControls() {
         renderReservations();
     };
     setReservationView(reservationView);
+    loadTherapistAttendance(date?.value);
     document.querySelectorAll('[data-reservation-view]').forEach((tab) => {
         tab.addEventListener('click', () => {
             setReservationView(tab.dataset.reservationView);
@@ -2996,6 +3255,9 @@ document.getElementById('add-reservation-item')?.addEventListener('click', () =>
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
+document.querySelectorAll('[data-sales-view]').forEach((button) => {
+    button.addEventListener('click', () => setSalesView(button.dataset.salesView));
+});
 document.getElementById('sales-search')?.addEventListener('input', () => {
     clearTimeout(salesSearchTimer);
     salesSearchTimer = setTimeout(() => loadSalesPage(1).catch((error) => toast(error.message, true)), 250);
@@ -3044,6 +3306,9 @@ document.getElementById('export-stock-history')?.addEventListener('click', () =>
 });
 
 document.getElementById('discount')?.addEventListener('change', () => {
+    if (selectedReservation) selectCashier(selectedReservation);
+});
+document.getElementById('manual-discount')?.addEventListener('input', () => {
     if (selectedReservation) selectCashier(selectedReservation);
 });
 document.getElementById('add-extra')?.addEventListener('click', openCashierAddPicker);
@@ -3185,6 +3450,9 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
             body: JSON.stringify({
                 reservation_id: selectedReservation,
                 discount_percent: String(selectedDiscount()),
+                ...(Number(document.getElementById('manual-discount')?.value || 0) > 0
+                    ? { manual_discount_percent: String(document.getElementById('manual-discount').value) }
+                    : {}),
                 payments,
                 idempotency_key: paymentIdempotencyKey,
             }),
@@ -3321,12 +3589,8 @@ document.addEventListener('click', (event) => {
     if (event.target.closest('.go-stock-alerts')) openPage('stok');
 });
 
-document.querySelector('.search input')?.addEventListener('input', (event) => {
-    const query = event.target.value.toLowerCase();
-    document.querySelectorAll('.queue-row,.member-row,.treatment-card,.stock-table .tr:not(.th),.activity').forEach((element) => {
-        element.style.display = element.textContent.toLowerCase().includes(query) ? '' : 'none';
-    });
-});
+document.getElementById('treatment-search')?.addEventListener('input', renderTreatments);
+document.getElementById('stock-search')?.addEventListener('input', renderStock);
 
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') document.querySelector('.modal.open')?.classList.remove('open');

@@ -13,6 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class ReservationService
 {
+    private const PREPARATION_MINUTES = 15;
+
+    private const REST_MINUTES = 45;
+
     public function __construct(private readonly ActivityLogger $logger) {}
 
     public function create(array $data, Request $request): array
@@ -54,6 +58,8 @@ class ReservationService
                     'items' => ['Semua pegawai yang ditugaskan harus aktif sebagai penyedia layanan.'],
                 ]);
             }
+
+            $this->ensureStaffAreWorking($employeeIds, $data['date']);
 
             $candidates = $this->buildCandidates($data, $treatments);
             $this->validateStaffAssignments($candidates);
@@ -128,6 +134,7 @@ class ReservationService
                     'commission_amount' => $commissionAmount,
                     'scheduled_start_at' => $candidate['start'],
                     'scheduled_end_at' => $candidate['end'],
+                    'scheduled_ready_at' => $candidate['ready'],
                     'work_status' => 'waiting',
                     'notes' => $candidate['input']['notes'] ?? null,
                     'sort_order' => $itemIndex,
@@ -186,6 +193,7 @@ class ReservationService
                     'net_price' => $unitPrice,
                     'scheduled_start_at' => $candidate['start']->format('Y-m-d H:i:s'),
                     'scheduled_end_at' => $candidate['end']->format('Y-m-d H:i:s'),
+                    'scheduled_ready_at' => $candidate['ready']->format('Y-m-d H:i:s'),
                     'start_at' => $candidate['start']->toIso8601String(),
                     'end_at' => $candidate['end']->toIso8601String(),
                     'work_status' => 'waiting',
@@ -324,6 +332,8 @@ class ReservationService
                 ]);
             }
 
+            $this->ensureStaffAreWorking($employeeIds, $reservation->reservation_date);
+
             $candidate = $this->buildCandidates([
                 'date' => $reservation->reservation_date,
                 'items' => [$data],
@@ -352,6 +362,7 @@ class ReservationService
                 'commission_amount' => $commissionAmount,
                 'scheduled_start_at' => $candidate['start'],
                 'scheduled_end_at' => $candidate['end'],
+                'scheduled_ready_at' => $candidate['ready'],
                 'work_status' => 'waiting',
                 'notes' => $data['notes'] ?? null,
                 'sort_order' => $sortOrder,
@@ -677,15 +688,24 @@ class ReservationService
         abort_unless($treatment, 404, 'Treatment tidak ditemukan atau tidak aktif.');
 
         $start = CarbonImmutable::createFromFormat('!Y-m-d H:i', "{$date} {$time}", config('app.timezone'));
-        $end = $start->addMinutes((int) $treatment->duration_minutes);
+        $end = $start->addMinutes((int) $treatment->duration_minutes + self::PREPARATION_MINUTES);
+        $ready = $end->addMinutes(self::REST_MINUTES);
+
+        $offEmployeeIds = DB::table('employee_attendances')
+            ->where('attendance_date', $date)
+            ->where('status', 'off')
+            ->pluck('employee_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
 
         return DB::table('employees')
             ->where('active', true)
             ->where('is_service_provider', true)
             ->orderBy('name')
             ->get(['id', 'code', 'name', 'position', 'specialty'])
-            ->map(function (object $employee) use ($start, $end): array {
-                $conflicts = $this->existingConflicts((int) $employee->id, $start, $end);
+            ->map(function (object $employee) use ($start, $end, $ready, $offEmployeeIds): array {
+                $conflicts = $this->existingConflicts((int) $employee->id, $start, $ready);
+                $isOff = in_array((int) $employee->id, $offEmployeeIds, true);
 
                 return [
                     'id' => (int) $employee->id,
@@ -693,7 +713,10 @@ class ReservationService
                     'name' => $employee->name,
                     'position' => $employee->position,
                     'specialty' => $employee->specialty,
-                    'available' => $conflicts->isEmpty(),
+                    'available' => ! $isOff && $conflicts->isEmpty(),
+                    'attendance_status' => $isOff ? 'off' : 'present',
+                    'scheduled_end_at' => $end->toIso8601String(),
+                    'ready_at' => $ready->toIso8601String(),
                     'conflicts' => $conflicts->map(fn (object $row): array => [
                         'reservation_id' => (int) $row->reservation_id,
                         'reservation_item_id' => (int) $row->reservation_item_id,
@@ -707,6 +730,25 @@ class ReservationService
             ->all();
     }
 
+    /** @param Collection<int, int> $employeeIds */
+    private function ensureStaffAreWorking(Collection $employeeIds, string $date): void
+    {
+        $off = DB::table('employee_attendances')
+            ->join('employees', 'employees.id', '=', 'employee_attendances.employee_id')
+            ->whereIn('employee_attendances.employee_id', $employeeIds->all())
+            ->where('employee_attendances.attendance_date', $date)
+            ->where('employee_attendances.status', 'off')
+            ->orderBy('employees.name')
+            ->pluck('employees.name')
+            ->all();
+
+        if ($off !== []) {
+            throw ValidationException::withMessages([
+                'items' => ['Therapist libur pada tanggal tersebut: '.implode(', ', $off).'.'],
+            ]);
+        }
+    }
+
     private function buildCandidates(array $data, Collection $treatments): array
     {
         return collect($data['items'])->map(function (array $item) use ($data, $treatments): array {
@@ -717,11 +759,16 @@ class ReservationService
                 config('app.timezone'),
             );
 
+            $end = $start->addMinutes((int) $treatment->duration_minutes + self::PREPARATION_MINUTES);
+
             return [
                 'input' => $item,
                 'treatment' => $treatment,
                 'start' => $start,
-                'end' => $start->addMinutes((int) $treatment->duration_minutes),
+                // Waktu selesai mencakup 15 menit persiapan/beres-beres.
+                'end' => $end,
+                // Therapist baru dapat menerima layanan berikutnya setelah istirahat.
+                'ready' => $end->addMinutes(self::REST_MINUTES),
             ];
         })->all();
     }
@@ -773,7 +820,7 @@ class ReservationService
                 $employeeId = (int) $staff['employee_id'];
                 $employee = $employees->get($employeeId);
 
-                foreach ($this->existingConflicts($employeeId, $candidate['start'], $candidate['end'], true) as $existing) {
+                foreach ($this->existingConflicts($employeeId, $candidate['start'], $candidate['ready'], true) as $existing) {
                     $conflicts[] = [
                         'type' => 'existing_reservation',
                         'item_index' => $itemIndex,
@@ -781,6 +828,7 @@ class ReservationService
                         'employee_name' => $employee->name,
                         'requested_start_at' => $candidate['start']->toIso8601String(),
                         'requested_end_at' => $candidate['end']->toIso8601String(),
+                        'requested_ready_at' => $candidate['ready']->toIso8601String(),
                         'reservation_id' => (int) $existing->reservation_id,
                         'reservation_item_id' => (int) $existing->reservation_item_id,
                         'booking_code' => $existing->booking_code,
@@ -797,7 +845,7 @@ class ReservationService
                         continue;
                     }
 
-                    if ($other['start']->lt($candidate['end']) && $other['end']->gt($candidate['start'])) {
+                    if ($other['start']->lt($candidate['ready']) && $other['ready']->gt($candidate['start'])) {
                         $conflicts[] = [
                             'type' => 'request_item',
                             'item_index' => $itemIndex,
@@ -806,6 +854,7 @@ class ReservationService
                             'employee_name' => $employee->name,
                             'requested_start_at' => $candidate['start']->toIso8601String(),
                             'requested_end_at' => $candidate['end']->toIso8601String(),
+                            'requested_ready_at' => $candidate['ready']->toIso8601String(),
                             'conflicting_start_at' => $other['start']->toIso8601String(),
                             'conflicting_end_at' => $other['end']->toIso8601String(),
                         ];
@@ -832,7 +881,9 @@ class ReservationService
             ->whereNotIn('reservation.status', ['cancelled', 'completed'])
             ->whereNotIn('item.work_status', ['cancelled', 'finished'])
             ->where('item.scheduled_start_at', '<', $end)
-            ->where('item.scheduled_end_at', '>', $start)
+            // scheduled_ready_at includes the rest period. It is intentionally
+            // used for capacity even though the treatment card ends earlier.
+            ->where('item.scheduled_ready_at', '>', $start)
             ->orderBy('item.scheduled_start_at');
 
         if ($lockForUpdate) {
@@ -848,6 +899,7 @@ class ReservationService
             'item.id as reservation_item_id',
             'item.scheduled_start_at',
             'item.scheduled_end_at',
+            'item.scheduled_ready_at',
         ]);
     }
 
