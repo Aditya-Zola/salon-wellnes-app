@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -969,6 +970,33 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_stock_entry_increases_current_product_stock(): void
+    {
+        $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $stockBefore = (float) $product->current_stock;
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$product->id}/stok", [
+                'type' => 'masuk',
+                'quantity' => '5',
+                'source' => 'Stok masuk',
+                'notes' => 'Barang baru diterima.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Stok berhasil diperbarui.');
+
+        $this->assertSame(
+            $stockBefore + 5,
+            (float) \DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'in',
+            'quantity' => '5.0000',
+            'source_type' => 'manual_adjustment',
+        ]);
+    }
+
     public function test_admin_can_update_default_commission_for_a_treatment(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');
@@ -1439,6 +1467,70 @@ class SalonOperationsTest extends TestCase
             ]],
         ])->assertCreated();
         $this->assertDatabaseHas('transactions', ['reservation_id' => $reservationId, 'discount_amount' => (int) round($total * .1)]);
+    }
+
+    public function test_dashboard_summarizes_present_and_off_therapists_for_today(): void
+    {
+        $offTherapist = $this->employee('EMP-DITA');
+        DB::table('employee_attendances')->insert([
+            'employee_id' => $offTherapist->id,
+            'attendance_date' => today()->toDateString(),
+            'status' => 'off',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $attendance = $this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('dashboard.therapist_attendance_today');
+
+        $this->assertCount(3, $attendance['present']);
+        $this->assertCount(1, $attendance['off']);
+        $this->assertSame('Dita', $attendance['off'][0]['name']);
+        $this->assertSame('off', $attendance['off'][0]['status']);
+        $this->assertFalse(collect($attendance['present'])->contains('name', 'Dita'));
+    }
+
+    public function test_activity_snapshot_includes_customer_detail_for_reservation_logs(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+        $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], [
+            'name' => 'Customer Log Aktivitas',
+            'phone' => '081290000305',
+        ])->assertCreated();
+
+        $activity = collect($this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('activities'))
+            ->firstWhere('action', 'reservation.created');
+
+        $this->assertNotNull($activity);
+        $this->assertSame('Customer Log Aktivitas', $activity['reservation_customer_name']);
+        $this->assertStringContainsString('Customer Log Aktivitas', $activity['description']);
+    }
+
+    public function test_therapist_availability_reports_when_a_busy_therapist_is_ready_again(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+        $date = today()->addDays(20)->toDateString();
+        $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['date' => $date, 'phone' => '081290000306'])->assertCreated();
+
+        $availability = $this->actingAs($this->admin)
+            ->getJson("/operasional/reservasi/terapis-tersedia?date={$date}&start_time=10%3A15&treatment_id={$treatment->id}")
+            ->assertOk()
+            ->json('employees');
+        $dita = collect($availability)->firstWhere('id', $therapist->id);
+
+        $this->assertFalse($dita['available']);
+        $this->assertSame($date.' 12:00:00', $dita['conflicts'][0]['ready_at']);
     }
 
     private function createReservation(User $actor, array $items, array $overrides = []): TestResponse

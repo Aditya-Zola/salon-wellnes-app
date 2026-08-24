@@ -21,7 +21,7 @@
         @cannot('sales.view') #penjualan{display:none!important} @endcannot
         @cannot('treatments.view') #treatment{display:none!important} @endcannot
         @cannot('memberships.view') #membership{display:none!important} @endcannot
-        @cannot('products.view') #stok,.stock-mini .link{display:none!important} @endcannot
+        @cannot('products.view') #stok,#stok-opname,.stock-mini .link{display:none!important} @endcannot
         @cannot('finance.view') #keuangan{display:none!important} @endcannot
         @cannot('payroll.view') #penggajian{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
@@ -30,7 +30,7 @@
         @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
         @cannot('memberships.manage') #membership .membership-manage{display:none!important} @endcannot
         @cannot('products.create') #open-product{display:none!important} @endcannot
-        @cannot('products.stocktake') #open-stocktake{display:none!important} @endcannot
+        @cannot('products.stocktake') #open-stocktake,#stok-opname{display:none!important} @endcannot
         @cannot('payroll.manage') #open-payroll{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
         @cannot('treatments.update') .recipe-button,.commission-edit{display:none!important} @endcannot
@@ -62,9 +62,10 @@
                 <article class="analytics-card revenue-analytics"><div class="analytics-head"><div><h3>Tren pendapatan</h3><p>Transaksi dibayar dalam 7 hari terakhir</p></div><span class="analytics-period">7 HARI</span></div><div class="line-chart" id="revenue-chart"></div></article>
                 <article class="analytics-card treatment-volume"><div class="analytics-head"><div><h3>Treatment harian</h3><p>Jumlah treatment yang sudah dibayar pada bulan berjalan</p></div><span class="analytics-period" id="treatment-volume-period">BULAN INI</span></div><div class="treatment-bar-chart" id="treatment-performance"></div></article>
             </div>
-            <div class="two-column">
-                <div class="card"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></div>
-                <div class="card"><div class="card-head"><div><h3>Ketersediaan menu treatment</h3><p>Peringatan bahan resep yang stoknya menipis</p></div><button class="link go-stock-alerts">Kelola stok →</button></div><div class="treatment-stock-alerts" id="treatment-stock-alerts"></div></div>
+            <div class="card dashboard-operational-card">
+                <section class="dashboard-operational-item"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></section>
+                <section class="dashboard-operational-item"><div class="card-head"><div><h3>Ketersediaan menu treatment</h3><p>Peringatan bahan resep yang stoknya menipis</p></div><button class="link go-stock-alerts">Kelola stok →</button></div><div class="treatment-stock-alerts" id="treatment-stock-alerts"></div></section>
+                <section class="dashboard-operational-item"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
             </div>
         </section>
 
@@ -146,7 +147,7 @@
                 <div class="stock-toolbar-actions">
                     <div id="stock-list-actions" class="stock-action-group">
                         <label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stock-search" type="search" placeholder="Cari produk..." aria-label="Cari produk"></label>
-                        <button class="secondary" id="open-stocktake">Stok opname</button>
+                        <button class="secondary" id="open-stocktake"><span class="material-symbols-outlined" aria-hidden="true">inventory</span> Stok opname</button>
                         <button class="primary" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
                     </div>
                     <div id="stock-history-actions" class="stock-action-group" hidden>
@@ -160,11 +161,40 @@
             </div>
         </section>
 
+        <section class="page" id="stok-opname">
+            <div class="stocktake-page-toolbar">
+                <button type="button" class="secondary" id="stocktake-back"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span> Kembali ke produk</button>
+                <div class="stocktake-page-actions">
+                    <button type="button" class="secondary" id="stocktake-reset"><span class="material-symbols-outlined" aria-hidden="true">restart_alt</span> Kosongkan isian</button>
+                    <button type="submit" class="primary" id="stocktake-submit" form="stocktake-form" disabled><span class="material-symbols-outlined" aria-hidden="true">save</span> Simpan stok masuk</button>
+                </div>
+            </div>
+
+            <div class="stocktake-overview">
+                <article><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span><div><small>Produk tersedia</small><strong id="stocktake-product-count">0</strong></div></article>
+                <article><span class="material-symbols-outlined" aria-hidden="true">add_box</span><div><small>Produk diisi</small><strong id="stocktake-filled-count">0</strong></div></article>
+            </div>
+
+            <div class="card stocktake-card">
+                <div class="stocktake-card-head">
+                    <div><h3>Tambah stok masuk</h3><p>Cari produk lalu masukkan jumlah stok yang baru datang. Kolom kosong tidak akan disimpan.</p></div>
+                    <div class="stocktake-filters">
+                        <label class="page-search stocktake-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stocktake-search" type="search" placeholder="Cari nama, kode, atau kategori..." aria-label="Cari produk untuk stok opname"></label>
+                        <select id="stocktake-category" aria-label="Filter kategori produk"><option value="">Semua kategori</option></select>
+                    </div>
+                </div>
+                <form id="stocktake-form">
+                    <div class="stocktake-table-head" aria-hidden="true"><span>PRODUK</span><span>STOK SEKARANG</span><span>JUMLAH MASUK</span><span>CATATAN</span></div>
+                    <div id="stocktake-list" class="stocktake-list" aria-live="polite"></div>
+                </form>
+            </div>
+        </section>
+
         <section class="page" id="keuangan"><div class="metrics"><article><i class="material-symbols-outlined green">trending_up</i><div><small>Pemasukan kas</small><strong id="finance-income">Rp0</strong><span>Input manual</span></div></article><article><i class="material-symbols-outlined rose">trending_down</i><div><small>Pengeluaran kas</small><strong id="finance-expense">Rp0</strong><span>Input manual</span></div></article><article><i class="material-symbols-outlined gold">account_balance_wallet</i><div><small>Saldo kas</small><strong id="finance-balance">Rp0</strong><span id="finance-period">Bulan berjalan</span></div></article><article><i class="material-symbols-outlined clay">receipt_long</i><div><small>Catatan kas</small><strong id="finance-cash-entry-count">0</strong><span id="finance-cash-entry-note">Bulan berjalan</span></div></article></div><div class="two-column"><div class="card"><div class="card-head"><div><h3>Ringkasan kas</h3><p>Rekap dari seluruh input kas manual.</p></div></div><div class="cash-bars" id="cash-bars"></div></div><div class="card"><div class="card-head"><div><h3>Pengeluaran per kategori</h3><p>Pengeluaran kas manual bulan berjalan</p></div></div><div class="cash-bars finance-category-bars" id="finance-category-bars"></div></div></div><div class="card finance-history-card"><div class="card-head"><div><h3>Data kas</h3><p>Catat modal, pemasukan, pembelian, dan biaya operasional secara manual.</p></div><button class="primary" id="open-cash-entry"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input kas</button></div><div class="finance-history-filters"><input id="cash-entry-from" type="date" aria-label="Tanggal awal"><input id="cash-entry-to" type="date" aria-label="Tanggal akhir"><select id="cash-entry-type-filter" aria-label="Filter jenis arus kas"><option value="">Semua jenis</option><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select><input id="cash-entry-search" type="search" placeholder="Cari kategori atau deskripsi..." aria-label="Cari data kas"></div><div class="table finance-history-table" id="cash-entry-history"></div></div></section>
 
         <section class="page" id="penggajian"><div class="toolbar"><div><h3>Periode Agustus 2026</h3><p>Data dapat diubah sebelum ditutup</p></div><div class="payroll-toolbar-actions"><p>Komisi diambil otomatis dari layanan yang sudah dibayar.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input penggajian</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Gaji pokok, bonus, lembur, serta potongan dicatat manual. Komisi dihitung otomatis dari layanan yang sudah dibayar pada periode tersebut.</div></section>
 
-        <section class="page" id="log"><div class="card activity-card"><div class="card-head"><div><h3>Aktivitas perubahan data</h3><p>Hanya mencatat penambahan, perubahan, dan penghapusan data penting.</p></div></div><div class="filters"><input id="activity-filter-date" type="date" aria-label="Filter tanggal aktivitas"><select id="activity-filter-user" aria-label="Filter pengguna aktivitas"><option value="">Semua pengguna</option></select><select id="activity-filter-action" aria-label="Filter jenis aktivitas"><option value="">Semua jenis perubahan</option></select></div><div id="activity-list"></div></div></section>
+        <section class="page" id="log"><div class="card activity-card"><div class="card-head"><div><h3>Aktivitas perubahan data</h3><p>Jejak reservasi, stok opname, penjualan, dan perubahan data penting.</p></div></div><div class="filters activity-filters"><label class="activity-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="activity-search" type="search" placeholder="Cari customer, aktivitas, atau pengguna..." aria-label="Cari log aktivitas"></label><input id="activity-filter-date" type="date" aria-label="Filter tanggal aktivitas"><select id="activity-filter-user" aria-label="Filter pengguna aktivitas"><option value="">Semua pengguna</option></select><select id="activity-filter-action" aria-label="Filter kategori aktivitas"><option value="">Semua kategori aktivitas</option></select></div><div id="activity-list"></div></div></section>
     </main>
 </div>
 
@@ -178,7 +208,7 @@
                 <label><input type="radio" name="customer_type" value="member"> Member terdaftar</label>
             </fieldset>
             <div id="reservation-member-picker" class="reservation-member-picker" hidden>
-                <label>Pilih member<select id="reservation-member-id" name="member_id"><option value="">Pilih member</option></select></label>
+                <label>Pilih member</label><div class="reservation-member-combobox"><button id="reservation-member-trigger" class="reservation-member-trigger" type="button" aria-expanded="false" aria-controls="reservation-member-results"><span id="reservation-member-trigger-label">Pilih member</span><i class="material-symbols-outlined" aria-hidden="true">expand_more</i></button><div id="reservation-member-results" class="reservation-member-results" role="listbox" hidden><div class="reservation-member-search"><input id="reservation-member-search" type="text" autocomplete="off" placeholder="Cari nama atau nomor telepon..."></div><div id="reservation-member-options" class="reservation-member-options"></div></div></div><input id="reservation-member-id" name="member_id" type="hidden">
                 <p id="reservation-member-preview">Pilih member untuk memakai data pelanggan yang sudah terdaftar.</p>
             </div>
             <div class="form-grid">

@@ -98,16 +98,17 @@ class SalonSnapshotService
         if ($this->can($user, 'activity.view')) {
             $snapshot['activities'] = DB::table('activity_logs as activity')
                 ->leftJoin('users as user', 'user.id', '=', 'activity.user_id')
-                ->where(function ($query): void {
-                    $query->where('activity.action', 'like', '%.created')
-                        ->orWhere('activity.action', 'like', '%.updated')
-                        ->orWhere('activity.action', 'like', '%.deleted')
-                        ->orWhere('activity.action', 'like', '%.activated')
-                        ->orWhere('activity.action', 'like', '%.deactivated')
-                        ->orWhere('activity.action', 'like', '%.adjusted')
-                        ->orWhere('activity.action', 'like', '%added%')
-                        ->orWhere('activity.action', 'like', '%removed%');
+                ->leftJoin('reservations as reservation', function ($join): void {
+                    $join->on('reservation.id', '=', 'activity.subject_id')
+                        ->where('activity.subject_type', '=', 'reservation');
                 })
+                ->leftJoin('reservation_items as reservationItem', function ($join): void {
+                    $join->on('reservationItem.id', '=', 'activity.subject_id')
+                        ->where('activity.subject_type', '=', 'reservation_item');
+                })
+                ->leftJoin('reservations as itemReservation', 'itemReservation.id', '=', 'reservationItem.reservation_id')
+                ->leftJoin('customers as reservationCustomer', 'reservationCustomer.id', '=', 'reservation.customer_id')
+                ->leftJoin('customers as itemCustomer', 'itemCustomer.id', '=', 'itemReservation.customer_id')
                 ->latest('activity.created_at')
                 ->limit(50)
                 ->get([
@@ -119,6 +120,8 @@ class SalonSnapshotService
                     'activity.metadata',
                     'activity.created_at',
                     'user.name as user_name',
+                    DB::raw('COALESCE(reservationCustomer.name, itemCustomer.name) as reservation_customer_name'),
+                    DB::raw('COALESCE(reservation.queue_number, itemReservation.queue_number) as reservation_queue_number'),
                 ])
                 ->map(function (object $activity): object {
                     $activity->metadata = $activity->metadata ? json_decode($activity->metadata, true) : null;
@@ -842,6 +845,36 @@ class SalonSnapshotService
                 'arrived_today' => $arrivedCount,
                 'serving_today' => (clone $activeReservations)->where('status', 'in_service')->count(),
                 'arrival_percent' => $reservationCount ? intdiv(($arrivedCount * 100) + intdiv($reservationCount, 2), $reservationCount) : 0,
+            ];
+        }
+
+        if ($this->canAny($user, ['reservations.view', 'reservations.create'])) {
+            $therapists = DB::table('employees as employee')
+                ->leftJoin('employee_attendances as attendance', function ($join) use ($today): void {
+                    $join->on('attendance.employee_id', '=', 'employee.id')
+                        ->where('attendance.attendance_date', '=', $today->toDateString());
+                })
+                ->where('employee.active', true)
+                ->where('employee.is_service_provider', true)
+                ->orderBy('employee.name')
+                ->get([
+                    'employee.id as employee_id',
+                    'employee.name',
+                    'employee.specialty',
+                    'attendance.status',
+                ])
+                ->map(fn (object $therapist): array => [
+                    'employee_id' => (int) $therapist->employee_id,
+                    'name' => $therapist->name,
+                    'specialty' => $therapist->specialty,
+                    // Sama seperti halaman kehadiran: tanpa catatan berarti masuk.
+                    'status' => $therapist->status ?: 'present',
+                ])
+                ->values();
+
+            $data['therapist_attendance_today'] = [
+                'present' => $therapists->where('status', 'present')->values()->all(),
+                'off' => $therapists->where('status', 'off')->values()->all(),
             ];
         }
 
