@@ -79,6 +79,7 @@ let reservationCalendarTooltipListenersBound = false;
 let reservationCalendarTooltipAnchor = null;
 let therapistAttendanceDate = null;
 let therapistAttendance = [];
+let stocktakeDraft = new Map();
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
@@ -88,6 +89,7 @@ const copy = {
     treatment: ['Treatment', 'Kelola menu, paket, harga, dan resep produk'],
     membership: ['Membership', 'Data member dan program khusus'],
     stok: ['Produk & Stok', 'Pantau persediaan dan pergerakan produk'],
+    'stok-opname': ['Stok opname', 'Tambahkan stok produk yang baru masuk'],
     penjualan: ['Penjualan', 'Riwayat transaksi lunas dan cetak ulang nota'],
     keuangan: ['Keuangan', 'Arus kas dan laporan transaksi'],
     penggajian: ['Penggajian', 'Gaji, bonus, keterlambatan, dan komisi'],
@@ -583,17 +585,19 @@ function statusClass(status) {
 }
 
 function openPage(id) {
-    const nav = document.querySelector(`#navigation [data-page="${id}"]`);
+    const navigationPage = id === 'stok-opname' ? 'stok' : id;
+    const nav = document.querySelector(`#navigation [data-page="${navigationPage}"]`);
     const page = document.getElementById(id);
     if (!nav || !page) return;
 
     document.querySelectorAll('.page').forEach((element) => element.classList.remove('active'));
     page.classList.add('active');
     document.querySelectorAll('#navigation [data-page]').forEach((element) => {
-        element.classList.toggle('active', element.dataset.page === id);
+        element.classList.toggle('active', element.dataset.page === navigationPage);
     });
-    document.getElementById('page-title').textContent = copy[id][0];
-    document.getElementById('page-subtitle').textContent = copy[id][1];
+    const pageCopy = copy[id] || copy[navigationPage];
+    document.getElementById('page-title').textContent = pageCopy[0];
+    document.getElementById('page-subtitle').textContent = pageCopy[1];
     history.replaceState(null, '', `#${id}`);
     scrollTo(0, 0);
 }
@@ -1350,6 +1354,7 @@ function compactReceiptPrintLegacy(receipt, format) {
 
 function printReceipt(receipt, format) {
     const compact = format === 'struk';
+    const receiptMoney = (value) => money(value).replace(/^Rp\s+/, 'Rp');
     if (!compact && receipt.transactionId) {
         const preview = window.open(`/operasional/penjualan/${Number(receipt.transactionId)}/nota.pdf`, '_blank');
         if (!preview) toast('Popup nota diblokir browser. Izinkan popup lalu coba lagi.', true);
@@ -1361,62 +1366,57 @@ function printReceipt(receipt, format) {
         return;
     }
 
-    const itemRows = receipt.items.map((item) => `<div class="receipt-item">
-        <div><b>${escapeHtml(item.name)}</b><span>${escapeHtml(String(item.quantity))} x ${money(item.unitPrice)}</span></div>
-        <b class="receipt-item-total">${money(item.total)}</b>
-    </div>`).join('');
+    const itemRows = receipt.items.map((item) => `<tr class="receipt-item-name"><td colspan="2">${escapeHtml(item.name)}</td></tr><tr class="receipt-item-detail"><td>${escapeHtml(String(item.quantity))} x ${receiptMoney(item.unitPrice)}</td><td>${receiptMoney(item.total)}</td></tr>`).join('');
     const cashPayments = receipt.payments.filter((payment) => payment.isCash);
     const nonCashPayments = receipt.payments.filter((payment) => !payment.isCash);
     const paymentRows = [
-        ...cashPayments.map((payment) => `<p><span>Tunai</span><i>:</i><b>${money(payment.tenderedAmount)}</b></p>`),
-        ...nonCashPayments.map((payment) => `<p><span>${escapeHtml(payment.name)}</span><i>:</i><b>${money(payment.amount)}</b></p>`),
-        ...(receipt.change > 0 ? [`<p><span>Kembali</span><i>:</i><b>${money(receipt.change)}</b></p>`] : []),
+        ...cashPayments.map((payment) => `<tr><td class="receipt-summary-label">Tunai</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(payment.tenderedAmount)}</td></tr>`),
+        ...nonCashPayments.map((payment) => `<tr><td class="receipt-summary-label">${escapeHtml(payment.name)}</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(payment.amount)}</td></tr>`),
+        ...(receipt.change > 0 ? [`<tr><td class="receipt-summary-label">Kembali</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.change)}</td></tr>`] : []),
     ].join('');
     const totals = [
-        `<p><span>Subtotal</span><i>:</i><b>${money(receipt.subtotal)}</b></p>`,
-        ...(receipt.discount ? [`<p><span>Diskon member</span><i>:</i><b>-${money(receipt.discount)}</b></p>`] : []),
-        `<p><span>Total</span><i>:</i><b>${money(receipt.total)}</b></p>`,
-        `<p class="grand-total"><span>Grand Total</span><i>:</i><b>${money(receipt.total)}</b></p>`,
+        `<tr><td class="receipt-summary-label">Subtotal</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.subtotal)}</td></tr>`,
+        ...(receipt.discount ? [`<tr><td class="receipt-summary-label">Diskon member</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">-${receiptMoney(receipt.discount)}</td></tr>`] : []),
+        `<tr><td class="receipt-summary-label">Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
+        `<tr class="grand-total"><td class="receipt-summary-label">Grand Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
     ].join('');
     const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
-    const pageSize = compact ? '58mm auto' : 'A4';
+    const pageSize = 'A4';
     const sheetClass = compact ? 'thermal' : 'nota';
+    const receiptHeader = compact
+        ? `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa">`
+        : `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa"><p class="receipt-code">${escapeHtml(receipt.number)}</p>`;
 
     documentWindow.document.write(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
 <style>
 @page{size:${pageSize};margin:${compact ? '3mm 4mm' : '16mm'}}
 *{box-sizing:border-box}
-body{margin:0;color:#202020;background:#fff;font-family:"Courier New",Courier,monospace;font-size:${compact ? '10px' : '12px'};line-height:${compact ? '1.22' : '1.28'}}
-.sheet{margin:0 auto}.sheet.thermal{width:50mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
-.receipt-header{text-align:center}.receipt-header img{display:block;width:${compact ? '24mm' : '56mm'};height:auto;margin:0 auto 3px;filter:grayscale(1) contrast(1.35)}
-.receipt-code{margin-top:1px;font-size:${compact ? '9px' : '12px'};font-weight:700}
-.dash{border-top:1px dashed #4d4d4d;margin:${compact ? '4px 0 3px' : '7px 0 6px'}.dash.thin{margin:${compact ? '3px 0' : '6px 0'}}
-.receipt-meta{margin:0;font-size:${compact ? '9px' : '11px'}}.receipt-meta p{display:grid;grid-template-columns:max-content ${compact ? '2.5mm' : '3mm'} minmax(0,1fr);gap:1px;margin:1px 0}.receipt-meta span{text-align:right}.receipt-meta b{text-align:right;font-weight:700;white-space:nowrap}.receipt-meta i{font-style:normal;text-align:center}.receipt-totals p,.receipt-payments p{display:grid;grid-template-columns:1fr ${compact ? '2.5mm' : '3mm'} auto;gap:1px;margin:1px 0}.receipt-totals span,.receipt-payments span{text-align:right}.receipt-totals b,.receipt-payments b{text-align:right;font-weight:700}.receipt-totals i,.receipt-payments i{font-style:normal;text-align:center}
-.reprint{text-align:center;font-size:${compact ? '9px' : '15px'};font-weight:700;margin:0}
-.receipt-item{display:grid;grid-template-columns:1fr auto;gap:${compact ? '2px' : '4px'};padding:1px 0}.receipt-item b{display:block}.receipt-item span{display:block;padding-left:${compact ? '1.5mm' : '2mm'};margin-top:0}.receipt-item-total{align-self:end;white-space:nowrap}
-.receipt-totals{margin-top:0}.receipt-totals p{margin:0;padding:${compact ? '1px 0' : '2px 0'};border-bottom:1px dashed #4d4d4d}.receipt-totals .grand-total{font-size:${compact ? '11px' : '16px'};margin-top:2px;font-weight:700}.receipt-payments p{margin:${compact ? '1px 0' : '2px 0'}}.receipt-footer{text-align:center;margin-top:${compact ? '4px' : '7px'}}.receipt-footer strong{display:block;font-size:${compact ? '9px' : '15px'};margin-bottom:${compact ? '3px' : '5px'}}.receipt-footer p{margin:1px 0;text-align:left;padding-left:${compact ? '1.5mm' : '15mm'}}
+body{margin:0;color:#202020;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:${compact ? '9px' : '12px'};line-height:${compact ? '1.3' : '1.3'}}
+.sheet{margin:0 auto}.sheet.thermal{width:56mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
+.receipt-header{height:${compact ? '58mm' : 'auto'};padding-top:${compact ? '18mm' : '0'};text-align:center}.receipt-header img{display:block;width:${compact ? '28mm' : '56mm'};height:auto;margin:0 auto ${compact ? '1.5mm' : '3px'};filter:grayscale(1) contrast(1.35)}.receipt-brand{margin:0;font-size:${compact ? '16px' : '20px'};font-weight:700;line-height:1}
+.receipt-code{margin:0;font-size:${compact ? '9px' : '12px'};font-weight:700}
+.dash{border-top:1px dashed #777;margin:${compact ? '0 0 2mm' : '7px 0 6px'}}.dash.thin{margin:${compact ? '2mm 0' : '6px 0'}}
+.receipt-meta,.receipt-items,.receipt-totals,.receipt-payments,.receipt-contact{width:100%;border-collapse:collapse}.receipt-meta{font-size:${compact ? '9px' : '11px'}}.receipt-meta td{padding:${compact ? '.45mm 0' : '1px 0'}}.receipt-meta td:nth-child(1){width:${compact ? '17mm' : 'max-content'};white-space:nowrap}.receipt-meta td:nth-child(2){width:3mm;text-align:center}.receipt-meta td:nth-child(3){padding-left:${compact ? '.7mm' : '2px'};font-weight:400;white-space:nowrap}
+.receipt-items{table-layout:fixed}.receipt-items td{padding:0}.receipt-item-name td{padding-top:${compact ? '.75mm' : '2px'};font-weight:400}.receipt-item-detail td{padding:${compact ? '.2mm 0 .75mm 1.5mm' : '1px 0 2px 2mm'}}.receipt-item-detail td:first-child{width:${compact ? '36mm' : 'auto'}}.receipt-item-detail td:last-child{width:${compact ? '20mm' : 'auto'};padding-left:${compact ? '2mm' : '4px'};text-align:right;font-weight:400;white-space:nowrap}
+.receipt-totals,.receipt-payments{table-layout:fixed}.receipt-totals td,.receipt-payments td{padding:${compact ? '1.1mm 0' : '2px 0'}}.receipt-totals tr,.receipt-payments tr{border-bottom:1px dashed #777}.receipt-summary-label{width:${compact ? '33mm' : 'auto'};text-align:right}.receipt-summary-colon{width:3mm;text-align:center}.receipt-summary-amount{width:${compact ? '20mm' : 'auto'};text-align:right;white-space:nowrap}.receipt-totals .grand-total,.receipt-totals .grand-total td{font-size:${compact ? '10px' : '16px'};font-weight:700}
+.reprint{text-align:center;font-size:${compact ? '9px' : '15px'};font-weight:400;margin:0}
+.receipt-footer{text-align:center;margin-top:${compact ? '2.5mm' : '7px'}}.receipt-footer strong{display:block;padding-bottom:${compact ? '1.5mm' : '5px'};border-bottom:1px dashed #777;font-size:${compact ? '9px' : '15px'};margin-bottom:${compact ? '1.5mm' : '5px'}}.receipt-footer p{margin:${compact ? '.6mm 0' : '1px 0'};text-align:left;padding-left:${compact ? '1.5mm' : '15mm'}}
 @media print{body{background:#fff}}
 </style></head><body>
 <main class="sheet ${sheetClass}">
     <header class="receipt-header">
-        <img src="${escapeHtml(logoUrl)}" alt="Logo Selesa">
-        <p class="receipt-code">${escapeHtml(receipt.number)}</p>
+        ${receiptHeader}
     </header>
     <div class="dash"></div>
-    <section class="receipt-meta">
-        <p><span>Pelanggan</span><i>:</i><b>${escapeHtml(receipt.customer)}</b></p>
-        <p><span>Transaksi</span><i>:</i><b>${escapeHtml(receipt.date)}</b></p>
-        <p><span>Karyawan</span><i>:</i><b>${escapeHtml(receipt.cashier)}</b></p>
-    </section>
+    <table class="receipt-meta"><tbody><tr><td>Pelanggan</td><td>:</td><td>${escapeHtml(receipt.customer)}</td></tr><tr><td>Transaksi</td><td>:</td><td>${escapeHtml(receipt.date)}</td></tr><tr><td>Karyawan</td><td>:</td><td>${escapeHtml(receipt.cashier)}</td></tr></tbody></table>
     <div class="dash thin"></div>
     <p class="reprint">Cetak Ulang</p>
     <div class="dash thin"></div>
-    <section class="receipt-items">${itemRows}</section>
+    <table class="receipt-items"><tbody>${itemRows}</tbody></table>
     <div class="dash thin"></div>
-    <section class="receipt-totals">${totals}</section>
-    <section class="receipt-payments">${paymentRows}</section>
-    <div class="dash thin"></div>
+    <table class="receipt-totals"><tbody>${totals}</tbody></table>
+    <table class="receipt-payments"><tbody>${paymentRows}</tbody></table>
     <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>Whatsapp&nbsp;&nbsp;: 081128702019</p><p>Instagram&nbsp;: @selesa.salonspa</p></footer>
 </main>
 <script>window.addEventListener('load',()=>window.print());<\/script>
@@ -1742,6 +1742,145 @@ function renderStock() {
         if (!product) return;
         button.onclick = () => openProductEdit(product);
     });
+}
+
+function formatStockQuantity(value) {
+    return Number(value || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 });
+}
+
+function stocktakeProducts() {
+    return array(state.products).filter((product) => Number(product.is_active ?? product.active ?? 1) === 1);
+}
+
+function renderStocktakeSummary() {
+    const products = stocktakeProducts();
+    const productById = new Map(products.map((product) => [Number(product.id), product]));
+    const filledEntries = [...stocktakeDraft.entries()].filter(([id, entry]) => (
+        productById.has(Number(id)) && String(entry.quantity ?? '').trim() !== ''
+    ));
+
+    const productCount = document.getElementById('stocktake-product-count');
+    const filledCount = document.getElementById('stocktake-filled-count');
+    const submitButton = document.getElementById('stocktake-submit');
+    if (productCount) productCount.textContent = products.length;
+    if (filledCount) filledCount.textContent = filledEntries.length;
+    if (submitButton) submitButton.disabled = filledEntries.length === 0;
+}
+
+function renderStocktake() {
+    const products = stocktakeProducts();
+    const search = document.getElementById('stocktake-search')?.value.trim().toLowerCase() || '';
+    const categorySelect = document.getElementById('stocktake-category');
+    const selectedCategory = categorySelect?.value || '';
+    const categories = [...new Set(products.map((product) => String(product.category || '').trim()).filter(Boolean))]
+        .sort((first, second) => first.localeCompare(second, 'id'));
+
+    if (categorySelect) {
+        categorySelect.innerHTML = `<option value="">Semua kategori</option>${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('')}`;
+        if (categories.includes(selectedCategory)) categorySelect.value = selectedCategory;
+    }
+
+    const visibleProducts = products.filter((product) => (
+        (!selectedCategory || String(product.category || '') === selectedCategory)
+        && (!search || [product.name, product.code, product.category].some((value) => String(value || '').toLowerCase().includes(search)))
+    ));
+    const list = document.getElementById('stocktake-list');
+    if (!list) return;
+
+    list.innerHTML = visibleProducts.length ? visibleProducts.map((product) => {
+        const id = Number(product.id);
+        const draft = stocktakeDraft.get(id) || {};
+        const unit = productUnit(product);
+        return `<div class="stocktake-row" data-product-id="${id}">
+            <span class="stocktake-product"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || '-')}</small></span>
+            <span class="stocktake-system"><b>${formatStockQuantity(productStock(product))} ${escapeHtml(unit)}</b><small>Stok saat ini</small></span>
+            <label><span class="sr-only">Jumlah stok masuk ${escapeHtml(product.name)}</span><div class="stocktake-input-wrap"><input type="number" min="0.0001" step="0.0001" inputmode="decimal" data-stocktake-field="quantity" value="${escapeHtml(draft.quantity ?? '')}" placeholder="Jumlah masuk"><small>${escapeHtml(unit)}</small></div></label>
+            <label><span class="sr-only">Catatan ${escapeHtml(product.name)}</span><input type="text" maxlength="1000" data-stocktake-field="notes" value="${escapeHtml(draft.notes ?? '')}" placeholder="Catatan opsional"></label>
+        </div>`;
+    }).join('') : '<p class="empty-state">Tidak ada produk yang cocok dengan pencarian.</p>';
+
+    list.querySelectorAll('.stocktake-row').forEach((row) => {
+        const product = visibleProducts.find((item) => Number(item.id) === Number(row.dataset.productId));
+        if (!product) return;
+        const id = Number(product.id);
+        row.classList.toggle('filled', String(stocktakeDraft.get(id)?.quantity ?? '').trim() !== '');
+
+        row.querySelectorAll('[data-stocktake-field]').forEach((input) => {
+            input.addEventListener('input', () => {
+                const draft = { ...(stocktakeDraft.get(id) || {}), [input.dataset.stocktakeField]: input.value };
+                if (String(draft.quantity ?? '') === '' && String(draft.notes ?? '') === '') stocktakeDraft.delete(id);
+                else stocktakeDraft.set(id, draft);
+                row.classList.toggle('filled', String(draft.quantity ?? '').trim() !== '');
+                renderStocktakeSummary();
+            });
+        });
+    });
+
+    renderStocktakeSummary();
+}
+
+async function submitStocktake(event) {
+    event.preventDefault();
+    const productById = new Map(stocktakeProducts().map((product) => [Number(product.id), product]));
+    const entries = [...stocktakeDraft.entries()]
+        .filter(([id, entry]) => productById.has(Number(id)) && String(entry.quantity ?? '').trim() !== '')
+        .map(([id, entry]) => ({ id: Number(id), product: productById.get(Number(id)), ...entry }));
+
+    if (!entries.length) {
+        toast('Isi jumlah masuk minimal satu produk.', true);
+        return;
+    }
+
+    const invalidEntry = entries.find((entry) => (
+        !/^\d{1,14}(?:\.\d{1,4})?$/.test(String(entry.quantity).trim())
+        || Number(entry.quantity) <= 0
+    ));
+    if (invalidEntry) {
+        toast(`Jumlah masuk ${invalidEntry.product.name} harus lebih dari nol dan maksimal 4 angka desimal.`, true);
+        return;
+    }
+
+    const confirmed = await confirmAction({
+        title: 'Tambahkan stok masuk?',
+        message: `Stok ${entries.length} produk akan ditambah sesuai jumlah yang kamu isi.`,
+        confirmLabel: 'Tambah stok',
+        icon: 'add_box',
+    });
+    if (!confirmed) return;
+
+    const submitButton = document.getElementById('stocktake-submit');
+    const originalLabel = submitButton?.innerHTML;
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">progress_activity</span> Menyimpan...';
+    }
+
+    let saved = 0;
+    try {
+        for (const entry of entries) {
+            await api(`/operasional/produk/${entry.id}/stok`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    type: 'masuk',
+                    quantity: String(entry.quantity).trim(),
+                    source: 'Stok masuk',
+                    notes: String(entry.notes || '').trim() || null,
+                }),
+            });
+            stocktakeDraft.delete(entry.id);
+            saved += 1;
+        }
+        await refresh();
+        renderStocktake();
+        toast(`Stok masuk ${saved} produk berhasil ditambahkan.`);
+    } catch (error) {
+        await refresh().catch(() => {});
+        renderStocktake();
+        toast(saved ? `${saved} produk tersimpan. Proses berhenti: ${error.message}` : error.message, true);
+    } finally {
+        if (submitButton) submitButton.innerHTML = originalLabel;
+        renderStocktakeSummary();
+    }
 }
 
 function openProductEdit(product) {
@@ -2315,6 +2454,25 @@ function activityCategory(action) {
     return 'Aktivitas sistem';
 }
 
+function activityIcon(action) {
+    const category = activityCategory(action);
+    return {
+        Reservasi: 'calendar_month',
+        'Stok opname': 'inventory_2',
+        Produk: 'inventory',
+        Treatment: 'spa',
+        Penjualan: 'payments',
+        Retur: 'assignment_return',
+        'Arus kas': 'account_balance_wallet',
+        Penggajian: 'payments',
+        Membership: 'workspace_premium',
+        'Promo membership': 'campaign',
+        Pegawai: 'badge',
+        'Kehadiran therapist': 'event_available',
+        Pengaturan: 'settings',
+    }[category] || 'work_history';
+}
+
 function renderActivity() {
     const box = document.getElementById('activity-list');
     if (!box) return;
@@ -2322,6 +2480,7 @@ function renderActivity() {
     const dateFilter = document.getElementById('activity-filter-date');
     const userFilter = document.getElementById('activity-filter-user');
     const actionFilter = document.getElementById('activity-filter-action');
+    const searchFilter = document.getElementById('activity-search');
     const users = [...new Set(activities.map((activity) => activity.user_name || 'Sistem'))].sort((a, b) => a.localeCompare(b, 'id'));
     const actions = [...new Set(activities.map((activity) => activityCategory(activity.action)))].sort((a, b) => a.localeCompare(b, 'id'));
 
@@ -2336,16 +2495,27 @@ function renderActivity() {
         actionFilter.value = actions.includes(selected) ? selected : '';
     }
 
-    const rows = activities.filter((activity) => (
-        (!dateFilter?.value || String(activity.created_at || '').slice(0, 10) === dateFilter.value)
-        && (!userFilter?.value || (activity.user_name || 'Sistem') === userFilter.value)
-        && (!actionFilter?.value || activityCategory(activity.action) === actionFilter.value)
-    ));
+    const searchTerm = String(searchFilter?.value || '').trim().toLocaleLowerCase('id-ID');
+    const rows = activities.filter((activity) => {
+        const searchable = [
+            activityCategory(activity.action),
+            activity.description,
+            activity.reservation_customer_name,
+            activity.reservation_queue_number,
+            activity.user_name || 'Sistem',
+            activity.action,
+        ].join(' ').toLocaleLowerCase('id-ID');
+
+        return (!dateFilter?.value || String(activity.created_at || '').slice(0, 10) === dateFilter.value)
+            && (!userFilter?.value || (activity.user_name || 'Sistem') === userFilter.value)
+            && (!actionFilter?.value || activityCategory(activity.action) === actionFilter.value)
+            && (!searchTerm || searchable.includes(searchTerm));
+    });
 
     box.innerHTML = rows.map((activity) => `<div class="activity">
         <time>${new Date(activity.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-        <i class="material-symbols-outlined">work_history</i>
-        <span><b>${escapeHtml(activityCategory(activity.action))}</b><small>${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small></span>
+        <i class="material-symbols-outlined">${activityIcon(activity.action)}</i>
+        <span><b>${escapeHtml(activity.description || activityCategory(activity.action))}</b><small>${activity.reservation_customer_name ? `Customer: ${escapeHtml(activity.reservation_customer_name)}${activity.reservation_queue_number ? ` (${escapeHtml(activity.reservation_queue_number)})` : ''} · ` : ''}Oleh ${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small><em>${escapeHtml(activityCategory(activity.action))}</em></span>
     </div>`).join('') || '<p class="empty-state">Tidak ada aktivitas yang sesuai filter.</p>';
 }
 
@@ -2521,6 +2691,21 @@ function renderDashboard() {
             ? alerts.map((alert) => `<div class="treatment-stock-alert"><i class="material-symbols-outlined" aria-hidden="true">warning</i><span><b>${escapeHtml(alert.treatment_name)}</b><small>${escapeHtml(alert.product_name)} · tersisa ${Number(alert.current_stock || 0).toLocaleString('id-ID')} ${escapeHtml(alert.unit || '')}</small></span><em>Menipis</em></div>`).join('')
             : '<p class="empty-state">Semua bahan resep aman. Menu treatment siap dijual.</p>';
     }
+
+    const therapistAvailability = document.getElementById('therapist-availability');
+    if (therapistAvailability) {
+        const attendance = dashboard.therapist_attendance_today || {};
+        const present = array(attendance.present);
+        const off = array(attendance.off);
+        const names = (therapists) => therapists.length
+            ? therapists.map((therapist) => `<span class="therapist-name">${escapeHtml(therapist.name)}</span>`).join('')
+            : '<small>Tidak ada</small>';
+
+        therapistAvailability.innerHTML = `<div class="therapist-attendance-summary">
+            <span><i class="material-symbols-outlined present" aria-hidden="true">check_circle</i><b>${present.length}</b><small>hadir</small></span>
+            <span><i class="material-symbols-outlined off" aria-hidden="true">event_busy</i><b>${off.length}</b><small>libur</small></span>
+        </div><div class="therapist-attendance-status present"><div><i class="material-symbols-outlined" aria-hidden="true">check</i><b>Hadir</b></div><p>${names(present)}</p></div><div class="therapist-attendance-status off"><div><i class="material-symbols-outlined" aria-hidden="true">hotel</i><b>Libur</b></div><p>${names(off)}</p></div>`;
+    }
 }
 
 function renderAll() {
@@ -2531,6 +2716,7 @@ function renderAll() {
     renderTreatments();
     renderMembers();
     renderStock();
+    renderStocktake();
     renderSales();
     renderFinance();
     renderPayroll();
@@ -2556,10 +2742,22 @@ function treatmentOptions(selected = '') {
 function addStaffRow(container, role = 'primary') {
     const row = document.createElement('div');
     row.className = 'staff-row';
-    row.innerHTML = `<label>Therapist<select class="item-employee" required><option value="">Pilih therapist</option>${employeeOptions()}</select></label>
+    row.innerHTML = `<label class="therapist-picker-label">Therapist<select class="item-employee" aria-hidden="true" tabindex="-1"><option value="">Pilih therapist</option>${employeeOptions()}</select><button type="button" class="therapist-picker" aria-haspopup="listbox" aria-expanded="false"><span>Pilih therapist</span><i class="material-symbols-outlined" aria-hidden="true">expand_more</i></button><div class="therapist-picker-menu" role="listbox" hidden></div></label>
         <label>Peran<select class="item-staff-role"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
         <button type="button" class="icon-button remove-staff" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
+    row.querySelector('.item-employee').addEventListener('change', () => {
+        renderReservationTherapistPicker(row, container.closest('.reservation-item-card')?._therapistAvailability || []);
+    });
+    row.querySelector('.therapist-picker').addEventListener('click', () => toggleReservationTherapistPicker(row));
+    row.querySelector('.therapist-picker-menu').addEventListener('click', (event) => {
+        const option = event.target.closest('[data-employee-id]');
+        if (!option || option.disabled) return;
+        row.querySelector('.item-employee').value = option.dataset.employeeId;
+        row.querySelector('.item-employee').dispatchEvent(new Event('change'));
+        closeReservationTherapistPickers();
+    });
+    renderReservationTherapistPicker(row, []);
     row.querySelector('.remove-staff').onclick = () => {
         if (container.children.length <= 1) {
             toast('Setiap treatment minimal memiliki satu therapist.', true);
@@ -2567,6 +2765,135 @@ function addStaffRow(container, role = 'primary') {
         }
         row.remove();
     };
+}
+
+function reservationReadyTime(value) {
+    if (!value) return null;
+    const ready = new Date(String(value).includes('T') ? value : String(value).replace(' ', 'T'));
+
+    return Number.isNaN(ready.getTime()) ? null : ready;
+}
+
+function reservationDurationLabel(minutes) {
+    const total = Math.max(0, Math.round(minutes));
+    const hours = Math.floor(total / 60);
+    const remainder = total % 60;
+
+    if (hours && remainder) return `${hours} jam ${remainder} menit`;
+    if (hours) return `${hours} jam`;
+    return `${remainder} menit`;
+}
+
+function reservationTherapistConflict(row, employee) {
+    const conflicts = array(employee?.conflicts);
+    if (!conflicts.length) return null;
+
+    const conflict = conflicts
+        .map((item) => {
+            const end = reservationReadyTime(item.end_at);
+            const ready = reservationReadyTime(item.ready_at) || (end ? new Date(end.getTime() + (45 * 60 * 1000)) : null);
+
+            return { ...item, ready };
+        })
+        .filter((item) => item.ready)
+        .sort((left, right) => right.ready.getTime() - left.ready.getTime())[0];
+    if (!conflict) return null;
+
+    const selectedDate = document.getElementById('reservation-date')?.value;
+    const selectedTime = row.closest('.reservation-item-card')?.querySelector('.item-time')?.value;
+    const selectedStart = selectedDate && selectedTime ? new Date(`${selectedDate}T${selectedTime}:00`) : null;
+    const remaining = selectedStart && !Number.isNaN(selectedStart.getTime())
+        ? Math.max(0, Math.round((conflict.ready.getTime() - selectedStart.getTime()) / 60000))
+        : null;
+    const readyAt = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(conflict.ready);
+    const remainingLabel = remaining === null ? '' : ` · ${reservationDurationLabel(remaining)} lagi`;
+
+    return { readyAt, remainingLabel };
+}
+
+function closeReservationTherapistPickers(except = null) {
+    document.querySelectorAll('.therapist-picker-label').forEach((label) => {
+        if (label === except) return;
+        label.classList.remove('open', 'opens-up');
+        label.querySelector('.therapist-picker')?.setAttribute('aria-expanded', 'false');
+        const menu = label.querySelector('.therapist-picker-menu');
+        if (menu) menu.hidden = true;
+    });
+}
+
+function toggleReservationTherapistPicker(row) {
+    const label = row.querySelector('.therapist-picker-label');
+    const menu = row.querySelector('.therapist-picker-menu');
+    const picker = row.querySelector('.therapist-picker');
+    const opening = menu.hidden;
+    closeReservationTherapistPickers(label);
+    if (!opening) {
+        closeReservationTherapistPickers();
+        return;
+    }
+
+    menu.hidden = false;
+    label.classList.add('open');
+    picker.setAttribute('aria-expanded', 'true');
+    label.classList.toggle('opens-up', menu.getBoundingClientRect().bottom > window.innerHeight - 16);
+}
+
+function renderReservationTherapistPicker(row, availability) {
+    const select = row.querySelector('.item-employee');
+    const picker = row.querySelector('.therapist-picker');
+    const menu = row.querySelector('.therapist-picker-menu');
+    const employees = array(availability).length ? array(availability) : serviceProviders().map((employee) => ({ ...employee, available: true, conflicts: [] }));
+    let selectedId = Number(select.value || 0);
+    const selectedEmployee = employees.find((employee) => Number(employee.id) === selectedId);
+    const selectedConflict = reservationTherapistConflict(row, selectedEmployee);
+    if (selectedEmployee && ((selectedConflict && !selectedEmployee.available) || selectedEmployee.attendance_status === 'off')) {
+        select.value = '';
+        selectedId = 0;
+    }
+
+    const selected = employees.find((employee) => Number(employee.id) === selectedId);
+    picker.querySelector('span').textContent = selected
+        ? `${selected.name}${selected.specialty ? ` · ${selected.specialty}` : ''}`
+        : 'Pilih therapist';
+    menu.innerHTML = employees.map((employee) => {
+        const conflict = reservationTherapistConflict(row, employee);
+        const busy = !employee.available && Boolean(conflict);
+        const off = employee.attendance_status === 'off';
+        const unavailable = busy || off;
+        const detail = busy
+            ? `<small><i class="material-symbols-outlined" aria-hidden="true">schedule</i> Siap ${escapeHtml(conflict.readyAt)}${conflict.remainingLabel}</small>`
+            : off
+                ? '<small>Libur hari ini</small>'
+                : `<small>${escapeHtml(employee.specialty || employee.position || 'Therapist')}</small>`;
+
+        return `<button type="button" role="option" class="therapist-picker-option${unavailable ? ' unavailable' : ''}${Number(employee.id) === selectedId ? ' selected' : ''}" data-employee-id="${Number(employee.id)}" aria-selected="${Number(employee.id) === selectedId}" ${unavailable ? 'disabled' : ''}><span><b>${escapeHtml(employee.name)}</b>${detail}</span>${busy ? '<i class="material-symbols-outlined" aria-hidden="true">schedule</i>' : ''}</button>`;
+    }).join('') || '<p class="therapist-picker-empty">Tidak ada therapist tersedia.</p>';
+}
+
+async function refreshReservationTherapistAvailability(card) {
+    const date = document.getElementById('reservation-date')?.value;
+    const treatmentId = Number(card.querySelector('.item-treatment')?.value || 0);
+    const startTime = card.querySelector('.item-time')?.value;
+    const statusRows = () => card.querySelectorAll('.staff-row');
+
+    if (!date || !treatmentId || !startTime) {
+        card._therapistAvailability = [];
+        statusRows().forEach((row) => renderReservationTherapistPicker(row, []));
+        return;
+    }
+
+    const requestId = (card._therapistAvailabilityRequestId || 0) + 1;
+    card._therapistAvailabilityRequestId = requestId;
+    try {
+        const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(date)}&start_time=${encodeURIComponent(startTime)}&treatment_id=${treatmentId}`);
+        if (card._therapistAvailabilityRequestId !== requestId) return;
+        card._therapistAvailability = array(data.employees);
+        statusRows().forEach((row) => renderReservationTherapistPicker(row, card._therapistAvailability));
+    } catch {
+        if (card._therapistAvailabilityRequestId !== requestId) return;
+        card._therapistAvailability = [];
+        statusRows().forEach((row) => renderReservationTherapistPicker(row, []));
+    }
 }
 
 function reservationTimeOptions(selected = '09:00') {
@@ -2611,7 +2938,9 @@ function addReservationItem(values = {}) {
         const treatment = array(state.treatments).find((item) => Number(item.id) === Number(event.target.value));
         const priceInput = card.querySelector('.item-price');
         if (treatment && priceInput && !priceInput.value) priceInput.placeholder = String(treatmentPrice(treatment));
+        refreshReservationTherapistAvailability(card);
     };
+    card.querySelector('.item-time').addEventListener('change', () => refreshReservationTherapistAvailability(card));
 }
 
 function renumberReservationItems() {
@@ -2648,6 +2977,8 @@ function openReservationForm(values = {}) {
         therapist.value = String(values.employeeId);
     }
 
+    document.querySelectorAll('#reservation-items .reservation-item-card').forEach((card) => refreshReservationTherapistAvailability(card));
+
     modal('reservation-modal');
     requestAnimationFrame(() => document.querySelector('#reservation-form [name="name"]')?.focus());
 }
@@ -2656,18 +2987,23 @@ function syncReservationCustomerType() {
     const form = document.getElementById('reservation-form');
     const type = form?.querySelector('[name="customer_type"]:checked')?.value || 'guest';
     const picker = document.getElementById('reservation-member-picker');
-    const select = document.getElementById('reservation-member-id');
+    const memberId = document.getElementById('reservation-member-id');
+    const select = memberId;
+    const search = document.getElementById('reservation-member-search');
+    const clear = document.getElementById('reservation-member-clear');
+    const triggerLabel = document.getElementById('reservation-member-trigger-label');
     const preview = document.getElementById('reservation-member-preview');
     const name = form?.querySelector('[name="name"]');
     const phone = form?.querySelector('[name="phone"]');
     const isMember = type === 'member';
 
     if (picker) picker.hidden = !isMember;
+    if (!isMember) closeReservationMemberSearch();
     [name, phone].filter(Boolean).forEach((field) => {
         field.disabled = isMember;
         field.required = !isMember;
     });
-    if (select) {
+    if (select?.tagName === 'SELECT') {
         const selectedMemberId = select.value;
         select.required = isMember;
         select.innerHTML = `<option value="">Pilih member</option>${array(state.members).map((member) => `<option value="${Number(member.id)}">${escapeHtml(member.name)} · ${escapeHtml(member.phone || '-')}</option>`).join('')}`;
@@ -2676,10 +3012,67 @@ function syncReservationCustomerType() {
             : '';
     }
 
-    const member = array(state.members).find((item) => Number(item.id) === Number(select?.value));
+    const member = array(state.members).find((item) => Number(item.id) === Number(memberId?.value));
+    if (memberId && memberId.value && !member) memberId.value = '';
+    if (search && member) search.value = reservationMemberLabel(member);
+    if (clear) clear.hidden = !member;
+    if (triggerLabel) triggerLabel.textContent = member ? reservationMemberLabel(member) : 'Pilih member';
     if (preview) preview.textContent = member
         ? `${member.name} · ${member.phone || 'tanpa nomor telepon'} · Member sejak ${member.member_since ? new Date(`${member.member_since}T00:00:00`).toLocaleDateString('id-ID') : '-'}`
         : 'Pilih member untuk memakai data pelanggan yang sudah terdaftar.';
+}
+
+function reservationMemberLabel(member) {
+    return `${member.name} · ${member.phone || 'tanpa nomor telepon'}`;
+}
+
+function closeReservationMemberSearch() {
+    const results = document.getElementById('reservation-member-results');
+    const trigger = document.getElementById('reservation-member-trigger');
+    if (results) results.hidden = true;
+    if (results) results.style.display = '';
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+}
+
+function openReservationMemberSearch() {
+    const search = document.getElementById('reservation-member-search');
+    if (!search) return;
+
+    search.value = '';
+    renderReservationMemberResults();
+    requestAnimationFrame(() => search.focus());
+}
+
+function renderReservationMemberResults() {
+    const search = document.getElementById('reservation-member-search');
+    const results = document.getElementById('reservation-member-results');
+    const options = document.getElementById('reservation-member-options');
+    const memberId = document.getElementById('reservation-member-id');
+    const trigger = document.getElementById('reservation-member-trigger');
+    if (!search || !results || !options) return;
+
+    const query = search.value.trim().toLocaleLowerCase('id-ID');
+    const members = array(state.members)
+        .filter((member) => !query || `${member.name || ''} ${member.phone || ''}`.toLocaleLowerCase('id-ID').includes(query))
+        .slice(0, 30);
+    options.innerHTML = members.length
+        ? members.map((member) => `<button type="button" class="reservation-member-option${Number(member.id) === Number(memberId?.value) ? ' selected' : ''}" role="option" aria-selected="${Number(member.id) === Number(memberId?.value)}" data-member-id="${Number(member.id)}">${escapeHtml(reservationMemberLabel(member))}</button>`).join('')
+        : '<p class="reservation-member-empty">Member tidak ditemukan.</p>';
+    results.hidden = false;
+    results.style.display = 'block';
+    if (trigger) trigger.setAttribute('aria-expanded', 'true');
+}
+
+function selectReservationMember(memberId) {
+    const member = array(state.members).find((item) => Number(item.id) === Number(memberId));
+    const input = document.getElementById('reservation-member-id');
+    const search = document.getElementById('reservation-member-search');
+    if (!member || !input || !search) return;
+
+    input.value = String(member.id);
+    search.value = reservationMemberLabel(member);
+    closeReservationMemberSearch();
+    syncReservationCustomerType();
 }
 
 function collectReservationPayload(form) {
@@ -3032,12 +3425,13 @@ function quickForm(title, fields, submit) {
 
 function populateSelects() {
     const memberSelect = document.getElementById('reservation-member-id');
-    if (memberSelect) {
+    if (memberSelect?.tagName === 'SELECT') {
         const selected = memberSelect.value;
         memberSelect.innerHTML = `<option value="">Pilih member</option>${array(state.members).map((member) => `<option value="${Number(member.id)}">${escapeHtml(member.name)} · ${escapeHtml(member.phone || '-')}</option>`).join('')}`;
         memberSelect.value = [...memberSelect.options].some((option) => option.value === selected) ? selected : '';
         syncReservationCustomerType();
     }
+    syncReservationCustomerType();
 
     const employeeFilter = document.getElementById('reservation-filter-employee');
     if (employeeFilter) {
@@ -3220,6 +3614,7 @@ function initActivityControls() {
     ['activity-filter-date', 'activity-filter-user', 'activity-filter-action'].forEach((id) => {
         document.getElementById(id)?.addEventListener('change', renderActivity);
     });
+    document.getElementById('activity-search')?.addEventListener('input', renderActivity);
 }
 
 document.querySelectorAll('#navigation [data-page]').forEach((button) => {
@@ -3227,6 +3622,12 @@ document.querySelectorAll('#navigation [data-page]').forEach((button) => {
 });
 document.querySelectorAll('.go-reservation').forEach((button) => {
     button.onclick = () => openPage('reservasi');
+});
+document.querySelectorAll('.go-therapist-attendance').forEach((button) => {
+    button.onclick = () => {
+        openPage('reservasi');
+        document.querySelector('[data-reservation-view="attendance"]')?.click();
+    };
 });
 document.querySelectorAll('.go-stock').forEach((button) => {
     button.onclick = () => {
@@ -3252,6 +3653,12 @@ document.querySelectorAll('.open-reservation').forEach((button) => {
     };
 });
 document.getElementById('add-reservation-item')?.addEventListener('click', () => addReservationItem());
+document.getElementById('reservation-date')?.addEventListener('change', () => {
+    document.querySelectorAll('#reservation-items .reservation-item-card').forEach((card) => refreshReservationTherapistAvailability(card));
+});
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.therapist-picker-label')) closeReservationTherapistPickers();
+});
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
@@ -3336,6 +3743,37 @@ document.querySelectorAll('#reservation-form [name="customer_type"]').forEach((i
     input.addEventListener('change', syncReservationCustomerType);
 });
 document.getElementById('reservation-member-id')?.addEventListener('change', syncReservationCustomerType);
+function syncReservationMemberSearch() {
+    const search = document.getElementById('reservation-member-search');
+    const memberId = document.getElementById('reservation-member-id');
+    const clear = document.getElementById('reservation-member-clear');
+    const query = search?.value.trim().toLocaleLowerCase('id-ID') || '';
+    const member = array(state.members).find((item) => reservationMemberLabel(item).toLocaleLowerCase('id-ID') === query);
+
+    if (member) {
+        selectReservationMember(member.id);
+        return;
+    }
+
+    if (memberId) memberId.value = '';
+    if (clear) clear.hidden = true;
+    syncReservationCustomerType();
+    renderReservationMemberResults();
+}
+document.getElementById('reservation-member-search')?.addEventListener('input', syncReservationMemberSearch);
+document.getElementById('reservation-member-search')?.addEventListener('focus', renderReservationMemberResults);
+document.getElementById('reservation-member-trigger')?.addEventListener('click', () => {
+    const results = document.getElementById('reservation-member-results');
+    if (results?.hidden) openReservationMemberSearch();
+    else closeReservationMemberSearch();
+});
+document.getElementById('reservation-member-results')?.addEventListener('click', (event) => {
+    const option = event.target.closest('[data-member-id]');
+    if (option) selectReservationMember(option.dataset.memberId);
+});
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.reservation-member-combobox')) closeReservationMemberSearch();
+});
 
 document.getElementById('product-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -3574,16 +4012,20 @@ document.addEventListener('click', async (event) => {
     }
 });
 
-document.getElementById('open-stocktake')?.addEventListener('click', () => quickForm('Stok opname', [
-    ['product_id', 'Produk', 'select', array(state.products).map((product) => `${product.id}|${product.name}`)],
-    ['quantity', 'Stok aktual', 'number'],
-    ['source', 'Catatan', 'text'],
-], (data) => {
-    const id = data.product_id.split('|')[0];
-    delete data.product_id;
-    data.type = 'opname';
-    return api(`/operasional/produk/${id}/stok`, { method: 'PATCH', body: JSON.stringify(data) });
-}));
+document.getElementById('open-stocktake')?.addEventListener('click', () => {
+    renderStocktake();
+    openPage('stok-opname');
+    requestAnimationFrame(() => document.getElementById('stocktake-search')?.focus());
+});
+document.getElementById('stocktake-back')?.addEventListener('click', () => openPage('stok'));
+document.getElementById('stocktake-reset')?.addEventListener('click', () => {
+    stocktakeDraft.clear();
+    renderStocktake();
+    toast('Isian jumlah masuk dikosongkan.');
+});
+document.getElementById('stocktake-form')?.addEventListener('submit', submitStocktake);
+document.getElementById('stocktake-search')?.addEventListener('input', renderStocktake);
+document.getElementById('stocktake-category')?.addEventListener('change', renderStocktake);
 
 document.addEventListener('click', (event) => {
     if (event.target.closest('.go-stock-alerts')) openPage('stok');

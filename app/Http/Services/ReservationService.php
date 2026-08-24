@@ -723,6 +723,7 @@ class ReservationService
                         'booking_code' => $row->booking_code,
                         'start_at' => $row->scheduled_start_at,
                         'end_at' => $row->scheduled_end_at,
+                        'ready_at' => $row->scheduled_ready_at,
                     ])->values()->all(),
                 ];
             })
