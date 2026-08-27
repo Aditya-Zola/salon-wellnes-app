@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
+use ZipArchive;
 
 class SalonOperationsTest extends TestCase
 {
@@ -105,6 +106,43 @@ class SalonOperationsTest extends TestCase
         $this->assertSame($facial->name, $persistedSnapshot->treatment_name);
         $this->assertSame((int) $facial->normal_price, (int) $persistedSnapshot->normal_price);
         $this->assertSame((int) $facial->duration_minutes, (int) $persistedSnapshot->duration_minutes);
+    }
+
+    public function test_cashier_can_start_a_walk_in_transaction_from_the_cashier_page(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $payload = $this->reservationPayload([
+            $this->item($treatment->id, '15:00', [
+                ['employee_id' => $therapist->id, 'role' => 'primary'],
+            ]),
+        ], [
+            'name' => 'Pelanggan Walk-in Kasir',
+            'phone' => '081290000011',
+        ]);
+
+        $this->assertFalse($this->cashier->can('reservations.create'));
+        $this->actingAs($this->cashier)
+            ->get('/')
+            ->assertOk()
+            ->assertSee('id="cashier-new-transaction"', false)
+            ->assertSee('Transaksi baru');
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/reservasi', $payload)
+            ->assertForbidden();
+
+        $response = $this->actingAs($this->cashier)
+            ->postJson('/operasional/kasir/transaksi', $payload)
+            ->assertCreated()
+            ->assertJsonPath('reservation.customer_name', 'Pelanggan Walk-in Kasir')
+            ->assertJsonPath('reservation.is_paid', false);
+
+        $this->assertDatabaseHas('reservations', [
+            'id' => $response->json('id'),
+            'source' => 'walk_in',
+            'status' => 'scheduled',
+        ]);
     }
 
     public function test_payroll_can_be_created_for_a_registered_employee(): void
@@ -258,17 +296,79 @@ class SalonOperationsTest extends TestCase
             'phone' => '081290000089',
         ])->assertCreated();
 
+        $this->actingAs($this->admin)
+            ->get('/')
+            ->assertOk()
+            ->assertSee('id="export-schedule"', false);
+
         $schedule = $this->actingAs($this->admin)
             ->get('/operasional/reservasi/ekspor?date='.today()->toDateString())
             ->assertOk();
         $schedule->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        $this->assertStringStartsWith("PK\x03\x04", $schedule->streamedContent());
+        $scheduleContent = $schedule->streamedContent();
+        $this->assertStringStartsWith("PK\x03\x04", $scheduleContent);
+
+        $tempSchedule = tempnam(sys_get_temp_dir(), 'selesa-schedule-test-');
+        $this->assertNotFalse($tempSchedule);
+        file_put_contents($tempSchedule, $scheduleContent);
+        $workbook = new ZipArchive;
+        $this->assertTrue($workbook->open($tempSchedule));
+        try {
+            $worksheet = $workbook->getFromName('xl/worksheets/sheet1.xml');
+            $styles = $workbook->getFromName('xl/styles.xml');
+            $this->assertIsString($worksheet);
+            $this->assertIsString($styles);
+            $this->assertStringContainsString('BOOKING', $worksheet);
+            $this->assertStringContainsString('NOMINAL SATUAN', $worksheet);
+            $this->assertStringContainsString('KOMISI SATUAN', $worksheet);
+            $this->assertStringContainsString('Pelanggan Ekspor', $worksheet);
+            $this->assertStringContainsString('TOTAL PEMBAYARAN', $worksheet);
+            $this->assertNotFalse(simplexml_load_string($worksheet));
+            $this->assertNotFalse(simplexml_load_string($styles));
+        } finally {
+            $workbook->close();
+            @unlink($tempSchedule);
+        }
+
+        $stockProduct = DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$stockProduct->id}/stok", [
+                'type' => 'masuk',
+                'quantity' => '5',
+                'source' => 'Stok masuk untuk pengujian export',
+            ])
+            ->assertOk();
 
         $stock = $this->actingAs($this->admin)
             ->get('/operasional/produk/riwayat-ekspor?from='.today()->toDateString().'&to='.today()->toDateString())
             ->assertOk();
         $stock->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        $this->assertStringStartsWith("PK\x03\x04", $stock->streamedContent());
+        $stockContent = $stock->streamedContent();
+        $this->assertStringStartsWith("PK\x03\x04", $stockContent);
+
+        $tempStock = tempnam(sys_get_temp_dir(), 'selesa-stock-test-');
+        $this->assertNotFalse($tempStock);
+        file_put_contents($tempStock, $stockContent);
+        $stockWorkbook = new ZipArchive;
+        $this->assertTrue($stockWorkbook->open($tempStock));
+        try {
+            $stockWorksheet = $stockWorkbook->getFromName('xl/worksheets/sheet1.xml');
+            $stockStyles = $stockWorkbook->getFromName('xl/styles.xml');
+            $this->assertIsString($stockWorksheet);
+            $this->assertIsString($stockStyles);
+            $this->assertStringContainsString('REKAP STOK IN-OUT', $stockWorkbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('JML PROD. MASUK', $stockWorksheet);
+            $this->assertStringContainsString('BERAT GROSS PROD. MASUK', $stockWorksheet);
+            $this->assertStringContainsString('DOSIS PER CUST', $stockWorksheet);
+            $this->assertStringContainsString('STOK PROD. KELUAR PER CUST', $stockWorksheet);
+            $this->assertStringContainsString('SISA STOK PROD', $stockWorksheet);
+            $this->assertStringContainsString('HERBAL DRINK', $stockWorksheet);
+            $this->assertNotFalse(simplexml_load_string($stockWorksheet));
+            $this->assertNotFalse(simplexml_load_string($stockStyles));
+        } finally {
+            $stockWorkbook->close();
+            @unlink($tempStock);
+        }
     }
 
     public function test_price_override_requires_the_dedicated_permission(): void

@@ -26,7 +26,7 @@
         @cannot('payroll.view') #penggajian{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
         @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
-        @cannot('cashier.process') #open-payment,#add-extra{display:none!important} @endcannot
+        @cannot('cashier.process') #open-payment,#add-extra,.cashier-create-transaction{display:none!important} @endcannot
         @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
         @cannot('memberships.manage') #membership .membership-manage{display:none!important} @endcannot
         @cannot('products.create') #open-product{display:none!important} @endcannot
@@ -75,7 +75,7 @@
                     <h2>Reservasi</h2>
                     <p>Kelola antrean pelanggan dan jadwal treatment.</p>
                 </div>
-                <div class="reservation-toolbar-actions"><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button></div>
+                <div class="reservation-toolbar-actions"><button type="button" class="secondary" id="export-schedule" title="Ekspor jadwal pada tanggal yang dipilih"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button></div>
             </div>
             <div class="reservation-view-tabs" role="tablist" aria-label="Tampilan reservasi">
                 <button type="button" class="active" data-reservation-view="queue" role="tab">Antrean hari ini</button>
@@ -108,7 +108,18 @@
             <div id="reservation-attendance-view" class="reservation-view hidden"><div class="card therapist-attendance-page"><div id="therapist-attendance" aria-live="polite"></div></div></div>
         </section>
 
-        <section class="page" id="kasir"><div class="cashier-grid cashier-awaiting-selection"><div class="card"><div class="card-head"><div><h3>Pilih antrean</h3><p>Pilih satu reservasi untuk membuka transaksi dan pembayaran.</p></div></div><div id="cashier-queue"></div></div><div class="card receipt empty" id="cashier-receipt" hidden><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih antrean terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambahkan</button><p class="cashier-add-note">Pilih produk retail atau treatment tambahan sebelum pembayaran.</p><div class="promo"><b class="material-symbols-outlined">campaign</b><span><strong>Diskon</strong><small>Gunakan event atau masukkan persentase manual.</small></span><select id="discount" disabled><option value="0">Tidak menggunakan event</option></select><input id="manual-discount" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="Manual %" disabled aria-label="Diskon manual persen"></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div></div></section>
+        <section class="page" id="kasir">
+            <div class="cashier-grid cashier-awaiting-selection">
+                <div class="card cashier-queue-card">
+                    <div class="card-head cashier-queue-head">
+                        <div><h3>Pilih transaksi</h3><p>Pilih kunjungan aktif atau buat transaksi walk-in langsung dari kasir.</p></div>
+                        <button type="button" class="primary cashier-create-transaction" id="cashier-new-transaction"><span class="material-symbols-outlined" aria-hidden="true">add_shopping_cart</span> Transaksi baru</button>
+                    </div>
+                    <div id="cashier-queue"></div>
+                </div>
+                <div class="card receipt empty" id="cashier-receipt" hidden><div class="card-head"><div><h3>Transaksi <span id="receipt-number">—</span></h3><p><span id="receipt-name">Pilih transaksi terlebih dahulu</span> <b class="member"></b></p></div></div><div id="receipt-items"><p class="empty-state">Belum ada transaksi yang dipilih.</p></div><button class="dashed" id="add-extra" disabled><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambahkan</button><p class="cashier-add-note">Pilih produk retail atau treatment tambahan sebelum pembayaran.</p><div class="promo"><b class="material-symbols-outlined">campaign</b><span><strong>Diskon</strong><small>Gunakan event atau masukkan persentase manual.</small></span><select id="discount" disabled><option value="0">Tidak menggunakan event</option></select><input id="manual-discount" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="Manual %" disabled aria-label="Diskon manual persen"></div><div class="totals"><p><span>Subtotal</span><b id="subtotal">Rp0</b></p><p class="discount"><span>Diskon</span><b id="discount-value">Rp0</b></p><hr><p class="grand"><span>Total pembayaran</span><b id="grand-total">Rp0</b></p></div><button class="primary full" id="open-payment" disabled>Lanjut ke pembayaran →</button></div>
+            </div>
+        </section>
 
         <section class="page" id="penjualan">
             <div class="sales-view-tabs" role="tablist" aria-label="Tampilan penjualan">
@@ -200,7 +211,7 @@
 
 <div class="modal" id="reservation-modal">
     <div class="modal-box reservation-modal-box">
-        <div class="modal-head reservation-modal-head"><div><h2>Reservasi baru</h2><p>Satu kunjungan dapat memuat beberapa treatment dan therapist</p></div><button type="button" class="close-modal reservation-close" aria-label="Tutup form reservasi"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="modal-head reservation-modal-head"><div><h2 id="reservation-modal-title">Reservasi baru</h2><p id="reservation-modal-subtitle">Satu kunjungan dapat memuat beberapa treatment dan therapist</p></div><button type="button" class="close-modal reservation-close" aria-label="Tutup form reservasi"><span class="material-symbols-outlined">close</span></button></div>
         <form id="reservation-form" class="reservation-form">
             <fieldset class="reservation-customer-type">
                 <legend>Jenis pelanggan</legend>
@@ -221,7 +232,7 @@
             <div id="reservation-items"></div>
             <label class="reservation-notes">Catatan kunjungan<textarea name="notes" placeholder="Permintaan atau catatan umum pelanggan"></textarea></label>
             <div class="conflict-panel hidden" id="reservation-conflict" role="alert"></div>
-            <footer class="reservation-footer"><button type="button" class="secondary close-modal">Batal</button><button class="primary"><span class="material-symbols-outlined" aria-hidden="true">check</span> Simpan reservasi</button></footer>
+            <footer class="reservation-footer"><button type="button" class="secondary close-modal">Batal</button><button class="primary"><span class="material-symbols-outlined" aria-hidden="true">check</span> <span id="reservation-submit-label">Simpan reservasi</span></button></footer>
         </form>
     </div>
 </div>

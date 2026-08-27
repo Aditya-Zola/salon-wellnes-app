@@ -70,6 +70,7 @@ let reservationStatusGroup = null;
 let reservationView = 'queue';
 let calendarMode = 'week';
 let pendingReservationPayload = null;
+let reservationLaunchContext = 'reservation';
 let paymentIdempotencyKey = null;
 let paymentMode = null;
 let selectedPaymentMethodId = null;
@@ -974,7 +975,7 @@ function resetCashier() {
     if (receipt) receipt.hidden = true;
     document.querySelector('#kasir .cashier-grid')?.classList.add('cashier-awaiting-selection');
     document.getElementById('receipt-number').textContent = '—';
-    document.getElementById('receipt-name').textContent = 'Pilih antrean terlebih dahulu';
+    document.getElementById('receipt-name').textContent = 'Pilih transaksi terlebih dahulu';
     document.querySelector('.receipt .member').textContent = '';
     document.getElementById('receipt-items').innerHTML = '<p class="empty-state">Belum ada transaksi yang dipilih.</p>';
     document.getElementById('subtotal').textContent = money(0);
@@ -1021,7 +1022,12 @@ function renderCashier() {
         <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
         <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
         <i class="material-symbols-outlined row-action">chevron_right</i>
-    </button>`).join('') || '<p class="empty-state">Belum ada reservasi aktif yang menunggu pembayaran.</p>';
+    </button>`).join('') || `<div class="cashier-empty-state">
+        <span class="material-symbols-outlined" aria-hidden="true">point_of_sale</span>
+        <h4>Belum ada transaksi aktif</h4>
+        <p>Buat transaksi walk-in, lalu data pelanggan dan treatment akan langsung dibuka di kasir.</p>
+        <button type="button" class="secondary cashier-create-transaction"><span class="material-symbols-outlined" aria-hidden="true">add</span> Buat transaksi walk-in</button>
+    </div>`;
 
     document.querySelectorAll('.cashier-item').forEach((button) => {
         button.onclick = () => selectCashier(Number(button.dataset.id));
@@ -2962,12 +2968,32 @@ function resetReservationForm() {
     pendingReservationPayload = null;
 }
 
+function setReservationLaunchContext(context = 'reservation') {
+    reservationLaunchContext = context === 'cashier' ? 'cashier' : 'reservation';
+    const fromCashier = reservationLaunchContext === 'cashier';
+    const title = document.getElementById('reservation-modal-title');
+    const subtitle = document.getElementById('reservation-modal-subtitle');
+    const submitLabel = document.getElementById('reservation-submit-label');
+
+    if (title) title.textContent = fromCashier ? 'Transaksi baru' : 'Reservasi baru';
+    if (subtitle) subtitle.textContent = fromCashier
+        ? 'Catat pelanggan walk-in dan treatment untuk langsung diproses di kasir'
+        : 'Satu kunjungan dapat memuat beberapa treatment dan therapist';
+    if (submitLabel) submitLabel.textContent = fromCashier ? 'Buka di kasir' : 'Simpan reservasi';
+}
+
 function openReservationForm(values = {}) {
     hideReservationCalendarTooltip();
     resetReservationForm();
+    setReservationLaunchContext(values.context);
 
     const date = document.getElementById('reservation-date');
     if (date && values.date) date.value = values.date;
+
+    const source = document.querySelector('#reservation-form [name="source"]');
+    if (source && values.source && [...source.options].some((option) => option.value === values.source)) {
+        source.value = values.source;
+    }
 
     const startTime = document.querySelector('#reservation-items .item-time');
     if (startTime && values.startTime) startTime.value = values.startTime;
@@ -3161,17 +3187,24 @@ function showConflictPanel(error) {
 async function submitReservation(payload) {
     const form = document.getElementById('reservation-form');
     const submit = form?.querySelector('button[type="submit"], footer .primary');
+    const openInCashier = reservationLaunchContext === 'cashier';
     if (submit) submit.disabled = true;
     try {
-        const result = await api('/operasional/reservasi', {
+        const result = await api(openInCashier ? '/operasional/kasir/transaksi' : '/operasional/reservasi', {
             method: 'POST',
             body: JSON.stringify(payload),
         });
+        const createdReservationId = Number(result.reservation?.id || result.id);
         document.getElementById('reservation-modal')?.classList.remove('open');
         resetReservationForm();
-        toast(result.message || 'Reservasi berhasil disimpan.');
+        setReservationLaunchContext();
+        toast(openInCashier ? 'Transaksi baru siap dilanjutkan di kasir.' : (result.message || 'Reservasi berhasil disimpan.'));
         if (!upsertReservation(result.reservation)) {
             await refresh();
+        }
+        if (openInCashier) {
+            openPage('kasir');
+            if (createdReservationId) selectCashier(createdReservationId);
         }
     } catch (error) {
         if (error.status === 409 && error.data?.code === 'schedule_conflict') {
@@ -3651,6 +3684,10 @@ document.querySelectorAll('.open-reservation').forEach((button) => {
     button.onclick = () => {
         openReservationForm();
     };
+});
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.cashier-create-transaction')) return;
+    openReservationForm({ context: 'cashier', date: localDate(), source: 'walk_in' });
 });
 document.getElementById('add-reservation-item')?.addEventListener('click', () => addReservationItem());
 document.getElementById('reservation-date')?.addEventListener('change', () => {
