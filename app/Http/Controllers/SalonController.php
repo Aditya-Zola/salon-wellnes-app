@@ -121,69 +121,114 @@ class SalonController extends Controller
             ->leftJoin('transactions as transaction', 'transaction.reservation_id', '=', 'reservation.id')
             ->where('reservation.reservation_date', $date)
             ->where('reservation.status', '!=', 'cancelled')
+            ->where('item.work_status', '!=', 'cancelled')
             ->orderBy('item.scheduled_start_at')
             ->orderBy('item.id')
             ->get([
                 'item.id',
                 'item.reservation_id',
                 'item.treatment_name',
+                'item.sort_order',
                 'item.scheduled_start_at',
                 'item.scheduled_end_at',
                 'item.scheduled_ready_at',
                 'item.unit_price',
+                'item.commission_amount',
                 'customer.name as customer_name',
-                'reservation.queue_number',
-                'transaction.number as invoice_number',
                 'transaction.status as payment_status',
             ]);
-        $staffByItem = DB::table('reservation_item_staff as assignment')
+        $assignments = DB::table('reservation_item_staff as assignment')
             ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
             ->whereIn('assignment.reservation_item_id', $items->pluck('id'))
             ->orderByRaw("CASE WHEN assignment.role = 'primary' THEN 0 ELSE 1 END")
             ->orderBy('employee.name')
-            ->get(['assignment.reservation_item_id', 'employee.name'])
-            ->groupBy('reservation_item_id');
-        $paymentsByReservation = DB::table('transaction_payments as payment')
+            ->get([
+                'assignment.reservation_item_id',
+                'assignment.employee_id',
+                'assignment.role',
+                'assignment.commission_amount',
+                'employee.name',
+            ]);
+        $staffByItem = $assignments->groupBy('reservation_item_id');
+        $payments = DB::table('transaction_payments as payment')
             ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
             ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
             ->where('payment.status', 'confirmed')
             ->where('transaction.status', 'paid')
-            ->whereIn('transaction.id', DB::table('transactions')
-                ->whereIn('reservation_id', DB::table('reservations')->where('reservation_date', $date)->select('id'))
-                ->select('id'))
-            ->get(['transaction.reservation_id', 'method.name'])
-            ->groupBy('reservation_id');
+            ->whereIn('transaction.reservation_id', $items->pluck('reservation_id')->unique())
+            ->get([
+                'transaction.reservation_id',
+                'method.name as payment_method_name',
+                'payment.amount',
+            ]);
+        $paymentsByReservation = $payments->groupBy('reservation_id');
+        $reservationTotals = $items->groupBy('reservation_id')->map(
+            fn ($reservationItems): int => (int) $reservationItems->sum('unit_price')
+        );
+        $orderedItems = $items
+            ->groupBy('reservation_id')
+            ->sortBy(fn ($reservationItems) => $reservationItems->min('scheduled_start_at'))
+            ->flatMap(fn ($reservationItems) => $reservationItems->sortBy(
+                fn (object $item): string => str_pad((string) $item->sort_order, 6, '0', STR_PAD_LEFT)
+                    .'-'.str_pad((string) $item->id, 20, '0', STR_PAD_LEFT)
+            ))
+            ->values();
 
-        $rows = $items->values()->map(function (object $item, int $index) use ($staffByItem, $paymentsByReservation): array {
-            $therapists = collect($staffByItem->get($item->id, []))->pluck('name')->join(', ');
-            $payments = collect($paymentsByReservation->get($item->reservation_id ?? 0, []))->pluck('name')->join(' + ');
+        $rows = $orderedItems->map(function (object $item) use ($staffByItem, $paymentsByReservation, $reservationTotals): array {
+            $therapists = collect($staffByItem->get($item->id, []))->pluck('name')->unique()->join(', ');
+            $paymentMethods = collect($paymentsByReservation->get($item->reservation_id, []))
+                ->pluck('payment_method_name')
+                ->unique()
+                ->join(' + ');
 
             return [
-                $index + 1,
-                $item->queue_number ?: '-',
-                $item->customer_name,
-                $item->treatment_name,
-                $item->scheduled_start_at ? CarbonImmutable::parse($item->scheduled_start_at)->format('H:i') : '-',
-                $item->scheduled_end_at ? CarbonImmutable::parse($item->scheduled_end_at)->format('H:i') : '-',
-                $item->scheduled_ready_at ? CarbonImmutable::parse($item->scheduled_ready_at)->format('H:i') : '-',
-                $therapists ?: '-',
-                $item->payment_status === 'paid' ? 'Lunas' : 'Belum dibayar',
-                $payments ?: '-',
-                (int) $item->unit_price,
-                $item->invoice_number ?: '-',
+                'reservation_id' => (int) $item->reservation_id,
+                'customer_name' => $item->customer_name,
+                'treatment_name' => $item->treatment_name,
+                'start_time' => $item->scheduled_start_at,
+                'end_time' => $item->scheduled_end_at,
+                'ready_time' => $item->scheduled_ready_at,
+                'therapists' => $therapists ?: '-',
+                'payment' => $paymentMethods ?: ($item->payment_status === 'paid' ? 'LUNAS' : 'BELUM DIBAYAR'),
+                'reservation_total' => (int) $reservationTotals->get($item->reservation_id, 0),
+                'unit_price' => (int) $item->unit_price,
+                'commission_amount' => (int) $item->commission_amount,
             ];
         })->all();
+        $staffSummary = $assignments
+            ->groupBy('employee_id')
+            ->map(fn ($employeeAssignments): array => [
+                'name' => $employeeAssignments->first()->name,
+                'commission' => (int) $employeeAssignments->sum('commission_amount'),
+                'overtime' => 0,
+            ])
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values()
+            ->all();
+        $paymentSummary = $payments
+            ->groupBy('payment_method_name')
+            ->map(fn ($methodPayments, string $method): array => [
+                'method' => mb_strtoupper($method),
+                'amount' => (int) $methodPayments->sum('amount'),
+            ])
+            ->sortBy('method', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values()
+            ->all();
 
         $filename = 'jadwal-selesa-'.str_replace('-', '', $date).'.xlsx';
+        $scheduleDate = CarbonImmutable::parse($date);
 
-        return $this->spreadsheetResponse(
-            $filename,
-            'Jadwal '.CarbonImmutable::parse($date)->translatedFormat('d F Y'),
-            'Jadwal',
-            ['No', 'Antrean', 'Nama pelanggan', 'Treatment', 'Mulai', 'Selesai (+ persiapan)', 'Terapis siap', 'Terapis', 'Status bayar', 'Metode bayar', 'Nominal', 'Invoice'],
-            $rows,
-            [10],
-        );
+        return response()->streamDownload(function () use ($scheduleDate, $rows, $staffSummary, $paymentSummary): void {
+            echo $this->spreadsheets->makeDailySchedule(
+                $scheduleDate->translatedFormat('j F Y'),
+                ucfirst($scheduleDate->translatedFormat('l, j F Y')),
+                $rows,
+                $staffSummary,
+                $paymentSummary,
+            );
+        }, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
     }
 
     public function exportStockHistory(Request $request): StreamedResponse
@@ -196,18 +241,21 @@ class SalonController extends Controller
         $to = $data['to'] ?? today()->toDateString();
         $movements = DB::table('stock_movements as movement')
             ->join('products as product', 'product.id', '=', 'movement.product_id')
-            ->join('units as unit', 'unit.id', '=', 'movement.unit_id')
+            ->join('units as movementUnit', 'movementUnit.id', '=', 'movement.unit_id')
+            ->join('units as purchaseUnit', 'purchaseUnit.id', '=', 'product.purchase_unit_id')
+            ->join('units as usageUnit', 'usageUnit.id', '=', 'product.usage_unit_id')
             ->leftJoin('transactions as transaction', function ($join): void {
                 $join->on('transaction.id', '=', 'movement.source_id')
                     ->whereIn('movement.source_type', ['transaction', 'transaction_sale']);
             })
             ->leftJoin('reservations as reservation', 'reservation.id', '=', 'transaction.reservation_id')
             ->leftJoin('customers as customer', 'customer.id', '=', 'reservation.customer_id')
-            ->leftJoin('users as creator', 'creator.id', '=', 'movement.created_by')
             ->whereBetween('movement.occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])
-            ->orderByDesc('movement.occurred_at')
-            ->orderByDesc('movement.id')
+            ->orderBy('movement.occurred_at')
+            ->orderBy('movement.id')
             ->get([
+                'movement.id',
+                'movement.product_id',
                 'movement.type',
                 'movement.quantity',
                 'movement.stock_before',
@@ -217,11 +265,18 @@ class SalonController extends Controller
                 'movement.notes',
                 'movement.occurred_at',
                 'product.name as product_name',
-                'unit.code as unit_code',
+                'product.purchase_to_usage_factor',
+                'movementUnit.code as movement_unit_code',
+                'purchaseUnit.code as purchase_unit_code',
+                'usageUnit.code as usage_unit_code',
                 'reservation.id as reservation_id',
                 'customer.name as customer_name',
-                'creator.name as creator_name',
             ]);
+        $recipeDosesByProduct = DB::table('treatment_product_recipes as recipe')
+            ->join('units as unit', 'unit.id', '=', 'recipe.unit_id')
+            ->whereIn('recipe.product_id', $movements->pluck('product_id')->unique())
+            ->get(['recipe.product_id', 'recipe.quantity', 'unit.code as unit_code'])
+            ->groupBy('product_id');
         $reservationIds = $movements->pluck('reservation_id')->filter()->unique()->values();
         $therapistsByReservation = $reservationIds->isEmpty()
             ? collect()
@@ -234,41 +289,60 @@ class SalonController extends Controller
                 ->get(['item.reservation_id', 'employee.name'])
                 ->groupBy('reservation_id');
 
-        $rows = $movements->values()->map(function (object $movement, int $index) use ($therapistsByReservation): array {
+        $rows = $movements->values()->map(function (object $movement, int $index) use ($recipeDosesByProduct, $therapistsByReservation): array {
             $quantity = (float) $movement->quantity;
-            $type = match ($movement->type) {
-                'in' => 'Stok masuk',
-                'out' => 'Stok keluar',
-                'adjustment' => 'Penyesuaian',
-                default => ucfirst((string) $movement->type),
-            };
+            $stockBefore = (float) $movement->stock_before;
+            $stockAfter = (float) $movement->stock_after;
+            $incoming = $movement->type === 'in'
+                || ($movement->type === 'adjustment' && $stockAfter >= $stockBefore);
+            $outgoing = $movement->type === 'out'
+                || ($movement->type === 'adjustment' && $stockAfter < $stockBefore);
+            $factor = max(0.0001, (float) $movement->purchase_to_usage_factor);
+            $recipeDoses = collect($recipeDosesByProduct->get($movement->product_id, []))
+                ->map(fn (object $recipe): float => (float) $recipe->quantity)
+                ->unique(fn (float $dose): string => number_format($dose, 4, '.', ''))
+                ->values();
+            $canonicalDose = $recipeDoses->count() === 1 ? (float) $recipeDoses->first() : null;
+            $dose = $outgoing && $movement->customer_name
+                ? $quantity
+                : $canonicalDose;
+            $capacityBase = $incoming ? $stockAfter : $stockBefore;
+            $capacity = $dose && $dose > 0 ? $capacityBase / $dose : null;
+            $customersServed = $outgoing && $dose && $dose > 0 ? $quantity / $dose : null;
+            $remainingCapacity = $dose && $dose > 0 ? $stockAfter / $dose : null;
+            $occurredAt = CarbonImmutable::parse($movement->occurred_at);
 
             return [
-                $index + 1,
-                CarbonImmutable::parse($movement->occurred_at)->format('d/m/Y'),
-                CarbonImmutable::parse($movement->occurred_at)->format('H:i'),
-                $movement->product_name,
-                $type,
-                $quantity,
-                $movement->unit_code,
-                (float) $movement->stock_before,
-                (float) $movement->stock_after,
-                $movement->customer_name ?: '-',
-                collect($therapistsByReservation->get($movement->reservation_id, []))->pluck('name')->unique()->join(', ') ?: '-',
-                $this->stockSourceLabel($movement->source_type),
-                $movement->reference ?: '-',
-                $movement->creator_name ?: 'Sistem',
-                $movement->notes ?: '-',
+                'number' => $index + 1,
+                'product' => mb_strtoupper($movement->product_name),
+                'incoming_date' => $incoming ? $occurredAt->format('Y-m-d') : null,
+                'incoming_quantity' => $incoming ? $quantity / $factor : null,
+                'purchase_unit' => $incoming ? mb_strtoupper($movement->purchase_unit_code) : null,
+                'gross_quantity' => $incoming ? $factor : null,
+                'gross_unit' => $incoming ? mb_strtoupper($movement->usage_unit_code) : null,
+                'dose' => $dose,
+                'dose_unit' => $dose ? mb_strtoupper($movement->usage_unit_code) : null,
+                'capacity' => $capacity,
+                'outgoing_date' => $outgoing ? $occurredAt->format('Y-m-d') : null,
+                'outgoing_time' => $outgoing ? $occurredAt->format('H:i') : null,
+                'customers_served' => $customersServed,
+                'outgoing_quantity' => $outgoing ? $quantity : null,
+                'outgoing_unit' => $outgoing ? mb_strtoupper($movement->movement_unit_code) : null,
+                'remaining_capacity' => $remainingCapacity,
+                'stock_after' => $stockAfter,
+                'stock_unit' => mb_strtoupper($movement->movement_unit_code),
+                'customer' => $outgoing ? ($movement->customer_name ?: null) : null,
+                'therapists' => $outgoing
+                    ? (collect($therapistsByReservation->get($movement->reservation_id, []))->pluck('name')->unique()->join(', ') ?: null)
+                    : null,
             ];
         })->all();
 
-        return $this->spreadsheetResponse(
-            "rekap-stok-in-out-{$from}-{$to}.xlsx",
-            "Rekap stok in-out {$from} s.d. {$to}",
-            'Rekap Stok',
-            ['No', 'Tanggal', 'Jam', 'Produk', 'Jenis', 'Jumlah', 'Satuan', 'Stok sebelum', 'Sisa stok', 'Pelanggan', 'Terapis', 'Sumber', 'Referensi', 'Dicatat oleh', 'Catatan'],
-            $rows,
-        );
+        return response()->streamDownload(function () use ($rows): void {
+            echo $this->spreadsheets->makeStockInOut($rows);
+        }, "rekap-stok-in-out-{$from}-{$to}.xlsx", [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
     }
 
     public function storeReservation(StoreReservationRequest $request): JsonResponse

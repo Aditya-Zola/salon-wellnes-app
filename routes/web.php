@@ -24,6 +24,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
+        Route::post('/kasir/transaksi', [SalonController::class, 'storeReservation'])->middleware('permission:cashier.process')->name('cashier.transactions.store');
         Route::post('/reservasi/{reservation}/item', [SalonController::class, 'storeReservationItem'])->middleware('permission:cashier.process')->name('reservations.items.store');
         Route::post('/reservasi/{reservation}/produk', [SalonController::class, 'storeReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.store');
         Route::delete('/reservasi/{reservation}/produk/{product}', [SalonController::class, 'destroyReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.destroy');
