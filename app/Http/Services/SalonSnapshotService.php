@@ -848,7 +848,7 @@ class SalonSnapshotService
             ];
         }
 
-        if ($this->canAny($user, ['reservations.view', 'reservations.create'])) {
+        if ($this->can($user, 'therapist_attendance.view')) {
             $therapists = DB::table('employees as employee')
                 ->leftJoin('employee_attendances as attendance', function ($join) use ($today): void {
                     $join->on('attendance.employee_id', '=', 'employee.id')

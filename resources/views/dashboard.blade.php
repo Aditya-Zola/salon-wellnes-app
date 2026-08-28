@@ -16,7 +16,8 @@
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/scheduling.css') }}?v={{ filemtime(public_path('css/scheduling.css')) }}">
     <style>
-        @cannot('reservations.view') #reservasi,.go-reservation{display:none!important} @endcannot
+        @cannot('reservations.view') #reservasi-antrean,#reservasi-kalender,.go-reservation{display:none!important} @endcannot
+        @cannot('therapist_attendance.view') #kehadiran-terapis,.dashboard-therapist-attendance,.go-therapist-attendance{display:none!important} @endcannot
         @cannot('cashier.view') #kasir{display:none!important} @endcannot
         @cannot('sales.view') #penjualan{display:none!important} @endcannot
         @cannot('treatments.view') #treatment{display:none!important} @endcannot
@@ -49,8 +50,8 @@
         <section class="page active" id="dashboard">
             <div class="welcome"><div><small>SABTU, 1 AGUSTUS 2026</small><h2>Selamat pagi, Owner.</h2><p>Hari ini ada <b>8 reservasi</b> dan <b>2 stok produk</b> perlu diperhatikan.</p></div><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Buat reservasi</button></div>
             <div class="metrics dashboard-metrics">
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi" data-reservation-status="" aria-label="Buka reservasi hari ini"><i class="material-symbols-outlined clay">calendar_month</i><div><small>Reservasi hari ini</small><strong id="metric-reservations">0</strong><span id="metric-serving">0 sedang dilayani</span></div></article>
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi" data-reservation-status="arrived" aria-label="Buka daftar pelanggan yang sudah datang"><i class="material-symbols-outlined green">groups</i><div><small>Pelanggan datang</small><strong id="metric-arrived">0</strong><span id="metric-arrival-rate">0% dari reservasi</span></div></article>
+                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="" aria-label="Buka reservasi hari ini"><i class="material-symbols-outlined clay">calendar_month</i><div><small>Reservasi hari ini</small><strong id="metric-reservations">0</strong><span id="metric-serving">0 sedang dilayani</span></div></article>
+                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="arrived" aria-label="Buka daftar pelanggan yang sudah datang"><i class="material-symbols-outlined green">groups</i><div><small>Pelanggan datang</small><strong id="metric-arrived">0</strong><span id="metric-arrival-rate">0% dari reservasi</span></div></article>
                 <article class="dashboard-metric" role="button" tabindex="0" data-target="keuangan" aria-label="Buka laporan pendapatan hari ini"><i class="material-symbols-outlined gold">payments</i><div><small>Pendapatan hari ini</small><strong id="metric-revenue">Rp0</strong><span id="metric-revenue-trend">Belum ada transaksi</span></div></article>
                 <article class="dashboard-metric" role="button" tabindex="0" data-target="stok" aria-label="Buka daftar produk dengan stok menipis"><i class="material-symbols-outlined rose">inventory_2</i><div><small>Stok menipis</small><strong id="metric-low-stock">0 produk</strong><span id="metric-stock-note">Stok aman</span></div></article>
             </div>
@@ -65,22 +66,21 @@
             <div class="card dashboard-operational-card">
                 <section class="dashboard-operational-item"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></section>
                 <section class="dashboard-operational-item"><div class="card-head"><div><h3>Ketersediaan menu treatment</h3><p>Peringatan bahan resep yang stoknya menipis</p></div><button class="link go-stock-alerts">Kelola stok →</button></div><div class="treatment-stock-alerts" id="treatment-stock-alerts"></div></section>
-                <section class="dashboard-operational-item"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
+                <section class="dashboard-operational-item dashboard-therapist-attendance"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
             </div>
         </section>
 
-        <section class="page" id="reservasi">
-            <div class="reservation-calendar-toolbar">
-                <div>
-                    <h2>Reservasi</h2>
-                    <p>Kelola antrean pelanggan dan jadwal treatment.</p>
-                </div>
-                <div class="reservation-toolbar-actions"><button type="button" class="secondary" id="export-schedule" title="Ekspor jadwal pada tanggal yang dipilih"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button><button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button></div>
+        <section class="page reservation-page" id="reservasi-antrean">
+            <div class="reservation-page-actions">
+                <button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
             </div>
-            <div class="reservation-view-tabs" role="tablist" aria-label="Tampilan reservasi">
-                <button type="button" class="active" data-reservation-view="queue" role="tab">Antrean hari ini</button>
-                <button type="button" data-reservation-view="calendar" role="tab">Kalender</button>
-                <button type="button" data-reservation-view="attendance" role="tab">Kehadiran therapist</button>
+            <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
+        </section>
+
+        <section class="page reservation-page" id="reservasi-kalender">
+            <div class="reservation-page-actions">
+                <button type="button" class="secondary" id="export-schedule" title="Ekspor jadwal pada tanggal yang dipilih"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button>
+                <button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
             </div>
             <div class="calendar-controls card">
                 <div class="calendar-period">
@@ -95,17 +95,20 @@
                     <select id="reservation-filter-status"><option value="">Semua status</option><option value="scheduled">Terjadwal</option><option value="arrived">Sudah datang</option><option value="in_service">Sedang dilayani</option><option value="completed">Selesai</option><option value="cancelled">Batal</option></select>
                 </div>
             </div>
-            <div id="reservation-queue-view" class="reservation-view">
-                <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
+            <div class="calendar-mode-tabs" role="tablist" aria-label="Mode kalender reservasi">
+                <button type="button" class="active" data-calendar-mode="week" role="tab" aria-selected="true">Ringkasan mingguan</button>
+                <button type="button" data-calendar-mode="day" role="tab" aria-selected="false">Harian per therapist</button>
             </div>
-            <div id="reservation-calendar-view" class="reservation-view hidden">
-                <div class="calendar-mode-tabs" role="tablist" aria-label="Mode kalender reservasi">
-                    <button type="button" class="active" data-calendar-mode="week" role="tab" aria-selected="true">Ringkasan mingguan</button>
-                    <button type="button" data-calendar-mode="day" role="tab" aria-selected="false">Harian per therapist</button>
-                </div>
-                <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar" aria-label="Kalender reservasi mingguan"></div></div>
+            <div class="calendar-card card"><div id="reservation-calendar" class="reservation-calendar" aria-label="Kalender reservasi mingguan"></div></div>
+        </section>
+
+        <section class="page" id="kehadiran-terapis">
+            <div class="therapist-attendance-layout">
+                <div class="card therapist-attendance-page"><div id="therapist-attendance" aria-live="polite"></div></div>
+                <aside class="card therapist-attendance-calendar-card" aria-label="Kalender kehadiran terapis">
+                    <div id="therapist-attendance-calendar" aria-live="polite"></div>
+                </aside>
             </div>
-            <div id="reservation-attendance-view" class="reservation-view hidden"><div class="card therapist-attendance-page"><div id="therapist-attendance" aria-live="polite"></div></div></div>
         </section>
 
         <section class="page" id="kasir">
@@ -251,7 +254,7 @@
         'view_sales' => auth()->user()->can('sales.view'),
         'refund_sales' => auth()->user()->can('cashier.refund'),
         'view_memberships' => auth()->user()->can('memberships.view') || auth()->user()->can('memberships.manage'),
-        'manage_therapist_attendance' => auth()->user()->can('employees.update'),
+        'manage_therapist_attendance' => auth()->user()->can('therapist_attendance.manage'),
     ];
 @endphp
 <div id="toast"></div>

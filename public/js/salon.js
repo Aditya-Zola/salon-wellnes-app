@@ -67,7 +67,6 @@ let memberSearchTimer;
 let selectedReservation = null;
 let reservationMode = 'today';
 let reservationStatusGroup = null;
-let reservationView = 'queue';
 let calendarMode = 'week';
 let pendingReservationPayload = null;
 let reservationLaunchContext = 'reservation';
@@ -80,11 +79,15 @@ let reservationCalendarTooltipListenersBound = false;
 let reservationCalendarTooltipAnchor = null;
 let therapistAttendanceDate = null;
 let therapistAttendance = [];
+let therapistAttendanceMonth = null;
+let therapistAttendanceOffByDate = {};
 let stocktakeDraft = new Map();
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
-    reservasi: ['Reservasi', 'Kelola jadwal dan antrean pelanggan'],
+    'reservasi-antrean': ['Antrean Hari Ini', 'Kelola urutan kedatangan dan pelayanan pelanggan'],
+    'reservasi-kalender': ['Kalender Reservasi', 'Kelola jadwal treatment dan terapis'],
+    'kehadiran-terapis': ['Kehadiran Terapis', 'Atur status masuk atau libur terapis'],
     pegawai: ['Pegawai', 'Kelola master pegawai dan therapist'],
     kasir: ['Kasir', 'Proses pelayanan, diskon member, dan pembayaran'],
     treatment: ['Treatment', 'Kelola menu, paket, harga, dan resep produk'],
@@ -586,9 +589,10 @@ function statusClass(status) {
 }
 
 function openPage(id) {
-    const navigationPage = id === 'stok-opname' ? 'stok' : id;
+    const pageId = id === 'reservasi' ? 'reservasi-antrean' : id;
+    const navigationPage = pageId === 'stok-opname' ? 'stok' : pageId;
     const nav = document.querySelector(`#navigation [data-page="${navigationPage}"]`);
-    const page = document.getElementById(id);
+    const page = document.getElementById(pageId);
     if (!nav || !page) return;
 
     document.querySelectorAll('.page').forEach((element) => element.classList.remove('active'));
@@ -596,10 +600,20 @@ function openPage(id) {
     document.querySelectorAll('#navigation [data-page]').forEach((element) => {
         element.classList.toggle('active', element.dataset.page === navigationPage);
     });
-    const pageCopy = copy[id] || copy[navigationPage];
+    document.querySelectorAll('#navigation details').forEach((details) => {
+        const containsActivePage = Boolean(details.querySelector('[data-page].active'));
+        details.querySelector(':scope > summary')?.classList.toggle('active', containsActivePage);
+        if (containsActivePage) details.open = true;
+    });
+    const pageCopy = copy[pageId] || copy[navigationPage];
     document.getElementById('page-title').textContent = pageCopy[0];
     document.getElementById('page-subtitle').textContent = pageCopy[1];
-    history.replaceState(null, '', `#${id}`);
+    history.replaceState(null, '', `#${pageId}`);
+    if (pageId === 'reservasi-antrean') {
+        const date = document.getElementById('reservation-calendar-date');
+        if (date) date.value = localDate();
+        renderReservations();
+    }
     scrollTo(0, 0);
 }
 
@@ -608,14 +622,11 @@ function openDashboardMetric(card) {
     if (!target) return;
     openPage(target);
 
-    if (target === 'reservasi') {
-        const section = document.getElementById('reservasi');
-        const filters = section?.querySelectorAll('.filters input,.filters select');
-        const tabs = section?.querySelectorAll('.tabs button');
+    if (target === 'reservasi-antrean') {
+        const filters = document.querySelectorAll('#reservasi-kalender .filters input,#reservasi-kalender .filters select');
         const requestedStatus = card.dataset.reservationStatus || '';
         reservationMode = 'today';
         reservationStatusGroup = requestedStatus === 'arrived' ? 'arrived' : null;
-        tabs?.forEach((tab, index) => tab.classList.toggle('active', index === 0));
         if (filters?.[0]) filters[0].value = localDate();
         if (filters?.[2]) filters[2].value = reservationStatusGroup ? '' : requestedStatus;
         renderReservations();
@@ -635,7 +646,6 @@ function renderReservations() {
         || Number(left.id) - Number(right.id)
     ));
     const today = localDate();
-    const section = document.getElementById('reservasi');
     const selectedDate = document.getElementById('reservation-calendar-date')?.value || today;
     const selectedEmployee = Number(document.getElementById('reservation-filter-employee')?.value || 0);
     const selectedStatus = document.getElementById('reservation-filter-status')?.value || '';
@@ -2455,7 +2465,7 @@ function activityCategory(action) {
     if (value.startsWith('membership')) return 'Membership';
     if (value.startsWith('promotion')) return 'Promo membership';
     if (value.startsWith('employee')) return 'Pegawai';
-    if (value.startsWith('therapist')) return 'Kehadiran therapist';
+    if (value.startsWith('therapist')) return 'Kehadiran terapis';
     if (value.startsWith('settings')) return 'Pengaturan';
     return 'Aktivitas sistem';
 }
@@ -2474,7 +2484,7 @@ function activityIcon(action) {
         Membership: 'workspace_premium',
         'Promo membership': 'campaign',
         Pegawai: 'badge',
-        'Kehadiran therapist': 'event_available',
+        'Kehadiran terapis': 'event_available',
         Pengaturan: 'settings',
     }[category] || 'work_history';
 }
@@ -3481,6 +3491,69 @@ function populateSelects() {
     }
 }
 
+function attendanceDateFromMonth(month, day) {
+    return `${month}-${String(day).padStart(2, '0')}`;
+}
+
+function therapistInitial(name) {
+    return String(name || '?').trim().charAt(0).toLocaleUpperCase('id-ID') || '?';
+}
+
+function renderTherapistAttendanceCalendar() {
+    const box = document.getElementById('therapist-attendance-calendar');
+    if (!box || !therapistAttendanceDate) return;
+
+    const month = therapistAttendanceMonth || therapistAttendanceDate.slice(0, 7);
+    const [year, monthNumber] = month.split('-').map(Number);
+    if (!year || !monthNumber) return;
+
+    const monthStart = new Date(year, monthNumber - 1, 1, 12);
+    const daysInMonth = new Date(year, monthNumber, 0, 12).getDate();
+    const firstWeekday = (monthStart.getDay() + 6) % 7;
+    const monthLabel = new Intl.DateTimeFormat('id-ID', {
+        month: 'long', year: 'numeric',
+    }).format(monthStart);
+    const weekdayLabels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+    const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => {
+        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty" aria-hidden="true"></span>';
+
+        const day = index - firstWeekday + 1;
+        const date = attendanceDateFromMonth(month, day);
+        const offTherapists = array(therapistAttendanceOffByDate[date]);
+        const names = offTherapists.map((therapist) => therapist.name).filter(Boolean);
+        const isSelected = date === therapistAttendanceDate;
+        const isToday = date === localDate();
+        const marker = offTherapists.length === 1
+            ? therapistInitial(offTherapists[0].name)
+            : `+${offTherapists.length}`;
+        const label = names.length
+            ? `${day} ${monthLabel}: ${names.join(', ')} libur`
+            : `${day} ${monthLabel}`;
+        const tooltip = names.length
+            ? `<span class="therapist-attendance-calendar-tooltip" role="tooltip"><b>Terapis libur</b><span>${escapeHtml(names.join(', '))}</span></span>`
+            : '';
+
+        return `<button type="button" class="therapist-attendance-calendar-day${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${names.length ? ' has-off' : ''}" data-attendance-date="${date}" aria-label="${escapeHtml(label)}"><span class="therapist-attendance-calendar-day-value">${names.length ? escapeHtml(marker) : day}</span>${tooltip}</button>`;
+    }).join('');
+
+    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender kehadiran</h3><p>Penanda terapis yang libur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis libur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
+
+    box.querySelectorAll('[data-attendance-date]').forEach((button) => {
+        button.addEventListener('click', () => loadTherapistAttendance(button.dataset.attendanceDate));
+    });
+    box.querySelectorAll('[data-attendance-calendar-month]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const nextMonth = new Date(year, monthNumber - 1 + (button.dataset.attendanceCalendarMonth === 'next' ? 1 : -1), 1, 12);
+            const nextYear = nextMonth.getFullYear();
+            const nextMonthNumber = nextMonth.getMonth() + 1;
+            const nextMonthKey = `${nextYear}-${String(nextMonthNumber).padStart(2, '0')}`;
+            const selectedDay = Number(therapistAttendanceDate.slice(-2));
+            const nextDay = Math.min(selectedDay, new Date(nextYear, nextMonthNumber, 0, 12).getDate());
+            loadTherapistAttendance(attendanceDateFromMonth(nextMonthKey, nextDay));
+        });
+    });
+}
+
 function renderTherapistAttendance() {
     const box = document.getElementById('therapist-attendance');
     if (!box || !therapistAttendanceDate) return;
@@ -3488,7 +3561,7 @@ function renderTherapistAttendance() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const editable = canManageTherapistAttendance;
-    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran therapist</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>THERAPIST</span><span>STATUS</span></div>${therapistAttendance.map((therapist) => `<label class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Therapist')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option></select></label>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS</span></div>${therapistAttendance.map((therapist) => `<label class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option></select></label>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
     box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
         loadTherapistAttendance(event.currentTarget.value);
     });
@@ -3512,7 +3585,7 @@ function renderTherapistAttendance() {
                 method: 'PUT',
                 body: JSON.stringify({ date: therapistAttendanceDate, status: item.status }),
             })));
-            toast('Kehadiran therapist diperbarui.');
+            toast('Kehadiran terapis diperbarui.');
             await loadTherapistAttendance(therapistAttendanceDate);
             renderReservations();
         } catch (error) {
@@ -3520,6 +3593,7 @@ function renderTherapistAttendance() {
             submit.disabled = false;
         }
     });
+    renderTherapistAttendanceCalendar();
 }
 
 function openTherapistAttendanceManager() {
@@ -3556,7 +3630,7 @@ function openTherapistAttendanceManager() {
                 }),
             })));
             wrapper.remove();
-            toast('Kehadiran therapist diperbarui.');
+            toast('Kehadiran terapis diperbarui.');
             await loadTherapistAttendance(therapistAttendanceDate);
             renderReservations();
         } catch (error) {
@@ -3569,9 +3643,14 @@ function openTherapistAttendanceManager() {
 async function loadTherapistAttendance(date) {
     if (!date) return;
     try {
-        const data = await api(`/operasional/therapist-kehadiran?date=${encodeURIComponent(date)}`);
-        therapistAttendanceDate = date;
+        const month = date.slice(0, 7);
+        const data = await api(`/operasional/therapist-kehadiran?date=${encodeURIComponent(date)}&month=${encodeURIComponent(month)}`);
+        therapistAttendanceDate = data.date || date;
         therapistAttendance = array(data.therapists);
+        therapistAttendanceMonth = data.month || month;
+        therapistAttendanceOffByDate = data.off_by_date && typeof data.off_by_date === 'object'
+            ? data.off_by_date
+            : {};
         renderTherapistAttendance();
         if (calendarMode === 'day') renderReservations();
     } catch (error) {
@@ -3580,7 +3659,6 @@ async function loadTherapistAttendance(date) {
 }
 
 function initReservationControls() {
-    const section = document.getElementById('reservasi');
     const date = document.getElementById('reservation-calendar-date');
     const employee = document.getElementById('reservation-filter-employee');
     const status = document.getElementById('reservation-filter-status');
@@ -3610,18 +3688,6 @@ function initReservationControls() {
         loadTherapistAttendance(date.value);
     });
 
-    const setReservationView = (view) => {
-        reservationView = view;
-        document.querySelectorAll('[data-reservation-view]').forEach((item) => {
-            const active = item.dataset.reservationView === reservationView;
-            item.classList.toggle('active', active);
-            item.setAttribute('aria-selected', active ? 'true' : 'false');
-        });
-        document.getElementById('reservation-queue-view')?.classList.toggle('hidden', reservationView !== 'queue');
-        document.getElementById('reservation-calendar-view')?.classList.toggle('hidden', reservationView !== 'calendar');
-        document.getElementById('reservation-attendance-view')?.classList.toggle('hidden', reservationView !== 'attendance');
-        section?.querySelector('.calendar-controls')?.classList.toggle('hidden', reservationView !== 'calendar');
-    };
     const setCalendarMode = (mode) => {
         calendarMode = mode === 'day' ? 'day' : 'week';
         document.querySelectorAll('[data-calendar-mode]').forEach((item) => {
@@ -3631,13 +3697,7 @@ function initReservationControls() {
         });
         renderReservations();
     };
-    setReservationView(reservationView);
     loadTherapistAttendance(date?.value);
-    document.querySelectorAll('[data-reservation-view]').forEach((tab) => {
-        tab.addEventListener('click', () => {
-            setReservationView(tab.dataset.reservationView);
-        });
-    });
     document.querySelectorAll('[data-calendar-mode]').forEach((tab) => {
         tab.addEventListener('click', () => setCalendarMode(tab.dataset.calendarMode));
     });
@@ -3654,13 +3714,10 @@ document.querySelectorAll('#navigation [data-page]').forEach((button) => {
     button.onclick = () => openPage(button.dataset.page);
 });
 document.querySelectorAll('.go-reservation').forEach((button) => {
-    button.onclick = () => openPage('reservasi');
+    button.onclick = () => openPage('reservasi-antrean');
 });
 document.querySelectorAll('.go-therapist-attendance').forEach((button) => {
-    button.onclick = () => {
-        openPage('reservasi');
-        document.querySelector('[data-reservation-view="attendance"]')?.click();
-    };
+    button.onclick = () => openPage('kehadiran-terapis');
 });
 document.querySelectorAll('.go-stock').forEach((button) => {
     button.onclick = () => {

@@ -29,6 +29,10 @@ class AccessControlSeeder extends Seeder
             'employees.create' => 'Tambah pegawai',
             'employees.update' => 'Ubah pegawai',
         ],
+        'Kehadiran Terapis' => [
+            'therapist_attendance.view' => 'Lihat kehadiran terapis',
+            'therapist_attendance.manage' => 'Kelola kehadiran terapis',
+        ],
         'Kasir' => [
             'cashier.view' => 'Lihat kasir',
             'cashier.process' => 'Proses transaksi',
@@ -120,6 +124,7 @@ class AccessControlSeeder extends Seeder
             'reservations.view',
             'reservations.create',
             'reservations.update',
+            'therapist_attendance.view',
             'treatments.view',
             'memberships.view',
             'memberships.manage',

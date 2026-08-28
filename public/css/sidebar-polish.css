@@ -58,7 +58,7 @@ body{background:#fcfaf8}
 .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{background:rgba(255,255,255,.1)!important;color:#fff!important}
 .sidebar nav button:hover,.sidebar nav>a:hover,.access-menu summary:hover{transform:none}
 .sidebar nav button.active::before,.sidebar nav>a.active::before,.access-menu summary.active::before{background:#f3b999!important}
-.access-submenu{border-left-color:#72584c!important}.access-submenu a{color:var(--selesa-muted)!important}.access-submenu a:hover,.access-submenu a.active{background:rgba(255,255,255,.1)!important;color:#fff!important}
+.access-submenu{border-left-color:#72584c!important}.access-submenu a,.access-submenu button{color:var(--selesa-muted)!important}.access-submenu a:hover,.access-submenu a.active,.access-submenu button:hover,.access-submenu button.active{background:rgba(255,255,255,.1)!important;color:#fff!important}
 .account{background:rgba(0,0,0,.18)!important;border-top:1px solid #4a3730!important;box-shadow:none!important}.account i{background:#f1d7c7!important;color:#4c3024!important}.account strong{color:#fff!important}.account small{color:var(--selesa-muted)!important}.account .logout{color:#eadfd8!important}.account .logout:hover{background:rgba(255,255,255,.1)!important}
 .nav-icon,.sidebar .material-symbols-outlined{color:inherit!important}
 .primary,.access-button.primary{background:var(--selesa-brown)!important;color:#fff!important}.primary:hover,.access-button.primary:hover{background:#51372a!important}

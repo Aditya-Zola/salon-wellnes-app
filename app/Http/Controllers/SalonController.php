@@ -387,7 +387,13 @@ class SalonController extends Controller
 
     public function therapistAttendance(Request $request): JsonResponse
     {
-        $data = $request->validate(['date' => ['required', 'date_format:Y-m-d']]);
+        $data = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'month' => ['nullable', 'date_format:Y-m'],
+        ]);
+        $month = $data['month'] ?? substr($data['date'], 0, 7);
+        $monthStart = CarbonImmutable::createFromFormat('!Y-m', $month)->startOfMonth();
+        $monthEnd = $monthStart->endOfMonth();
 
         $attendance = DB::table('employees as employee')
             ->leftJoin('employee_attendances as attendance', function ($join) use ($data): void {
@@ -415,11 +421,33 @@ class SalonController extends Controller
             ])
             ->values();
 
+        $offByDate = DB::table('employee_attendances as attendance')
+            ->join('employees as employee', 'employee.id', '=', 'attendance.employee_id')
+            ->where('employee.active', true)
+            ->where('employee.is_service_provider', true)
+            ->where('attendance.status', 'off')
+            ->whereBetween('attendance.attendance_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
+            ->orderBy('attendance.attendance_date')
+            ->orderBy('employee.name')
+            ->get([
+                'attendance.attendance_date',
+                'employee.id as employee_id',
+                'employee.name',
+            ])
+            ->groupBy('attendance_date')
+            ->map(fn ($attendances) => $attendances->map(fn (object $attendance): array => [
+                'employee_id' => (int) $attendance->employee_id,
+                'name' => $attendance->name,
+            ])->values())
+            ->all();
+
         return response()->json([
             'date' => $data['date'],
+            'month' => $month,
             'therapists' => $attendance,
             'present' => $attendance->where('status', 'present')->values(),
             'off' => $attendance->where('status', 'off')->values(),
+            'off_by_date' => $offByDate,
         ]);
     }
 
