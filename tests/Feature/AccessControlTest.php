@@ -184,4 +184,91 @@ class AccessControlTest extends TestCase
             ->assertSee('#treatment .toolbar>.primary{display:none!important}', false)
             ->assertDontSee('Hak Akses');
     }
+
+    public function test_reservation_navigation_is_split_into_queue_calendar_and_therapist_attendance_pages(): void
+    {
+        $role = Role::create([
+            'name' => 'viewer-reservasi',
+            'display_name' => 'Viewer Reservasi',
+            'guard_name' => 'web',
+        ]);
+        $role->syncPermissions(['dashboard.view', 'reservations.view', 'therapist_attendance.view']);
+
+        $user = User::factory()->create();
+        $user->syncRoles($role);
+
+        $this->actingAs($user)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('class="access-menu reservation-menu"', false)
+            ->assertSee('data-page="reservasi-antrean"', false)
+            ->assertSee('data-page="reservasi-kalender"', false)
+            ->assertSee('data-page="kehadiran-terapis"', false)
+            ->assertSee('id="reservasi-antrean"', false)
+            ->assertSee('id="reservasi-kalender"', false)
+            ->assertSee('id="kehadiran-terapis"', false)
+            ->assertSee('id="therapist-attendance-calendar"', false)
+            ->assertDontSee('data-reservation-view=', false);
+    }
+
+    public function test_therapist_attendance_uses_dedicated_view_and_manage_permissions(): void
+    {
+        $reservationViewer = Role::create([
+            'name' => 'viewer-reservasi-tanpa-kehadiran',
+            'display_name' => 'Viewer Reservasi Tanpa Kehadiran',
+            'guard_name' => 'web',
+        ]);
+        $reservationViewer->syncPermissions(['dashboard.view', 'reservations.view']);
+        $reservationUser = User::factory()->create();
+        $reservationUser->syncRoles($reservationViewer);
+
+        $this->actingAs($reservationUser)->get(route('dashboard'))
+            ->assertOk()
+            ->assertDontSee('data-page="kehadiran-terapis"', false);
+        $this->actingAs($reservationUser)
+            ->getJson('/operasional/therapist-kehadiran?date=2026-08-28')
+            ->assertForbidden();
+
+        $attendanceViewer = Role::create([
+            'name' => 'viewer-kehadiran-terapis',
+            'display_name' => 'Viewer Kehadiran Terapis',
+            'guard_name' => 'web',
+        ]);
+        $attendanceViewer->syncPermissions(['dashboard.view', 'therapist_attendance.view']);
+        $viewerUser = User::factory()->create();
+        $viewerUser->syncRoles($attendanceViewer);
+
+        $this->actingAs($viewerUser)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('data-page="kehadiran-terapis"', false);
+        $this->actingAs($viewerUser)
+            ->getJson('/operasional/therapist-kehadiran?date=2026-08-28')
+            ->assertOk();
+        $this->actingAs($viewerUser)
+            ->putJson('/operasional/therapist-kehadiran/999', ['date' => '2026-08-28', 'status' => 'off'])
+            ->assertForbidden();
+
+        $attendanceManager = Role::create([
+            'name' => 'manager-kehadiran-terapis',
+            'display_name' => 'Manager Kehadiran Terapis',
+            'guard_name' => 'web',
+        ]);
+        $attendanceManager->syncPermissions(['dashboard.view', 'therapist_attendance.view', 'therapist_attendance.manage']);
+        $managerUser = User::factory()->create();
+        $managerUser->syncRoles($attendanceManager);
+        $therapist = Employee::create([
+            'code' => 'EMP-ATTENDANCE-PERMISSION',
+            'name' => 'Ana Terapis',
+            'is_service_provider' => true,
+            'active' => true,
+        ]);
+
+        $this->actingAs($managerUser)
+            ->putJson("/operasional/therapist-kehadiran/{$therapist->id}", ['date' => '2026-08-28', 'status' => 'off'])
+            ->assertOk();
+        $this->assertDatabaseHas('employee_attendances', [
+            'employee_id' => $therapist->id,
+            'attendance_date' => '2026-08-28',
+            'status' => 'off',
+        ]);
+    }
 }

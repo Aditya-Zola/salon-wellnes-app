@@ -1569,6 +1569,49 @@ class SalonOperationsTest extends TestCase
         $this->assertDatabaseHas('transactions', ['reservation_id' => $reservationId, 'discount_amount' => (int) round($total * .1)]);
     }
 
+    public function test_therapist_attendance_returns_off_therapists_grouped_by_month_for_calendar_markers(): void
+    {
+        $dita = $this->employee('EMP-DITA');
+        $rani = $this->employee('EMP-RANI');
+        $sari = $this->employee('EMP-SARI');
+        $month = today()->addMonth()->startOfMonth();
+        $singleOffDate = $month->copy()->addDays(4)->toDateString();
+        $multipleOffDate = $month->copy()->addDays(12)->toDateString();
+
+        DB::table('employee_attendances')->insert([
+            [
+                'employee_id' => $dita->id,
+                'attendance_date' => $singleOffDate,
+                'status' => 'off',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'employee_id' => $rani->id,
+                'attendance_date' => $multipleOffDate,
+                'status' => 'off',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'employee_id' => $sari->id,
+                'attendance_date' => $multipleOffDate,
+                'status' => 'off',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $response = $this->actingAs($this->admin)
+            ->getJson("/operasional/therapist-kehadiran?date={$singleOffDate}&month=".$month->format('Y-m'))
+            ->assertOk()
+            ->assertJsonPath('month', $month->format('Y-m'))
+            ->assertJsonPath("off_by_date.{$singleOffDate}.0.name", 'Dita')
+            ->assertJsonCount(2, "off_by_date.{$multipleOffDate}");
+
+        $this->assertSame(['Rani', 'Sari'], collect($response->json("off_by_date.{$multipleOffDate}"))->pluck('name')->all());
+    }
+
     public function test_dashboard_summarizes_present_and_off_therapists_for_today(): void
     {
         $offTherapist = $this->employee('EMP-DITA');

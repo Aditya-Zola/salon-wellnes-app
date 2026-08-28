@@ -29,8 +29,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/reservasi/{reservation}/produk', [SalonController::class, 'storeReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.store');
         Route::delete('/reservasi/{reservation}/produk/{product}', [SalonController::class, 'destroyReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.destroy');
         Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view|reservations.create')->name('reservations.therapists');
-        Route::get('/therapist-kehadiran', [SalonController::class, 'therapistAttendance'])->middleware('permission:reservations.view|reservations.create')->name('therapists.attendance');
-        Route::put('/therapist-kehadiran/{employee}', [SalonController::class, 'updateTherapistAttendance'])->middleware('permission:employees.update')->name('therapists.attendance.update');
+        Route::get('/therapist-kehadiran', [SalonController::class, 'therapistAttendance'])->middleware('permission:therapist_attendance.view')->name('therapists.attendance');
+        Route::put('/therapist-kehadiran/{employee}', [SalonController::class, 'updateTherapistAttendance'])->middleware('permission:therapist_attendance.manage')->name('therapists.attendance.update');
         Route::patch('/reservasi/{reservation}/item/{item}/status', [SalonController::class, 'updateReservationItemStatus'])->middleware('permission:reservations.update')->name('reservations.items.status');
         Route::patch('/reservasi/{id}', [SalonController::class, 'updateReservation'])->middleware('permission:reservations.update')->name('reservations.update');
         Route::post('/pegawai', [SalonController::class, 'storeEmployee'])->middleware('permission:employees.create')->name('employees.store');

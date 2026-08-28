@@ -4,7 +4,17 @@
     $modules = [
         ['page' => 'membership', 'label' => 'Membership', 'icon' => 'workspace_premium', 'permission' => 'memberships.view'],
         ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard', 'permission' => 'dashboard.view'],
-        ['page' => 'reservasi', 'label' => 'Reservasi', 'icon' => 'calendar_month', 'permission' => 'reservations.view'],
+        [
+            'page' => 'reservasi',
+            'label' => 'Reservasi',
+            'icon' => 'calendar_month',
+            'permission' => 'reservations.view',
+            'children' => [
+                ['page' => 'reservasi-antrean', 'label' => 'Antrean Hari Ini'],
+                ['page' => 'reservasi-kalender', 'label' => 'Kalender'],
+            ],
+        ],
+        ['page' => 'kehadiran-terapis', 'label' => 'Kehadiran Terapis', 'icon' => 'how_to_reg', 'permission' => 'therapist_attendance.view'],
         ['page' => 'stok', 'label' => 'Produk & Stok', 'icon' => 'inventory_2', 'permission' => 'products.view'],
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
@@ -22,7 +32,24 @@
     <nav id="navigation" aria-label="Navigasi utama">
         @foreach ($modules as $module)
             @can($module['permission'])
-                @if ($isDashboard)
+                @if (!empty($module['children']))
+                    <details class="access-menu reservation-menu">
+                        <summary>
+                            <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
+                            <span>{{ $module['label'] }}</span>
+                            <i class="material-symbols-outlined">chevron_right</i>
+                        </summary>
+                        <div class="access-submenu">
+                            @foreach ($module['children'] as $child)
+                                @if ($isDashboard)
+                                    <button type="button" data-page="{{ $child['page'] }}">{{ $child['label'] }}</button>
+                                @else
+                                    <a href="{{ route('dashboard') }}#{{ $child['page'] }}">{{ $child['label'] }}</a>
+                                @endif
+                            @endforeach
+                        </div>
+                    </details>
+                @elseif ($isDashboard)
                     <button type="button" class="{{ $module['page'] === 'dashboard' ? 'active' : '' }}" data-page="{{ $module['page'] }}">
                         <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
                         <span>{{ $module['label'] }}</span>

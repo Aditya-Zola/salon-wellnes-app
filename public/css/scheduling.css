@@ -1,5 +1,34 @@
 .therapist-attendance-modal .modal-box { width: min(430px, calc(100vw - 32px)); }
-.therapist-attendance-page { max-width: 860px; }
+.therapist-attendance-layout { display: grid; grid-template-columns: minmax(0, 1fr) 278px; gap: 16px; max-width: 1220px; align-items: start; }
+.therapist-attendance-page { max-width: none; }
+.therapist-attendance-calendar-card { position: sticky; top: 88px; padding: 15px; overflow: visible; }
+.therapist-attendance-calendar-head h3 { margin: 0; font-size: 14px; }
+.therapist-attendance-calendar-head p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.therapist-attendance-calendar-nav { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 5px; margin-top: 13px; }
+.therapist-attendance-calendar-nav button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); cursor: pointer; }
+.therapist-attendance-calendar-nav button:hover { border-color: #b99682; background: #fbf4ef; color: #6b4a38; }
+.therapist-attendance-calendar-nav button .material-symbols-outlined { font-size: 18px; }
+.therapist-attendance-calendar-nav strong { overflow: hidden; color: var(--ink); font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.therapist-attendance-calendar-weekdays,
+.therapist-attendance-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.therapist-attendance-calendar-weekdays { margin-top: 13px; color: var(--muted); font-size: 9px; font-weight: 700; text-align: center; }
+.therapist-attendance-calendar-grid { position: relative; margin-top: 7px; }
+.therapist-attendance-calendar-empty { display: block; aspect-ratio: 1; }
+.therapist-attendance-calendar-day { position: relative; z-index: 0; display: grid; aspect-ratio: 1; place-items: center; width: 100%; padding: 0; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #625e6a; font: inherit; font-size: 10px; cursor: pointer; }
+.therapist-attendance-calendar-day:hover { z-index: 3; background: #fbf4ef; color: #51372a; }
+.therapist-attendance-calendar-day.is-today { border-color: #cfb9aa; color: #6b4a38; font-weight: 750; }
+.therapist-attendance-calendar-day.is-selected { border-color: #6b4a38; background: #6b4a38; color: #fff; font-weight: 750; }
+.therapist-attendance-calendar-day.has-off .therapist-attendance-calendar-day-value { display: grid; place-items: center; min-width: 25px; height: 25px; padding: 0 4px; border-radius: 50%; background: #f1d7c7; color: #5a3828; font-size: 10px; font-weight: 800; line-height: 1; }
+.therapist-attendance-calendar-day.is-selected.has-off .therapist-attendance-calendar-day-value { background: #fff; color: #6b4a38; }
+.therapist-attendance-calendar-tooltip { position: absolute; bottom: calc(100% + 8px); left: 50%; z-index: 10; display: grid; min-width: 156px; max-width: 220px; gap: 3px; padding: 8px 9px; border-radius: 7px; background: #30241f; color: #fff; box-shadow: 0 7px 18px rgba(47, 30, 21, .2); font-size: 10px; line-height: 1.35; opacity: 0; pointer-events: none; transform: translate(-50%, 4px); transition: opacity .15s ease, transform .15s ease; }
+.therapist-attendance-calendar-tooltip::after { position: absolute; bottom: -4px; left: 50%; width: 8px; height: 8px; background: #30241f; content: ''; transform: translateX(-50%) rotate(45deg); }
+.therapist-attendance-calendar-tooltip b { position: relative; z-index: 1; color: #f3d7c6; font-size: 9px; }
+.therapist-attendance-calendar-tooltip span { position: relative; z-index: 1; }
+.therapist-attendance-calendar-day:hover .therapist-attendance-calendar-tooltip,
+.therapist-attendance-calendar-day:focus-visible .therapist-attendance-calendar-tooltip { opacity: 1; transform: translate(-50%, 0); }
+.therapist-attendance-calendar-day:focus-visible { z-index: 4; outline: 2px solid #b99682; outline-offset: 2px; }
+.therapist-attendance-calendar-note { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 13px 0 0; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; line-height: 1.45; }
+.therapist-attendance-calendar-note i { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 50%; background: #f1d7c7; color: #5a3828; font-size: 8px; font-style: normal; font-weight: 800; }
 .therapist-attendance-head { align-items: end; }
 .therapist-attendance-head label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
 .therapist-attendance-head input { min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); font: inherit; font-size: 12px; }
@@ -95,6 +124,8 @@
 }
 
 @media (max-width: 700px) {
+    .therapist-attendance-layout { grid-template-columns: 1fr; }
+    .therapist-attendance-calendar-card { position: static; width: min(100%, 360px); }
     .page-toolbar-actions { width: 100%; flex-wrap: wrap; }
     .page-search { flex: 1 1 100%; }
     .recipe-modal .modal-head { padding: 17px 18px; }
@@ -129,21 +160,8 @@ header {
 }
 header h1 { font-size: 22px; line-height: 1.2; }
 header p { font-size: 11px; line-height: 1.35; }
-#reservasi .reservation-calendar-toolbar {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 2;
-    justify-content: flex-end;
-    margin: 0;
-}
-#reservasi .reservation-calendar-toolbar > div:first-child { display: none; }
-#reservasi .reservation-view-tabs {
-    min-height: 52px;
-    align-items: center;
-    margin-bottom: 12px;
-}
-#reservasi { position: relative; }
+.reservation-page { max-width: 1500px; margin: 0 auto; }
+.reservation-page-actions { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 14px; }
 .reservation-calendar-toolbar p,
 .toolbar p,
 .card-head p,
@@ -377,10 +395,7 @@ main label,
     .card-head h3,
     .toolbar h3,
     .analytics-head h3 { font-size: 17px; }
-    #reservasi .reservation-calendar-toolbar {
-        position: static;
-        width: 100%;
-        margin: 0 0 10px;
-    }
-    #reservasi .reservation-view-tabs { min-height: 0; margin-bottom: 10px; }
+    .reservation-page-actions { display: grid; grid-template-columns: 1fr; }
+    .reservation-page-actions .primary,
+    .reservation-page-actions .secondary { width: 100%; }
 }
