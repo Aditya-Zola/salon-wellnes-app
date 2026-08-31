@@ -21,6 +21,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/data', [SalonController::class, 'data'])->name('data');
         Route::get('/penjualan', [SalonController::class, 'salesPage'])->middleware('permission:sales.view')->name('sales.page');
         Route::get('/retur', [SalonController::class, 'salesReturnsPage'])->middleware('permission:sales.view')->name('sales.returns.page');
+        Route::get('/produk', [SalonController::class, 'productsPage'])->middleware('permission:products.view')->name('products.page');
+        Route::get('/produk/riwayat', [SalonController::class, 'stockHistoryPage'])->middleware('permission:products.view')->name('stock.history.page');
+        Route::post('/produk/import', [SalonController::class, 'importProducts'])->middleware('permission:products.create')->name('products.import');
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');

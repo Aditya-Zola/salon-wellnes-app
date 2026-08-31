@@ -28,7 +28,7 @@ class SettingsController extends Controller
     public function updateSale(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'invoice_prefix' => ['required', 'string', 'min:1', 'max:20', 'regex:/^[A-Za-z0-9_-]+$/'],
+            'invoice_prefix' => ['required', 'string', 'min:1', 'max:20', 'regex:/^[A-Za-z0-9]+$/'],
         ]);
         $now = now();
         $prefix = Str::upper(trim($data['invoice_prefix']));

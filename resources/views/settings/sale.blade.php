@@ -9,7 +9,7 @@
         <div class="access-card-head">
             <div>
                 <h2>Penjualan</h2>
-                <p>Prefix digunakan di awal nomor invoice, misalnya INV-20260814-001.</p>
+                <p>Prefix digunakan di awal nomor invoice, misalnya INV20260814001.</p>
             </div>
         </div>
         <form class="access-form settings-form" method="POST" action="{{ route('settings.sale.update') }}">
@@ -18,7 +18,7 @@
             <label>
                 Prefix invoice
                 <input name="invoice_prefix" value="{{ old('invoice_prefix', $invoicePrefix) }}" maxlength="20" required autofocus>
-                <small>Gunakan huruf, angka, tanda hubung, atau underscore.</small>
+                <small>Gunakan huruf dan angka tanpa spasi atau tanda hubung.</small>
             </label>
             <div class="form-actions">
                 <button class="access-button primary" type="submit">Simpan pengaturan</button>

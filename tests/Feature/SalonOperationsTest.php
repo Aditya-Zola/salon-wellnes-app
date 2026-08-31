@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Http\Services\SpreadsheetExportService;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
@@ -1017,6 +1019,149 @@ class SalonOperationsTest extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_products_page_uses_server_side_pagination_and_search(): void
+    {
+        $unitId = (int) DB::table('units')->value('id');
+        $now = now();
+        DB::table('products')->insert(collect(range(1, 25))->map(fn (int $number): array => [
+            'code' => 'PAG-'.str_pad((string) $number, 3, '0', STR_PAD_LEFT),
+            'name' => 'Barang Pagination '.str_pad((string) $number, 2, '0', STR_PAD_LEFT),
+            'category' => 'Uji Pagination',
+            'purchase_unit_id' => $unitId,
+            'usage_unit_id' => $unitId,
+            'purchase_to_usage_factor' => 1,
+            'current_stock' => 10,
+            'minimum_stock' => 2,
+            'selling_price' => 10000,
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->all());
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk?search=Barang%20Pagination&per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonCount(20, 'data')
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('meta.per_page', 20)
+            ->assertJsonPath('meta.total', 25)
+            ->assertJsonPath('data.0.code', 'PAG-001');
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk?search=Barang%20Pagination&per_page=20&page=2')
+            ->assertOk()
+            ->assertJsonCount(5, 'data')
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('data.0.code', 'PAG-021');
+    }
+
+    public function test_stock_history_page_and_export_controls_use_a_date_range(): void
+    {
+        $product = DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $now = now();
+        $movement = [
+            'product_id' => $product->id,
+            'unit_id' => $product->usage_unit_id,
+            'type' => 'in',
+            'quantity' => 1,
+            'stock_before' => 10,
+            'stock_after' => 11,
+            'unit_cost' => null,
+            'source_type' => 'manual_adjustment',
+            'source_id' => null,
+            'notes' => 'Pengujian filter tanggal',
+            'created_by' => $this->admin->id,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+        DB::table('stock_movements')->insert([
+            $movement + ['reference' => 'FILTER-LUAR', 'occurred_at' => '2031-01-10 10:00:00'],
+            $movement + ['reference' => 'FILTER-DALAM', 'occurred_at' => '2031-02-10 12:30:00'],
+        ]);
+
+        $this->actingAs($this->admin)
+            ->get('/')
+            ->assertOk()
+            ->assertSee('id="stock-history-from"', false)
+            ->assertSee('id="stock-history-to"', false)
+            ->assertSee('id="export-stock-history"', false);
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk/riwayat?from=2031-02-01&to=2031-02-28&per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.reference', 'FILTER-DALAM')
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonMissing(['reference' => 'FILTER-LUAR']);
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk/riwayat?from=2031-02-28&to=2031-02-01')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('to');
+    }
+
+    public function test_products_can_be_imported_from_excel_with_row_level_feedback(): void
+    {
+        $headers = ['KODE PRODUK', 'NAMA PRODUK', 'KATEGORI', 'SATUAN', 'STOK AWAL', 'STOK MINIMUM', 'HARGA JUAL', 'STATUS', 'DESKRIPSI'];
+        $rows = [
+            ['IMP-SHAMPOO', 'Shampoo Import', 'Hair', 'ML', '125.5', '20', 45000, 'AKTIF', 'Diimpor dari Excel'],
+            ['IMP-CLIP', 'Hair Clip Import', 'Hair', 'PCS', '0', '3', 15000, 'NONAKTIF', 'Tanpa stok awal'],
+            ['PRD-HERBAL-DRINK', 'Produk Duplikat', 'Konsumsi', 'SACHET', '5', '1', 10000, 'AKTIF', 'Harus dilewati'],
+            ['IMP-UNIT-BAD', 'Produk Unit Salah', 'Hair', 'BOTOL-TIDAK-ADA', '2', '1', 10000, 'AKTIF', 'Harus dilewati'],
+        ];
+        $workbook = app(SpreadsheetExportService::class)->make(
+            'IMPORT PRODUK',
+            'PENGUJIAN IMPORT PRODUK',
+            $headers,
+            $rows,
+            [6],
+        );
+
+        $response = $this->actingAs($this->admin)
+            ->post('/operasional/produk/import', [
+                'file' => UploadedFile::fake()->createWithContent('produk.xlsx', $workbook),
+            ])
+            ->assertOk()
+            ->assertJsonPath('imported', 2)
+            ->assertJsonPath('skipped', 2)
+            ->assertJsonCount(2, 'issues');
+
+        $this->assertStringContainsString('2 produk berhasil diimpor', $response->json('message'));
+        $this->assertDatabaseHas('products', [
+            'code' => 'IMP-SHAMPOO',
+            'name' => 'Shampoo Import',
+            'current_stock' => '125.5000',
+            'minimum_stock' => '20.0000',
+            'selling_price' => 45000,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseHas('products', [
+            'code' => 'IMP-CLIP',
+            'current_stock' => '0.0000',
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseMissing('products', ['code' => 'IMP-UNIT-BAD']);
+
+        $importedProductId = DB::table('products')->where('code', 'IMP-SHAMPOO')->value('id');
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $importedProductId,
+            'type' => 'in',
+            'quantity' => '125.5000',
+            'source_type' => 'opening_stock_import',
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'products.imported',
+            'subject_type' => 'product',
+        ]);
+
+        $this->actingAs($this->cashier)
+            ->post('/operasional/produk/import', [
+                'file' => UploadedFile::fake()->createWithContent('produk.csv', implode(',', $headers)),
+            ])
+            ->assertForbidden();
+    }
+
     public function test_admin_can_update_product_selling_price(): void
     {
         $product = \DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
@@ -1177,6 +1322,58 @@ class SalonOperationsTest extends TestCase
         )->firstWhere('id', $reservationId);
         $this->assertTrue($marketingReservation['is_paid']);
         $this->assertArrayNotHasKey('transaction_id', $marketingReservation);
+    }
+
+    public function test_dashboard_exposes_week_month_and_year_revenue_trends(): void
+    {
+        $cash = $this->paymentMethod('CASH');
+
+        Carbon::setTestNow('2026-06-15 10:00:00');
+        [$juneReservationId, $juneTotal] = $this->finishedTwoItemReservation('081290000090');
+        $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $juneReservationId,
+            'idempotency_key' => 'revenue-trend-june',
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'amount' => $juneTotal,
+            ]],
+        ])->assertCreated();
+
+        Carbon::setTestNow('2026-08-20 10:00:00');
+        [$augustReservationId, $augustTotal] = $this->finishedTwoItemReservation('081290000091');
+        $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $augustReservationId,
+            'idempotency_key' => 'revenue-trend-august',
+            'payments' => [[
+                'payment_method_id' => $cash->id,
+                'amount' => $augustTotal,
+            ]],
+        ])->assertCreated();
+
+        $dashboard = $this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('dashboard');
+
+        $week = $dashboard['revenue_last_7_days'];
+        $month = $dashboard['revenue_current_month'];
+        $year = $dashboard['revenue_current_year'];
+
+        $this->assertCount(7, $week);
+        $this->assertCount(20, $month);
+        $this->assertCount(8, $year);
+        $this->assertSame('2026-08-17', $week[0]['date']);
+        $this->assertSame('Sen', $week[0]['label']);
+        $this->assertSame('2026-08-23', $week[6]['date']);
+        $this->assertSame('Min', $week[6]['label']);
+        $this->assertSame('2026-08-01', $month[0]['date']);
+        $this->assertSame('2026-08-20', $month[19]['date']);
+        $this->assertSame('Jan', $year[0]['label']);
+        $this->assertSame('Agu', $year[7]['label']);
+        $this->assertSame($augustTotal, $week[3]['total']);
+        $this->assertSame($augustTotal, collect($month)->sum('total'));
+        $this->assertSame($juneTotal, $year[5]['total']);
+        $this->assertSame($augustTotal, $year[7]['total']);
     }
 
     public function test_dashboard_only_user_does_not_receive_unauthorized_domain_or_private_data(): void
@@ -1376,8 +1573,8 @@ class SalonOperationsTest extends TestCase
             ])
             ->assertCreated();
 
-        $this->assertSame('INV-20260813-001', $first->json('number'));
-        $this->assertSame('INV-20260813-002', $second->json('number'));
+        $this->assertSame('INV20260813001', $first->json('number'));
+        $this->assertSame('INV20260813002', $second->json('number'));
         $this->assertDatabaseHas('invoice_sequences', [
             'invoice_date' => '2026-08-13',
             'last_number' => 2,
@@ -1388,10 +1585,14 @@ class SalonOperationsTest extends TestCase
     {
         $this->actingAs($this->admin)->get('/pengaturan/penjualan')
             ->assertOk()
-            ->assertSee('Prefix invoice');
+            ->assertSee('Prefix invoice')
+            ->assertSee('INV20260814001')
+            ->assertDontSee('INV-20260814-001');
         $this->actingAs($this->admin)->get('/pengaturan/bank')
             ->assertOk()
-            ->assertSee('Daftar Bank');
+            ->assertSee('Daftar Bank')
+            ->assertSee('BCA')
+            ->assertDontSee('BANK-001');
 
         $this->actingAs($this->admin)
             ->post('/pengaturan/bank', [
@@ -1410,6 +1611,10 @@ class SalonOperationsTest extends TestCase
         $this->assertSame(0, (int) $bankCard['total']);
 
         $this->actingAs($this->admin)
+            ->patch('/pengaturan/penjualan', ['invoice_prefix' => 'SLS-'])
+            ->assertSessionHasErrors('invoice_prefix');
+
+        $this->actingAs($this->admin)
             ->patch('/pengaturan/penjualan', ['invoice_prefix' => 'SLS'])
             ->assertSessionHas('success');
 
@@ -1423,7 +1628,7 @@ class SalonOperationsTest extends TestCase
             ]],
         ])->assertCreated();
 
-        $this->assertSame('SLS-20260813-001', $response->json('number'));
+        $this->assertSame('SLS20260813001', $response->json('number'));
     }
 
     public function test_members_and_membership_events_can_be_managed_without_losing_history(): void

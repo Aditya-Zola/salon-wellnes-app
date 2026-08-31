@@ -22,7 +22,7 @@
         @cannot('sales.view') #penjualan{display:none!important} @endcannot
         @cannot('treatments.view') #treatment{display:none!important} @endcannot
         @cannot('memberships.view') #membership{display:none!important} @endcannot
-        @cannot('products.view') #stok,#stok-opname,.stock-mini .link{display:none!important} @endcannot
+        @cannot('products.view') #stok,#stok-riwayat,#stok-opname,.stock-mini .link{display:none!important} @endcannot
         @cannot('finance.view') #keuangan{display:none!important} @endcannot
         @cannot('payroll.view') #penggajian{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
@@ -30,12 +30,12 @@
         @cannot('cashier.process') #open-payment,#add-extra,.cashier-create-transaction{display:none!important} @endcannot
         @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
         @cannot('memberships.manage') #membership .membership-manage{display:none!important} @endcannot
-        @cannot('products.create') #open-product{display:none!important} @endcannot
+        @cannot('products.create') #open-product,#open-product-import{display:none!important} @endcannot
         @cannot('products.stocktake') #open-stocktake,#stok-opname{display:none!important} @endcannot
         @cannot('payroll.manage') #open-payroll{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
         @cannot('treatments.update') .recipe-button,.commission-edit{display:none!important} @endcannot
-        @cannot('products.update') .stock-edit,.product-price-edit,.product-edit{display:none!important} @endcannot
+        @cannot('products.update') .product-price-edit,.product-edit{display:none!important} @endcannot
         @cannot('finance.manage') #open-cash-entry{display:none!important} @endcannot
         @cannot('payroll.manage') .payroll-edit{display:none!important} @endcannot
     </style>
@@ -60,8 +60,8 @@
                 <div class="payment-revenue-list" id="payment-revenue-list"></div>
             </article>
             <div class="analytics-grid">
-                <article class="analytics-card revenue-analytics"><div class="analytics-head"><div><h3>Tren pendapatan</h3><p>Transaksi dibayar dalam 7 hari terakhir</p></div><span class="analytics-period">7 HARI</span></div><div class="line-chart" id="revenue-chart"></div></article>
                 <article class="analytics-card treatment-volume"><div class="analytics-head"><div><h3>Treatment harian</h3><p>Jumlah treatment yang sudah dibayar pada bulan berjalan</p></div><span class="analytics-period" id="treatment-volume-period">BULAN INI</span></div><div class="treatment-bar-chart" id="treatment-performance"></div></article>
+                <article class="analytics-card revenue-analytics"><div class="analytics-head"><div><h3>Tren pendapatan</h3><p id="revenue-chart-description">Transaksi dibayar pada minggu berjalan</p></div><div class="revenue-period-filter" role="group" aria-label="Filter periode tren pendapatan"><button type="button" class="active" data-revenue-period="week" aria-pressed="true">Minggu</button><button type="button" data-revenue-period="month" aria-pressed="false">Bulan</button><button type="button" data-revenue-period="year" aria-pressed="false">Tahun</button></div></div><div class="line-chart" id="revenue-chart"></div></article>
             </div>
             <div class="card dashboard-operational-card">
                 <section class="dashboard-operational-item"><div class="card-head"><div><h3>Antrean hari ini</h3><p>Urutan berdasarkan jam reservasi</p></div><button class="link go-reservation">Lihat semua →</button></div><div id="queue-short"></div></section>
@@ -153,26 +153,32 @@
         </section>
 
         <section class="page" id="stok">
-            <div class="toolbar">
-                <div class="tabs">
-                    <button class="active stock-tab" data-stock="list">Daftar produk <b id="product-count">0</b></button>
-                    <button class="stock-tab" data-stock="history">Riwayat keluar-masuk</button>
-                </div>
+            <div class="toolbar stock-list-toolbar">
                 <div class="stock-toolbar-actions">
                     <div id="stock-list-actions" class="stock-action-group">
                         <label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stock-search" type="search" placeholder="Cari produk..." aria-label="Cari produk"></label>
                         <button class="secondary" id="open-stocktake"><span class="material-symbols-outlined" aria-hidden="true">inventory</span> Stok opname</button>
+                        <button class="secondary" id="open-product-import"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> Import Excel</button>
                         <button class="primary" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
-                    </div>
-                    <div id="stock-history-actions" class="stock-action-group" hidden>
-                        <button class="secondary" id="export-stock-history"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button>
                     </div>
                 </div>
             </div>
-            <div class="card">
+            <div class="card stock-list-card">
                 <div id="stock-list" class="table stock-table"></div>
-                <div id="stock-history" class="table history-table" hidden></div>
+                <div class="table-pagination" id="product-pagination"></div>
             </div>
+        </section>
+
+        <section class="page" id="stok-riwayat">
+            <div class="toolbar">
+                <div><h3>Riwayat keluar-masuk stok</h3><p>Pergerakan stok terbaru dari transaksi, penyesuaian, dan stok opname.</p></div>
+                <div class="stock-history-controls">
+                    <label class="stock-history-date"><span>Dari tanggal</span><input id="stock-history-from" type="date" value="{{ today()->startOfMonth()->toDateString() }}" aria-label="Tanggal awal riwayat stok"></label>
+                    <label class="stock-history-date"><span>Sampai tanggal</span><input id="stock-history-to" type="date" value="{{ today()->toDateString() }}" aria-label="Tanggal akhir riwayat stok"></label>
+                    <button class="secondary" id="export-stock-history"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button>
+                </div>
+            </div>
+            <div class="card"><div id="stock-history" class="table history-table"></div><div class="table-pagination" id="stock-history-pagination"></div></div>
         </section>
 
         <section class="page" id="stok-opname">
@@ -242,6 +248,7 @@
 
 <div class="modal" id="payment-modal"><div class="modal-box"><div class="modal-head"><div><h2>Pembayaran</h2><p id="payment-description">Pilih transaksi</p></div><button type="button" class="close-modal"><span class="material-symbols-outlined">close</span></button></div><div class="payment-total"><small>Total invoice</small><strong id="payment-total">Rp0</strong></div><div class="split-payment-head"><div><h3>Metode pembayaran</h3><p>Pilihan EDC, Bank, dan QRIS mengikuti data aktif di Pengaturan.</p></div><button type="button" class="secondary" id="add-payment-row"><span class="material-symbols-outlined" aria-hidden="true">add</span> Split payment</button></div><div id="payment-rows"></div><div class="payment-reconciliation"><span>Total dicatat <b id="payment-entered">Rp0</b></span><span>Selisih <b id="payment-difference">Rp0</b></span><span id="payment-change" hidden>Kembalian <b>Rp0</b></span></div><div class="stock-impact"><b>Stok akan berkurang otomatis</b><p>Sesuai resep seluruh treatment pada kunjungan ini.</p></div><footer><button type="button" class="secondary close-modal">Batal</button><button type="button" class="primary" id="complete-payment">Konfirmasi pembayaran</button></footer></div></div>
 
+<div class="modal" id="product-import-modal"><div class="modal-box product-import-modal"><div class="modal-head"><div><h2>Import data produk</h2><p>Tambahkan banyak produk sekaligus dari Excel.</p></div><button type="button" class="close-modal" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form id="product-import-form" enctype="multipart/form-data"><div class="product-import-content"><div class="product-import-guide"><span class="material-symbols-outlined" aria-hidden="true">table_view</span><div><strong>Kolom file Excel</strong><p>Kode produk, nama produk, kategori, satuan, stok awal, stok minimum, harga jual, status, dan deskripsi.</p></div></div><label class="product-import-picker" for="product-import-file"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span><strong>Pilih file Excel</strong><small id="product-import-file-name">Format .xlsx atau .csv, maksimal 5 MB</small><input id="product-import-file" name="file" type="file" accept=".xlsx,.csv" required></label><p class="product-import-warning"><span class="material-symbols-outlined" aria-hidden="true">info</span>Kode produk yang sudah ada akan dilewati agar data dan stok lama tidak tertimpa.</p><div class="product-import-result" id="product-import-result" hidden></div></div><footer><button type="button" class="secondary close-modal">Batal</button><button class="primary" id="submit-product-import"><span class="material-symbols-outlined" aria-hidden="true">upload</span> Import produk</button></footer></form></div></div>
 <div class="modal" id="product-modal"><div class="modal-box"><div class="modal-head"><div><h2>Tambah produk baru</h2><p>Produk dapat digunakan dalam resep treatment</p></div><button class="close-modal"><span class="material-symbols-outlined">close</span></button></div><form id="product-form"><div class="form-grid"><label>Nama produk<input required placeholder="Contoh: Hair Spa L'Oréal"></label><label>Kategori<select><option>Hair</option><option>Facial</option><option>Spa</option><option>Nail</option><option>Konsumsi</option></select></label><label>Stok awal<input type="number" value="500"></label><label>Satuan<select><option>ml</option><option>gr</option><option>pcs</option><option>sachet</option></select></label><label>Batas minimum<input type="number" value="100"></label><label>Harga jual<input type="number" value="0"></label></div><footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan produk</button></footer></form></div></div>
 <div class="modal" id="product-edit-modal"><div class="modal-box product-edit-modal"><div class="modal-head"><div><h2 id="product-edit-title">Edit produk</h2><p>Perbaiki data master tanpa mengubah riwayat keluar-masuk stok.</p></div><button type="button" class="close-modal"><span class="material-symbols-outlined">close</span></button></div><form id="product-edit-form"><input type="hidden" name="id"><div class="form-grid"><label>Nama produk<input name="name" required maxlength="150"></label><label>Kategori<input name="category" maxlength="100" placeholder="Contoh: Hair"></label><label>Satuan<select name="unit_id" required></select><small>Gunakan bila satuan sebelumnya salah input.</small></label><label>Batas stok minimum<input name="minimum_stock" type="number" min="0" step="0.0001" required></label><label>Harga jual<input name="selling_price" type="number" min="0" step="1" required></label><label>Status<select name="is_active"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></label><label class="full-width">Catatan produk<textarea name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><p class="product-edit-note">Mengganti satuan tidak mengonversi angka stok saat ini. Riwayat stok lama tetap disimpan sebagai jejak audit.</p><footer><button type="button" class="secondary close-modal">Batal</button><button class="primary">Simpan perubahan</button></footer></form></div></div>
 @php
@@ -251,6 +258,7 @@
         'update_reservation' => auth()->user()->can('reservations.update'),
         'manage_finance' => auth()->user()->can('finance.manage'),
         'manage_memberships' => auth()->user()->can('memberships.manage'),
+        'view_products' => auth()->user()->can('products.view'),
         'view_sales' => auth()->user()->can('sales.view'),
         'refund_sales' => auth()->user()->can('cashier.refund'),
         'view_memberships' => auth()->user()->can('memberships.view') || auth()->user()->can('memberships.manage'),

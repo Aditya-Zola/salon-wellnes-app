@@ -11,6 +11,7 @@ use App\Http\Requests\UpdateReservationItemStatusRequest;
 use App\Http\Requests\UpdateReservationStatusRequest;
 use App\Http\Services\ActivityLogger;
 use App\Http\Services\CheckoutService;
+use App\Http\Services\ProductSpreadsheetImportService;
 use App\Http\Services\ReservationService;
 use App\Http\Services\SalesReturnService;
 use App\Http\Services\SalonSnapshotService;
@@ -36,6 +37,7 @@ class SalonController extends Controller
         private readonly SalesReturnService $salesReturns,
         private readonly SalonSnapshotService $snapshots,
         private readonly SpreadsheetExportService $spreadsheets,
+        private readonly ProductSpreadsheetImportService $productImports,
         private readonly ActivityLogger $logger,
     ) {}
 
@@ -107,6 +109,88 @@ class SalonController extends Controller
             (int) ($data['per_page'] ?? 10),
             $data['search'] ?? null,
         ));
+    }
+
+    public function productsPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return response()->json($this->snapshots->productsPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+            $data['search'] ?? null,
+        ));
+    }
+
+    public function stockHistoryPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+        ]);
+        $from = $data['from'] ?? now()->startOfMonth()->toDateString();
+        $to = $data['to'] ?? today()->toDateString();
+
+        if ($to < $from) {
+            throw ValidationException::withMessages([
+                'to' => 'Tanggal akhir tidak boleh sebelum tanggal awal.',
+            ]);
+        }
+
+        return response()->json($this->snapshots->stockMovementsPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+            $from,
+            $to,
+        ));
+    }
+
+    public function importProducts(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'file' => ['required', 'file', 'max:5120'],
+        ]);
+        $file = $data['file'];
+        $extension = mb_strtolower($file->getClientOriginalExtension());
+        if (! in_array($extension, ['xlsx', 'csv'], true)) {
+            throw ValidationException::withMessages([
+                'file' => ['Format file harus .xlsx atau .csv.'],
+            ]);
+        }
+
+        $path = $file->getRealPath();
+        if ($path === false) {
+            throw ValidationException::withMessages([
+                'file' => ['File unggahan tidak dapat dibaca.'],
+            ]);
+        }
+
+        $result = $this->productImports->import($path, $extension, $request->user()?->id);
+        if ($result['imported'] > 0) {
+            $this->logger->log(
+                $request,
+                'products.imported',
+                'product',
+                null,
+                "Mengimpor {$result['imported']} produk dari Excel",
+                ['imported' => $result['imported'], 'skipped' => $result['skipped']],
+            );
+        }
+
+        $message = "{$result['imported']} produk berhasil diimpor.";
+        if ($result['skipped'] > 0) {
+            $message .= " {$result['skipped']} baris dilewati.";
+        }
+
+        return response()->json([...$result, 'message' => $message]);
     }
 
     public function exportSchedule(Request $request): StreamedResponse
@@ -1174,9 +1258,11 @@ class SalonController extends Controller
             ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
             : null;
 
+        $invoiceFilename = preg_replace('/[-_\s]+/', '', $invoice->number);
+
         return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri'))
             ->setPaper('a4')
-            ->stream($invoice->number.'.pdf');
+            ->stream($invoiceFilename.'.pdf');
     }
 
     public function storeSalesReturn(StoreSalesReturnRequest $request, int $transaction): JsonResponse

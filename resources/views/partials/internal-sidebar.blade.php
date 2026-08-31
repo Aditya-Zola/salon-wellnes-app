@@ -15,7 +15,16 @@
             ],
         ],
         ['page' => 'kehadiran-terapis', 'label' => 'Kehadiran Terapis', 'icon' => 'how_to_reg', 'permission' => 'therapist_attendance.view'],
-        ['page' => 'stok', 'label' => 'Produk & Stok', 'icon' => 'inventory_2', 'permission' => 'products.view'],
+        [
+            'page' => 'stok',
+            'label' => 'Produk & Stok',
+            'icon' => 'inventory_2',
+            'permission' => 'products.view',
+            'children' => [
+                ['page' => 'stok', 'label' => 'Daftar Produk'],
+                ['page' => 'stok-riwayat', 'label' => 'Riwayat Keluar-Masuk'],
+            ],
+        ],
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
         ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
@@ -33,7 +42,7 @@
         @foreach ($modules as $module)
             @can($module['permission'])
                 @if (!empty($module['children']))
-                    <details class="access-menu reservation-menu">
+                    <details class="access-menu {{ $module['page'] === 'reservasi' ? 'reservation-menu' : 'stock-menu' }}">
                         <summary>
                             <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
                             <span>{{ $module['label'] }}</span>

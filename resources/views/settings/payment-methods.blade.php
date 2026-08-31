@@ -34,18 +34,17 @@
             <div class="access-card-head"><div><h2>Daftar {{ $config['title'] }}</h2><p>Nonaktifkan metode yang sementara tidak digunakan; riwayat transaksi tetap aman.</p></div><span class="count-badge">{{ $methods->count() }} metode</span></div>
             <div class="access-table-wrap">
                 <table class="access-table">
-                    <thead><tr><th>Kode</th><th>{{ $config['source_label'] }}</th>@if($withAccount)<th>Akun</th><th>Rekening / ID</th>@endif<th>Status</th><th class="align-right">Aksi</th></tr></thead>
+                    <thead><tr><th>{{ $config['source_label'] }}</th>@if($withAccount)<th>Akun</th><th>Rekening / ID</th>@endif<th>Status</th><th class="align-right">Aksi</th></tr></thead>
                     <tbody>
                     @forelse ($methods as $method)
                         <tr>
-                            <td><strong>{{ $method->code }}</strong></td>
                             <td><strong>{{ $method->name }}</strong></td>
                             @if($withAccount)<td>{{ $method->account_name ?: '-' }}</td><td>{{ $method->account_number ?: '-' }}</td>@endif
                             <td><span class="role-badge">{{ $method->is_active ? 'Aktif' : 'Nonaktif' }}</span></td>
                             <td class="align-right"><div class="table-actions"><a class="access-button compact secondary" href="{{ route('settings.payment-methods.index', [$section, 'edit' => $method->id]) }}">Edit</a><form method="POST" action="{{ route('settings.payment-methods.toggle', [$section, $method->id]) }}">@csrf @method('PATCH')<button class="text-button" type="submit">{{ $method->is_active ? 'Nonaktifkan' : 'Aktifkan' }}</button></form></div></td>
                         </tr>
                     @empty
-                        <tr><td class="empty-state" colspan="{{ $withAccount ? 6 : 4 }}">Belum ada {{ $config['title'] }}. Tambahkan dari formulir di samping.</td></tr>
+                        <tr><td class="empty-state" colspan="{{ $withAccount ? 5 : 3 }}">Belum ada {{ $config['title'] }}. Tambahkan dari formulir di samping.</td></tr>
                     @endforelse
                     </tbody>
                 </table>

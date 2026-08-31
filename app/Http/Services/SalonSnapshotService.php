@@ -4,6 +4,7 @@ namespace App\Http\Services;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class SalonSnapshotService
@@ -492,13 +493,16 @@ class SalonSnapshotService
 
         $search = trim((string) $search);
         $paymentMethod = trim((string) $paymentMethod);
+        $compactSearch = preg_replace('/[-_\s]+/', '', $search);
         $query = DB::table('transactions as transaction')
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
             ->where('transaction.status', 'paid')
-            ->when($search !== '', function ($builder) use ($search): void {
+            ->when($search !== '', function ($builder) use ($search, $compactSearch): void {
                 $like = '%'.$search.'%';
-                $builder->where(function ($nested) use ($like): void {
+                $compactLike = '%'.$compactSearch.'%';
+                $builder->where(function ($nested) use ($like, $compactLike): void {
                     $nested->where('transaction.number', 'like', $like)
+                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(transaction.number, '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
                         ->orWhere('customer.name', 'like', $like);
                 });
             })
@@ -621,17 +625,20 @@ class SalonSnapshotService
 
         $search = trim((string) $search);
         $paymentMethod = trim((string) $paymentMethod);
+        $compactSearch = preg_replace('/[-_\s]+/', '', $search);
         $query = DB::table('sales_returns as sales_return')
             ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
             ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
             ->leftJoin('users as creator', 'creator.id', '=', 'sales_return.created_by')
             ->where('sales_return.status', 'posted')
-            ->when($search !== '', function ($builder) use ($search): void {
+            ->when($search !== '', function ($builder) use ($search, $compactSearch): void {
                 $like = '%'.$search.'%';
-                $builder->where(function ($nested) use ($like): void {
+                $compactLike = '%'.$compactSearch.'%';
+                $builder->where(function ($nested) use ($like, $compactLike): void {
                     $nested->where('sales_return.number', 'like', $like)
                         ->orWhere('transaction.number', 'like', $like)
+                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(transaction.number, '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
                         ->orWhere('customer.name', 'like', $like);
                 });
             })
@@ -700,6 +707,98 @@ class SalonSnapshotService
             'member_since',
             'visit_count',
             'notes',
+        ], 'page', $page);
+
+        return [
+            'data' => $paginator->getCollection()->values(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    public function productsPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null): array
+    {
+        abort_unless($this->can($user, 'products.view'), 403);
+
+        $search = trim((string) $search);
+        $query = DB::table('products as product')
+            ->join('units as usage_unit', 'usage_unit.id', '=', 'product.usage_unit_id')
+            ->join('units as purchase_unit', 'purchase_unit.id', '=', 'product.purchase_unit_id')
+            ->when($search !== '', function ($builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder->where(function ($nested) use ($like): void {
+                    $nested->where('product.name', 'like', $like)
+                        ->orWhere('product.code', 'like', $like)
+                        ->orWhere('product.category', 'like', $like);
+                });
+            })
+            ->orderBy('product.name')
+            ->orderBy('product.id');
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'product.id',
+            'product.code',
+            'product.name',
+            'product.category',
+            'product.current_stock',
+            'product.current_stock as stock',
+            'product.minimum_stock',
+            'product.selling_price',
+            'product.purchase_unit_id',
+            'product.usage_unit_id',
+            'product.purchase_to_usage_factor',
+            'product.is_active',
+            'usage_unit.code as unit',
+            'usage_unit.name as usage_unit_name',
+            'purchase_unit.name as purchase_unit_name',
+        ], 'page', $page);
+
+        return [
+            'data' => $paginator->getCollection()->values(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    public function stockMovementsPage(
+        Authenticatable $user,
+        int $page = 1,
+        int $perPage = 20,
+        ?string $from = null,
+        ?string $to = null,
+    ): array {
+        abort_unless($this->can($user, 'products.view'), 403);
+
+        $query = DB::table('stock_movements as movement')
+            ->join('products as product', 'product.id', '=', 'movement.product_id')
+            ->join('units as unit', 'unit.id', '=', 'movement.unit_id')
+            ->leftJoin('users as user', 'user.id', '=', 'movement.created_by')
+            ->when($from, fn ($builder, string $date) => $builder->where('movement.occurred_at', '>=', $date.' 00:00:00'))
+            ->when($to, fn ($builder, string $date) => $builder->where('movement.occurred_at', '<=', $date.' 23:59:59'))
+            ->orderByDesc('movement.occurred_at')
+            ->orderByDesc('movement.id');
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'movement.id',
+            'movement.product_id',
+            'product.name as product_name',
+            'movement.type',
+            'movement.quantity',
+            'movement.stock_before',
+            'movement.stock_after',
+            'movement.source_type',
+            'movement.source_id',
+            'movement.reference',
+            'movement.notes',
+            'movement.occurred_at',
+            'unit.code as unit',
+            'user.name as user_name',
         ], 'page', $page);
 
         return [
@@ -831,7 +930,7 @@ class SalonSnapshotService
     private function dashboardAnalytics(Authenticatable $user): array
     {
         $today = CarbonImmutable::today(config('app.timezone'));
-        $start = $today->subDays(6);
+        $weekStart = $today->startOfWeek(CarbonImmutable::MONDAY);
         $data = [];
 
         if ($this->can($user, 'reservations.view')) {
@@ -882,6 +981,10 @@ class SalonSnapshotService
             $todayRevenue = $this->netRevenueForDate($today);
             $data['revenue_today'] = $todayRevenue;
             $data['revenue_yesterday'] = $this->netRevenueForDate($today->subDay());
+            $yearStart = $today->startOfYear();
+            $monthStart = $today->startOfMonth();
+            $revenueStart = $weekStart->lessThan($yearStart) ? $weekStart : $yearStart;
+            $revenueByDay = $this->netRevenueByDay($revenueStart, $today);
             $paymentRevenueTotals = DB::table('transaction_payments as payment')
                 ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
                 ->where('transaction.status', 'paid')
@@ -918,21 +1021,47 @@ class SalonSnapshotService
                 'total' => (int) $paymentRevenueTotals->get((int) $method->id, 0) - (int) $paymentRefundTotals->get((int) $method->id, 0),
                 'is_active' => (bool) $method->is_active,
             ]))->values()->all();
-            $data['revenue_last_7_days'] = collect(range(0, 6))->map(function (int $offset) use ($start): array {
-                $date = $start->addDays($offset);
+            $data['revenue_last_7_days'] = collect(range(0, 6))->map(function (int $offset) use ($weekStart, $revenueByDay): array {
+                $date = $weekStart->addDays($offset);
                 $dayNames = [1 => 'Sen', 2 => 'Sel', 3 => 'Rab', 4 => 'Kam', 5 => 'Jum', 6 => 'Sab', 7 => 'Min'];
 
                 return [
                     'date' => $date->toDateString(),
                     'label' => $dayNames[$date->dayOfWeekIso],
-                    'total' => $this->netRevenueForDate($date),
+                    'total' => (int) $revenueByDay->get($date->toDateString(), 0),
                 ];
             })->all();
+            $data['revenue_current_month'] = collect(range(0, $monthStart->diffInDays($today)))
+                ->map(function (int $offset) use ($monthStart, $revenueByDay): array {
+                    $date = $monthStart->addDays($offset);
+
+                    return [
+                        'date' => $date->toDateString(),
+                        'label' => $date->format('d'),
+                        'total' => (int) $revenueByDay->get($date->toDateString(), 0),
+                    ];
+                })
+                ->all();
+            $revenueByMonth = $revenueByDay
+                ->groupBy(fn (int $total, string $date): string => substr($date, 0, 7))
+                ->map(fn (Collection $dailyRevenue): int => (int) $dailyRevenue->sum());
+            $monthNames = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun', 7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'];
+            $data['revenue_current_year'] = collect(range(0, $today->month - 1))
+                ->map(function (int $offset) use ($yearStart, $revenueByMonth, $monthNames): array {
+                    $month = $yearStart->addMonths($offset);
+
+                    return [
+                        'date' => $month->format('Y-m'),
+                        'label' => $monthNames[$month->month],
+                        'total' => (int) $revenueByMonth->get($month->format('Y-m'), 0),
+                    ];
+                })
+                ->all();
             $data['treatment_last_7_days'] = DB::table('transaction_items as item')
                 ->join('transactions as transaction', 'transaction.id', '=', 'item.transaction_id')
                 ->where('transaction.status', 'paid')
                 ->where('item.item_type', 'treatment')
-                ->whereBetween('transaction.transacted_at', [$start->startOfDay(), $today->endOfDay()])
+                ->whereBetween('transaction.transacted_at', [$weekStart->startOfDay(), $today->endOfDay()])
                 ->select('item.name', DB::raw('SUM(item.quantity) as total'))
                 ->groupBy('item.name')
                 ->orderByDesc('total')
@@ -940,7 +1069,6 @@ class SalonSnapshotService
                 ->get()
                 ->map(fn (object $item): array => ['name' => $item->name, 'total' => (int) $item->total])
                 ->values();
-            $monthStart = $today->startOfMonth();
             $treatmentsByDay = DB::table('transaction_items as item')
                 ->join('transactions as trx', 'trx.id', '=', 'item.transaction_id')
                 ->where('trx.status', 'paid')
@@ -1071,6 +1199,29 @@ class SalonSnapshotService
             ->sum('total_amount');
 
         return $sales - $refunds;
+    }
+
+    private function netRevenueByDay(CarbonImmutable $start, CarbonImmutable $end): Collection
+    {
+        $sales = DB::table('transactions')
+            ->where('status', 'paid')
+            ->whereBetween('transacted_at', [$start->startOfDay(), $end->endOfDay()])
+            ->selectRaw('DATE(transacted_at) as date, SUM(total) as total')
+            ->groupByRaw('DATE(transacted_at)')
+            ->pluck('total', 'date');
+        $refunds = DB::table('sales_returns')
+            ->where('status', 'posted')
+            ->whereBetween('returned_at', [$start->startOfDay(), $end->endOfDay()])
+            ->selectRaw('DATE(returned_at) as date, SUM(total_amount) as total')
+            ->groupByRaw('DATE(returned_at)')
+            ->pluck('total', 'date');
+
+        return $sales->keys()
+            ->merge($refunds->keys())
+            ->unique()
+            ->mapWithKeys(fn (string $date): array => [
+                $date => (int) $sales->get($date, 0) - (int) $refunds->get($date, 0),
+            ]);
     }
 
     private function can(Authenticatable $user, string $permission): bool

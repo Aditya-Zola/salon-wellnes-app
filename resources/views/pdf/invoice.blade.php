@@ -44,7 +44,7 @@
     </header>
 
     <h1 class="title">NOTA PEMBAYARAN</h1>
-    <p class="invoice-number">{{ $invoice->number }}</p>
+    <p class="invoice-number">{{ preg_replace('/[-_\s]+/', '', $invoice->number) }}</p>
 
     <table class="meta">
         <tr>
