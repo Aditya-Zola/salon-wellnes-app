@@ -210,6 +210,28 @@ class AccessControlTest extends TestCase
             ->assertDontSee('data-reservation-view=', false);
     }
 
+    public function test_product_navigation_is_split_into_product_list_and_stock_history_pages(): void
+    {
+        $role = Role::create([
+            'name' => 'viewer-produk',
+            'display_name' => 'Viewer Produk',
+            'guard_name' => 'web',
+        ]);
+        $role->syncPermissions(['dashboard.view', 'products.view']);
+
+        $user = User::factory()->create();
+        $user->syncRoles($role);
+
+        $this->actingAs($user)->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('class="access-menu stock-menu"', false)
+            ->assertSee('data-page="stok"', false)
+            ->assertSee('data-page="stok-riwayat"', false)
+            ->assertSee('id="stok"', false)
+            ->assertSee('id="stok-riwayat"', false)
+            ->assertDontSee('class="stock-tab"', false);
+    }
+
     public function test_therapist_attendance_uses_dedicated_view_and_manage_permissions(): void
     {
         $reservationViewer = Role::create([

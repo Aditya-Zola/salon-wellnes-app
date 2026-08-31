@@ -12,6 +12,8 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
     "'": '&#039;',
 }[character]));
 
+const compactInvoiceNumber = (value) => String(value ?? '').replace(/[-_\s]+/g, '');
+
 const localDate = () => {
     const date = new Date();
     const pad = (value) => String(value).padStart(2, '0');
@@ -25,6 +27,7 @@ const canCreateReservations = Boolean(capabilities.create_reservation);
 const canUpdateReservations = Boolean(capabilities.update_reservation);
 const canManageFinance = Boolean(capabilities.manage_finance);
 const canManageMemberships = Boolean(capabilities.manage_memberships);
+const canViewProducts = Boolean(capabilities.view_products);
 const canViewSales = Boolean(capabilities.view_sales);
 const canRefundSales = Boolean(capabilities.refund_sales);
 const canViewMemberships = Boolean(capabilities.view_memberships);
@@ -58,12 +61,16 @@ const headerStatusTransitions = {
 };
 
 let state = window.SALON_DATA || {};
+let revenueChartPeriod = 'week';
 let salesPageState = null;
 let salesReturnsPageState = null;
 let salesView = 'sales';
 let salesSearchTimer;
 let memberPageState = null;
 let memberSearchTimer;
+let productPageState = null;
+let productSearchTimer;
+let stockHistoryPageState = null;
 let selectedReservation = null;
 let reservationMode = 'today';
 let reservationStatusGroup = null;
@@ -93,6 +100,7 @@ const copy = {
     treatment: ['Treatment', 'Kelola menu, paket, harga, dan resep produk'],
     membership: ['Membership', 'Data member dan program khusus'],
     stok: ['Produk & Stok', 'Pantau persediaan dan pergerakan produk'],
+    'stok-riwayat': ['Riwayat Keluar-Masuk', 'Telusuri seluruh pergerakan stok produk'],
     'stok-opname': ['Stok opname', 'Tambahkan stok produk yang baru masuk'],
     penjualan: ['Penjualan', 'Riwayat transaksi lunas dan cetak ulang nota'],
     keuangan: ['Keuangan', 'Arus kas dan laporan transaksi'],
@@ -164,10 +172,11 @@ function confirmAction({
 }
 
 async function api(url, options = {}) {
+    const isFormData = options.body instanceof FormData;
     const response = await fetch(url, {
         ...options,
         headers: {
-            'Content-Type': 'application/json',
+            ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
             Accept: 'application/json',
             'X-CSRF-TOKEN': csrf,
             ...options.headers,
@@ -195,6 +204,8 @@ async function refresh() {
     renderAll();
     if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesPageState)?.meta?.current_page || 1);
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
+    if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
+    if (canViewProducts) await loadStockHistoryPage(stockHistoryPageState?.meta?.current_page || 1);
 }
 
 function upsertReservation(reservation) {
@@ -633,7 +644,6 @@ function openDashboardMetric(card) {
     }
 
     if (target === 'stok') {
-        document.querySelector('.stock-tab[data-stock="list"]')?.click();
         document.getElementById('stock-list')?.scrollIntoView({ block: 'start' });
     }
 }
@@ -1305,7 +1315,7 @@ function receiptPayload(result, reservation, productItems, payments) {
     const discount = Math.round(serviceSubtotal * selectedDiscount() / 100);
 
     return {
-        number: result.number || result.transaction_number,
+        number: compactInvoiceNumber(result.number || result.transaction_number),
         customer: reservationCustomerName(reservation),
         queue: reservation.queue_number || reservation.booking_code,
         date: new Date().toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }),
@@ -1704,16 +1714,22 @@ async function loadMembersPage(page = 1) {
 
 function renderStock() {
     const query = document.getElementById('stock-search')?.value.trim().toLowerCase() || '';
-    const products = array(state.products).filter((product) => !query || [
-        product.name,
-        product.category,
-        product.code,
-    ].some((value) => String(value || '').toLowerCase().includes(query)));
-    const movements = array(state.stock_movements);
+    const products = productPageState
+        ? array(productPageState.data)
+        : array(state.products).filter((product) => !query || [
+            product.name,
+            product.category,
+            product.code,
+        ].some((value) => String(value || '').toLowerCase().includes(query)));
+    const movements = stockHistoryPageState
+        ? array(stockHistoryPageState.data)
+        : array(state.stock_movements);
+    const historyMeta = stockHistoryPageState?.meta;
     const box = document.getElementById('stock-list');
     const history = document.getElementById('stock-history');
     const count = document.getElementById('product-count');
-    if (count) count.textContent = products.length;
+    const meta = productPageState?.meta;
+    if (count) count.textContent = Number(meta?.total ?? products.length);
 
     if (box) {
         box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>HARGA JUAL</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
@@ -1726,7 +1742,7 @@ function renderStock() {
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
                 <span><div class="progress"><i style="width:${Math.min(100, stock / Math.max(1, minimum) * 50)}%"></i></div></span>
                 <em class="pill">${stock <= minimum ? 'Menipis' : 'Aman'}</em>
-                <span class="product-row-actions"><button type="button" class="secondary product-edit" data-id="${Number(product.id)}"><span class="material-symbols-outlined">edit</span> Edit</button><button type="button" class="link stock-edit" data-id="${Number(product.id)}">Stok</button></span>
+                <span class="product-row-actions"><button type="button" class="product-edit" data-id="${Number(product.id)}" aria-label="Edit produk ${escapeHtml(product.name)}" title="Edit produk"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit produk</span></button></span>
             </div>`;
         }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
     }
@@ -1739,25 +1755,61 @@ function renderStock() {
             <span>${Number(movement.quantity)} ${escapeHtml(movement.unit || movement.unit_code || '')}</span>
             <span>${escapeHtml(movement.source || movement.source_type || '-')}</span>
             <span>${escapeHtml(movement.user_name || movement.creator?.name || 'Sistem')}</span>
-        </div>`).join('')}` : '<p class="empty-state">Belum ada riwayat stok.</p>';
+        </div>`).join('')}` : '<p class="empty-state">Tidak ada riwayat stok pada rentang tanggal ini.</p>';
     }
 
-    document.querySelectorAll('.stock-edit').forEach((button) => {
-        button.onclick = () => quickForm('Ubah stok', [
-            ['type', 'Jenis', 'select', ['masuk', 'keluar', 'opname']],
-            ['quantity', 'Jumlah', 'number'],
-            ['source', 'Sumber / catatan', 'text'],
-        ], (data) => api(`/operasional/produk/${button.dataset.id}/stok`, {
-            method: 'PATCH',
-            body: JSON.stringify(data),
-        }));
-    });
+    const historyPagination = document.getElementById('stock-history-pagination');
+    if (historyPagination) {
+        historyPagination.innerHTML = historyMeta && historyMeta.last_page > 1
+            ? `<small>Menampilkan ${movements.length} dari ${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small><div><button type="button" class="stock-history-page" data-page="${historyMeta.current_page - 1}" ${historyMeta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${historyMeta.current_page} / ${historyMeta.last_page}</span><button type="button" class="stock-history-page" data-page="${historyMeta.current_page + 1}" ${historyMeta.current_page >= historyMeta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            : (historyMeta ? `<small>${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small>` : '');
+        historyPagination.querySelectorAll('.stock-history-page').forEach((button) => {
+            button.onclick = () => loadStockHistoryPage(Number(button.dataset.page));
+        });
+    }
+
+    const pagination = document.getElementById('product-pagination');
+    if (pagination) {
+        pagination.innerHTML = meta && meta.last_page > 1
+            ? `<small>Menampilkan ${products.length} dari ${Number(meta.total).toLocaleString('id-ID')} produk</small><div><button type="button" class="product-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="product-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} produk</small>` : '');
+        pagination.querySelectorAll('.product-page').forEach((button) => {
+            button.onclick = () => loadProductsPage(Number(button.dataset.page));
+        });
+    }
 
     document.querySelectorAll('.product-edit').forEach((button) => {
         const product = products.find((item) => Number(item.id) === Number(button.dataset.id));
         if (!product) return;
         button.onclick = () => openProductEdit(product);
     });
+}
+
+async function loadProductsPage(page = 1) {
+    if (!canViewProducts) return;
+
+    const search = document.getElementById('stock-search')?.value.trim() || '';
+    const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    if (search) params.set('search', search);
+    productPageState = await api(`/operasional/produk?${params.toString()}`);
+    renderStock();
+}
+
+async function loadStockHistoryPage(page = 1) {
+    if (!canViewProducts) return;
+
+    const from = document.getElementById('stock-history-from')?.value || '';
+    const to = document.getElementById('stock-history-to')?.value || '';
+    if (from && to && from > to) {
+        toast('Tanggal akhir tidak boleh sebelum tanggal awal.', true);
+        return;
+    }
+
+    const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    stockHistoryPageState = await api(`/operasional/produk/riwayat?${params.toString()}`);
+    renderStock();
 }
 
 function formatStockQuantity(value) {
@@ -1953,7 +2005,7 @@ function renderFinance() {
     if (box) {
         box.innerHTML = transactions.map((transaction) => {
             const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name || payment.payment_method?.name).filter(Boolean);
-            return `<div class="transaction"><i class="material-symbols-outlined">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(transaction.number)} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
+            return `<div class="transaction"><i class="material-symbols-outlined">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(compactInvoiceNumber(transaction.number))} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
         }).join('') || '<p class="empty-state">Belum ada transaksi hari ini.</p>';
     }
 
@@ -1978,7 +2030,7 @@ function transactionReceiptPayload(transaction) {
 
     return {
         transactionId: Number(transaction.id),
-        number: transaction.number,
+        number: compactInvoiceNumber(transaction.number),
         customer: transaction.customer_name || transaction.customer?.name || 'Pelanggan',
         date,
         cashier: transaction.cashier_name || 'Kasir Selesa',
@@ -2057,7 +2109,7 @@ function renderSalesSnapshot() {
         .filter((transaction) => {
             const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name).filter(Boolean);
             const matchesPayment = !paymentFilter?.value || paymentNames.includes(paymentFilter.value);
-            const haystack = [transaction.number, transaction.customer_name, ...paymentNames]
+            const haystack = [transaction.number, compactInvoiceNumber(transaction.number), transaction.customer_name, ...paymentNames]
                 .filter(Boolean)
                 .join(' ')
                 .toLocaleLowerCase('id-ID');
@@ -2070,7 +2122,7 @@ function renderSalesSnapshot() {
         const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
         return `<div class="tr sales-row">
-            <span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span>
+            <span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span>
             <span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span>
             <span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span>
             <span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span>
@@ -2086,7 +2138,7 @@ function renderSalesSnapshot() {
         if (!transaction) return;
         button.onclick = () => openReceiptPrintChoice(transactionReceiptPayload(transaction), {
             title: 'Cetak ulang nota',
-            description: `${transaction.number} · ${money(transaction.total)}`,
+            description: `${compactInvoiceNumber(transaction.number)} · ${money(transaction.total)}`,
         });
     });
 }
@@ -2139,7 +2191,7 @@ function renderSales() {
         const returnStatus = refundedAmount > 0
             ? `<em class="sales-return-status">${refundedAmount >= Number(transaction.total) ? 'Retur penuh' : 'Retur sebagian'}</em>`
             : '';
-        return `<div class="tr sales-row"><span><b>${escapeHtml(transaction.number)}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
+        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
@@ -2148,7 +2200,7 @@ function renderSales() {
         if (!transaction) return;
         button.onclick = () => openReceiptPrintChoice(transactionReceiptPayload(transaction), {
             title: 'Cetak ulang nota',
-            description: `${transaction.number} \u00b7 ${money(transaction.total)}`,
+            description: `${compactInvoiceNumber(transaction.number)} \u00b7 ${money(transaction.total)}`,
         });
     });
     const meta = salesPageState?.meta;
@@ -2181,7 +2233,7 @@ function renderSalesReturns() {
         const itemNames = items.map((item) => item.product_name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
         const itemQuantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
-        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(salesReturn.transaction_number)}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
+        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>PRODUK & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
     box.querySelectorAll('.sales-return-receipt').forEach((button) => {
@@ -2210,7 +2262,7 @@ function openSalesReturn(transaction) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal sales-return-overlay';
     wrapper.innerHTML = `<div class="modal-box sales-return-modal">
-        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">Retur produk</span><h2>${escapeHtml(transaction.number)}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} · Pilih produk dan jumlah yang dikembalikan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">Retur produk</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} · Pilih produk dan jumlah yang dikembalikan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form class="sales-return-form">
             <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
                 <div><strong>${escapeHtml(item.name)}</strong><small>Terjual ${Number(item.quantity).toLocaleString('id-ID')} · Sudah diretur ${Number(item.returned_quantity || 0).toLocaleString('id-ID')}</small></div>
@@ -2331,7 +2383,7 @@ function renderCashEntryHistory() {
             <span>${escapeHtml(formatCashEntryDate(entry.entry_date))}</span>
             <span><em class="finance-type ${isIncome ? 'income' : 'expense'}">${isIncome ? 'Pemasukan' : 'Pengeluaran'}</em></span>
             <span><b>${escapeHtml(entry.category)}</b><small>${escapeHtml(entry.description)}</small></span>
-            <span><small class="finance-source ${automated ? 'automatic' : 'manual'}">${automated ? `Otomatis${entry.transaction_number ? ` · ${escapeHtml(entry.transaction_number)}` : ''}` : 'Manual'}</small></span>
+            <span><small class="finance-source ${automated ? 'automatic' : 'manual'}">${automated ? `Otomatis${entry.transaction_number ? ` · ${escapeHtml(compactInvoiceNumber(entry.transaction_number))}` : ''}` : 'Manual'}</small></span>
             <span>${escapeHtml(entry.created_by_name || '-')}</span>
             <b class="align-right finance-amount ${isIncome ? 'income' : 'expense'}">${isIncome ? '+' : '−'}${money(entry.amount)}</b>
         </div>`;
@@ -2543,6 +2595,108 @@ function compactMoney(value) {
     return money(number);
 }
 
+function renderRevenueTrend(dashboard) {
+    const chart = document.getElementById('revenue-chart');
+    const description = document.getElementById('revenue-chart-description');
+    const buttons = document.querySelectorAll('[data-revenue-period]');
+    if (!chart) return;
+
+    const periods = {
+        week: {
+            items: array(dashboard.revenue_last_7_days),
+            description: 'Transaksi dibayar pada minggu berjalan',
+            totalLabel: 'Total minggu ini',
+            averageLabel: 'Rata-rata / hari',
+            ariaLabel: 'Grafik pendapatan minggu berjalan dari Senin sampai Minggu',
+            emptyLabel: 'Belum ada data pendapatan pada minggu berjalan.',
+        },
+        month: {
+            items: array(dashboard.revenue_current_month),
+            description: 'Transaksi dibayar pada bulan berjalan',
+            totalLabel: 'Total bulan ini',
+            averageLabel: 'Rata-rata / hari',
+            ariaLabel: 'Grafik pendapatan bulan berjalan',
+            emptyLabel: 'Belum ada data pendapatan pada bulan berjalan.',
+        },
+        year: {
+            items: array(dashboard.revenue_current_year),
+            description: 'Transaksi dibayar pada tahun berjalan',
+            totalLabel: 'Total tahun ini',
+            averageLabel: 'Rata-rata / bulan',
+            ariaLabel: 'Grafik pendapatan tahun berjalan',
+            emptyLabel: 'Belum ada data pendapatan pada tahun berjalan.',
+        },
+    };
+    const selectedPeriod = periods[revenueChartPeriod] ? revenueChartPeriod : 'week';
+    const config = periods[selectedPeriod];
+    const revenue = config.items;
+
+    if (description) description.textContent = config.description;
+    buttons.forEach((button) => {
+        const isActive = button.dataset.revenuePeriod === selectedPeriod;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+        button.onclick = () => {
+            revenueChartPeriod = button.dataset.revenuePeriod;
+            renderRevenueTrend(state.dashboard || {});
+        };
+    });
+
+    if (!revenue.length) {
+        chart.innerHTML = `<p class="empty-state">${config.emptyLabel}</p>`;
+        return;
+    }
+
+    const totals = revenue.map((item) => Number(item.total || 0));
+    const maximum = Math.max(0, ...totals);
+    const minimum = Math.min(0, ...totals);
+    const scale = maximum - minimum;
+    const total = totals.reduce((sum, amount) => sum + amount, 0);
+    const average = Math.round(total / revenue.length);
+    const points = revenue.map((item, index) => {
+        const itemDate = selectedPeriod === 'year'
+            ? new Date(`${item.date}-01T12:00:00`)
+            : new Date(`${item.date}T12:00:00`);
+        const dateLabel = Number.isNaN(itemDate.getTime())
+            ? item.date
+            : new Intl.DateTimeFormat('id-ID', selectedPeriod === 'year'
+                ? { month: 'long', year: 'numeric' }
+                : { day: '2-digit', month: 'short', year: 'numeric' }).format(itemDate);
+
+        return {
+            px: revenue.length === 1 ? 50 : 3 + (index * (94 / (revenue.length - 1))),
+            py: scale ? 8 + ((maximum - Number(item.total || 0)) / scale * 84) : 92,
+            total: Number(item.total || 0),
+            label: item.label,
+            date: dateLabel,
+        };
+    });
+    const zeroY = scale ? 8 + ((maximum / scale) * 84) : 92;
+    const line = points.map((point) => `${point.px},${point.py}`).join(' ');
+    const area = `${points[0].px},${zeroY} ${line} ${points.at(-1).px},${zeroY}`;
+    const middleAxis = maximum - ((maximum - minimum) / 2);
+    const labels = points
+        .map((point) => `<span title="${escapeHtml(point.date)}">${escapeHtml(point.label)}</span>`)
+        .join('');
+
+    chart.innerHTML = `<div class="revenue-chart-summary"><span><small>${config.totalLabel}</small><strong>${money(total)}</strong></span><span><small>${config.averageLabel}</small><strong>${money(average)}</strong></span></div><div class="revenue-line-canvas"><div class="revenue-line-plot"><span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(middleAxis)}</span><span class="axis a3">${compactMoney(minimum)}</span><div class="chart-grid"></div><svg class="revenue-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="${config.ariaLabel}"><defs><linearGradient id="revenue-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map((point) => `<button type="button" class="revenue-line-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.date)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="revenue-line-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${labels}</div></div>`;
+
+    const tooltip = chart.querySelector('.revenue-line-tooltip');
+    chart.querySelectorAll('.revenue-line-point').forEach((point) => {
+        const showTooltip = () => {
+            tooltip.querySelector('small').textContent = point.dataset.date;
+            tooltip.querySelector('strong').textContent = point.dataset.total;
+            tooltip.style.setProperty('--tooltip-x', point.style.getPropertyValue('--x'));
+            tooltip.style.setProperty('--tooltip-y', point.style.getPropertyValue('--y'));
+            tooltip.classList.add('is-visible');
+        };
+        point.addEventListener('mouseenter', showTooltip);
+        point.addEventListener('focus', showTooltip);
+        point.addEventListener('mouseleave', () => tooltip.classList.remove('is-visible'));
+        point.addEventListener('blur', () => tooltip.classList.remove('is-visible'));
+    });
+}
+
 function renderDashboard() {
     const dashboard = state.dashboard || {};
     const set = (id, value) => {
@@ -2609,39 +2763,7 @@ function renderDashboard() {
         badge.hidden = low === 0;
     }
 
-    const revenue = array(dashboard.revenue_last_7_days);
-    const chart = document.getElementById('revenue-chart');
-    if (chart) {
-        const maximum = Math.max(0, ...revenue.map((item) => Number(item.total || 0)));
-        const scale = maximum || 1;
-        const weeklyTotal = revenue.reduce((sum, item) => sum + Number(item.total || 0), 0);
-        const average = revenue.length ? Math.round(weeklyTotal / revenue.length) : 0;
-        const points = revenue.map((item, index) => ({
-            px: 3 + (index * (94 / Math.max(1, revenue.length - 1))),
-            py: 92 - (Number(item.total || 0) / scale * 76),
-            total: Number(item.total || 0),
-            label: item.label,
-            date: item.date,
-        }));
-        const line = points.map((point) => `${point.px},${point.py}`).join(' ');
-        const area = `${points[0]?.px ?? 0},100 ${line} ${points.at(-1)?.px ?? 100},100`;
-        chart.innerHTML = `<div class="revenue-chart-summary"><span><small>Total 7 hari</small><strong>${money(weeklyTotal)}</strong></span><span><small>Rata-rata / hari</small><strong>${money(average)}</strong></span></div><div class="revenue-line-canvas"><div class="revenue-line-plot"><span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(maximum / 2)}</span><span class="axis a3">Rp0</span><div class="chart-grid"></div><svg class="revenue-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Grafik pendapatan tujuh hari"><defs><linearGradient id="revenue-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map((point) => `<button type="button" class="revenue-line-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.label)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="revenue-line-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${revenue.map((item) => `<span title="${escapeHtml(item.date)}">${escapeHtml(item.label)}</span>`).join('')}</div></div>`;
-
-        const tooltip = chart.querySelector('.revenue-line-tooltip');
-        chart.querySelectorAll('.revenue-line-point').forEach((point) => {
-            const showTooltip = () => {
-                tooltip.querySelector('small').textContent = point.dataset.date;
-                tooltip.querySelector('strong').textContent = point.dataset.total;
-                tooltip.style.setProperty('--tooltip-x', point.style.getPropertyValue('--x'));
-                tooltip.style.setProperty('--tooltip-y', point.style.getPropertyValue('--y'));
-                tooltip.classList.add('is-visible');
-            };
-            point.addEventListener('mouseenter', showTooltip);
-            point.addEventListener('focus', showTooltip);
-            point.addEventListener('mouseleave', () => tooltip.classList.remove('is-visible'));
-            point.addEventListener('blur', () => tooltip.classList.remove('is-visible'));
-        });
-    }
+    renderRevenueTrend(dashboard);
 
     const treatments = array(dashboard.treatment_daily_current_month);
     const performance = document.getElementById('treatment-performance');
@@ -3253,7 +3375,7 @@ function paymentSourceDetails(option) {
     const method = option.methods.find((item) => Number(item.id) === Number(selectedPaymentMethodId)) || option.methods[0];
     const sourceLabel = option.key === 'card' ? 'Mesin EDC' : option.key === 'bank_transfer' ? 'Bank tujuan' : 'QRIS tujuan';
     const heading = option.key === 'card' ? 'Informasi kartu' : `Informasi ${sourceLabel.toLowerCase()}`;
-    const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.code)} | ${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
+    const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
 
     if (option.key === 'card') {
         return `<section class="payment-source-details card-source-details"><h4>${heading}</h4><div class="payment-source-fields">${sourceSelect}<label>Nomor kartu<input class="payment-card-number" inputmode="numeric" maxlength="32" placeholder="Nomor kartu"></label><label>Nomor transaksi<input class="payment-card-reference" maxlength="100" placeholder="Nomor transaksi"></label></div></section>`;
@@ -3720,10 +3842,7 @@ document.querySelectorAll('.go-therapist-attendance').forEach((button) => {
     button.onclick = () => openPage('kehadiran-terapis');
 });
 document.querySelectorAll('.go-stock').forEach((button) => {
-    button.onclick = () => {
-        openPage('stok');
-        document.querySelector('.stock-tab[data-stock="list"]')?.click();
-    };
+    button.onclick = () => openPage('stok');
 });
 if (location.hash) openPage(location.hash.slice(1));
 
@@ -3754,6 +3873,24 @@ document.addEventListener('click', (event) => {
     if (!event.target.closest('.therapist-picker-label')) closeReservationTherapistPickers();
 });
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
+document.getElementById('open-product-import')?.addEventListener('click', () => {
+    const form = document.getElementById('product-import-form');
+    const result = document.getElementById('product-import-result');
+    const fileName = document.getElementById('product-import-file-name');
+    form?.reset();
+    if (result) {
+        result.hidden = true;
+        result.innerHTML = '';
+        result.classList.remove('has-issues');
+    }
+    if (fileName) fileName.textContent = 'Format .xlsx atau .csv, maksimal 5 MB';
+    modal('product-import-modal');
+});
+document.getElementById('product-import-file')?.addEventListener('change', (event) => {
+    const fileName = document.getElementById('product-import-file-name');
+    const file = event.currentTarget.files?.[0];
+    if (fileName) fileName.textContent = file?.name || 'Format .xlsx atau .csv, maksimal 5 MB';
+});
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
 document.querySelectorAll('[data-sales-view]').forEach((button) => {
@@ -3768,6 +3905,8 @@ document.getElementById('member-search')?.addEventListener('input', () => {
     clearTimeout(memberSearchTimer);
     memberSearchTimer = setTimeout(() => loadMembersPage(1).catch((error) => toast(error.message, true)), 250);
 });
+document.getElementById('stock-history-from')?.addEventListener('change', () => loadStockHistoryPage(1).catch((error) => toast(error.message, true)));
+document.getElementById('stock-history-to')?.addEventListener('change', () => loadStockHistoryPage(1).catch((error) => toast(error.message, true)));
 document.getElementById('cash-entry-type-filter')?.addEventListener('change', renderCashEntryHistory);
 document.getElementById('cash-entry-search')?.addEventListener('input', renderCashEntryHistory);
 document.getElementById('cash-entry-from')?.addEventListener('change', renderCashEntryHistory);
@@ -3783,18 +3922,6 @@ document.querySelectorAll('.close-modal').forEach((button) => {
     button.onclick = () => closeModal(button);
 });
 
-document.querySelectorAll('.stock-tab').forEach((button) => {
-    button.onclick = () => {
-        document.querySelectorAll('.stock-tab').forEach((item) => item.classList.remove('active'));
-        button.classList.add('active');
-        const showingHistory = button.dataset.stock === 'history';
-        document.getElementById('stock-list').hidden = showingHistory;
-        document.getElementById('stock-history').hidden = !showingHistory;
-        document.getElementById('stock-list-actions').hidden = showingHistory;
-        document.getElementById('stock-history-actions').hidden = !showingHistory;
-    };
-});
-
 document.getElementById('export-schedule')?.addEventListener('click', () => {
     const date = document.getElementById('reservation-calendar-date')?.value || localDate();
     window.location.assign(`/operasional/reservasi/ekspor?date=${encodeURIComponent(date)}`);
@@ -3802,8 +3929,13 @@ document.getElementById('export-schedule')?.addEventListener('click', () => {
 
 document.getElementById('export-stock-history')?.addEventListener('click', () => {
     const today = localDate();
-    const from = `${today.slice(0, 8)}01`;
-    window.location.assign(`/operasional/produk/riwayat-ekspor?from=${encodeURIComponent(from)}&to=${encodeURIComponent(today)}`);
+    const from = document.getElementById('stock-history-from')?.value || `${today.slice(0, 8)}01`;
+    const to = document.getElementById('stock-history-to')?.value || today;
+    if (from > to) {
+        toast('Tanggal akhir tidak boleh sebelum tanggal awal.', true);
+        return;
+    }
+    window.location.assign(`/operasional/produk/riwayat-ekspor?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
 });
 
 document.getElementById('discount')?.addEventListener('change', () => {
@@ -3892,6 +4024,43 @@ document.getElementById('product-form')?.addEventListener('submit', async (event
         await refresh();
     } catch (error) {
         toast(error.message, true);
+    }
+});
+
+document.getElementById('product-import-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = form.querySelector('[name="file"]')?.files?.[0];
+    const submit = document.getElementById('submit-product-import');
+    const resultBox = document.getElementById('product-import-result');
+    if (!file || !submit || !resultBox) {
+        toast('Pilih file Excel yang akan diimpor.', true);
+        return;
+    }
+
+    const originalLabel = submit.innerHTML;
+    submit.disabled = true;
+    submit.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">progress_activity</span> Memproses...';
+    resultBox.hidden = true;
+
+    try {
+        const payload = new FormData();
+        payload.append('file', file);
+        const result = await api('/operasional/produk/import', {
+            method: 'POST',
+            body: payload,
+        });
+        const issues = array(result.issues);
+        resultBox.classList.toggle('has-issues', Number(result.skipped) > 0);
+        resultBox.innerHTML = `<strong>${escapeHtml(result.message)}</strong>${issues.length ? `<ul>${issues.map((issue) => `<li>Baris ${Number(issue.row)}: ${escapeHtml(issue.message)}</li>`).join('')}</ul>` : ''}${Number(result.issues_total) > issues.length ? `<p>Masih ada ${Number(result.issues_total) - issues.length} catatan lain yang tidak ditampilkan.</p>` : ''}`;
+        resultBox.hidden = false;
+        toast(result.message, Number(result.imported) === 0);
+        if (Number(result.imported) > 0) await refresh();
+    } catch (error) {
+        toast(error.message, true);
+    } finally {
+        submit.disabled = false;
+        submit.innerHTML = originalLabel;
     }
 });
 
@@ -3989,8 +4158,8 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
                 idempotency_key: paymentIdempotencyKey,
             }),
         });
-        toast(`${result.message}: ${result.number || result.transaction_number || ''}`.trim());
-        receipt.number = result.number || result.transaction_number || receipt.number;
+        toast(`${result.message}: ${compactInvoiceNumber(result.number || result.transaction_number || '')}`.trim());
+        receipt.number = compactInvoiceNumber(result.number || result.transaction_number || receipt.number);
         receipt.transactionId = Number(result.id || receipt.transactionId || 0) || null;
         receipt.total = Number(result.total || receipt.total);
         receipt.change = Number(result.change_amount || receipt.change || 0);
@@ -4126,7 +4295,10 @@ document.addEventListener('click', (event) => {
 });
 
 document.getElementById('treatment-search')?.addEventListener('input', renderTreatments);
-document.getElementById('stock-search')?.addEventListener('input', renderStock);
+document.getElementById('stock-search')?.addEventListener('input', () => {
+    clearTimeout(productSearchTimer);
+    productSearchTimer = setTimeout(() => loadProductsPage(1).catch((error) => toast(error.message, true)), 250);
+});
 
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') document.querySelector('.modal.open')?.classList.remove('open');

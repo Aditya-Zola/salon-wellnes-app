@@ -39,7 +39,7 @@
 
         <section class="section">
             <table class="meta">
-                <tr><td>Invoice awal</td><td>:</td><td>{{ $return->transaction_number }}</td></tr>
+                <tr><td>Invoice awal</td><td>:</td><td>{{ preg_replace('/[-_\s]+/', '', $return->transaction_number) }}</td></tr>
                 <tr><td>Tanggal retur</td><td>:</td><td>{{ \Carbon\CarbonImmutable::parse($return->returned_at)->translatedFormat('d M Y, H:i') }}</td></tr>
                 <tr><td>Pelanggan</td><td>:</td><td>{{ $return->customer_name }}</td></tr>
                 <tr><td>Diproses oleh</td><td>:</td><td>{{ $return->created_by_name ?: 'Admin Selesa' }}</td></tr>

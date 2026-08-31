@@ -673,9 +673,9 @@ class CheckoutService
             ->update(['last_number' => $next, 'updated_at' => now()]);
 
         $prefix = DB::table('sale_settings')->where('key', 'invoice_prefix')->value('value') ?: 'INV';
-        $prefix = trim((string) $prefix, '-_ ');
+        $prefix = preg_replace('/[^A-Za-z0-9]/', '', (string) $prefix) ?: 'INV';
 
-        return sprintf('%s-%s-%03d', $prefix, $dateCode, $next);
+        return sprintf('%s%s%03d', $prefix, $dateCode, $next);
     }
 
     private function sumMoney(Collection $amounts): int
