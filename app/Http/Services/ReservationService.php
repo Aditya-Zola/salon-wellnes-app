@@ -41,6 +41,7 @@ class ReservationService
                     'items' => ['Semua treatment harus tersedia dan aktif.'],
                 ]);
             }
+            $commissionProfiles = $this->commissionProfilesForTreatments($treatmentIds);
 
             // Lock every selected employee in a stable order. Reservation writers that
             // involve the same employee are serialized, including when no schedule row exists yet.
@@ -117,8 +118,12 @@ class ReservationService
                 $unitPrice = array_key_exists('actual_price', $candidate['input']) && $candidate['input']['actual_price'] !== null
                     ? (int) $candidate['input']['actual_price']
                     : (int) $treatment->normal_price;
-                $commissionPercent = FixedPoint::normalizePercent((string) $treatment->default_commission_percent);
-                $commissionAmount = FixedPoint::percentOf($unitPrice, $commissionPercent);
+                $commission = $this->commissionAllocation(
+                    $treatment,
+                    $unitPrice,
+                    $candidate['input']['staff'],
+                    $commissionProfiles->get($treatment->id, collect()),
+                );
 
                 $itemId = DB::table('reservation_items')->insertGetId([
                     'reservation_id' => $reservationId,
@@ -130,8 +135,8 @@ class ReservationService
                     'discount_percent' => FixedPoint::normalizePercent(0),
                     'discount_amount' => 0,
                     'net_price' => $unitPrice,
-                    'commission_percent' => $commissionPercent,
-                    'commission_amount' => $commissionAmount,
+                    'commission_percent' => $commission['total_percent'],
+                    'commission_amount' => $commission['total_amount'],
                     'scheduled_start_at' => $candidate['start'],
                     'scheduled_end_at' => $candidate['end'],
                     'scheduled_ready_at' => $candidate['ready'],
@@ -149,16 +154,14 @@ class ReservationService
                     $employee = $employees->get($employeeId);
                     $assignmentKey = $itemIndex.':'.$employeeId;
                     $wasOverridden = isset($conflictAssignments[$assignmentKey]);
-                    $isPrimary = $staff['role'] === 'primary';
+                    $staffCommission = $commission['by_employee'][$employeeId];
 
                     DB::table('reservation_item_staff')->insert([
                         'reservation_item_id' => $itemId,
                         'employee_id' => $employeeId,
                         'role' => $staff['role'],
-                        // Phase 1 snapshots the treatment default on the primary assignment.
-                        // Future commission rules can explicitly split it without duplicating payout.
-                        'commission_percent' => $isPrimary ? $commissionPercent : FixedPoint::normalizePercent(0),
-                        'commission_amount' => $isPrimary ? $commissionAmount : 0,
+                        'commission_percent' => $staffCommission['percent'],
+                        'commission_amount' => $staffCommission['amount'],
                         'conflict_override_reason' => $wasOverridden ? $data['override_reason'] : null,
                         'conflict_overridden_by' => $wasOverridden ? $request->user()?->id : null,
                         'conflict_overridden_at' => $wasOverridden ? $now : null,
@@ -173,6 +176,8 @@ class ReservationService
                         'position' => $employee->position,
                         'specialty' => $employee->specialty,
                         'role' => $staff['role'],
+                        'commission_percent' => $staffCommission['percent'],
+                        'commission_amount' => $staffCommission['amount'],
                         'conflict_overridden' => $wasOverridden,
                         ...($wasOverridden ? [
                             'conflict_override_reason' => $data['override_reason'],
@@ -191,6 +196,8 @@ class ReservationService
                     'discount_percent' => FixedPoint::normalizePercent(0),
                     'discount_amount' => 0,
                     'net_price' => $unitPrice,
+                    'commission_percent' => $commission['total_percent'],
+                    'commission_amount' => $commission['total_amount'],
                     'scheduled_start_at' => $candidate['start']->format('Y-m-d H:i:s'),
                     'scheduled_end_at' => $candidate['end']->format('Y-m-d H:i:s'),
                     'scheduled_ready_at' => $candidate['ready']->format('Y-m-d H:i:s'),
@@ -345,8 +352,13 @@ class ReservationService
             }
 
             $now = now();
-            $commissionPercent = FixedPoint::normalizePercent((string) $treatment->default_commission_percent);
-            $commissionAmount = FixedPoint::percentOf((int) $treatment->normal_price, $commissionPercent);
+            $commissionProfiles = $this->commissionProfilesForTreatments(collect([(int) $treatment->id]));
+            $commission = $this->commissionAllocation(
+                $treatment,
+                (int) $treatment->normal_price,
+                $data['staff'],
+                $commissionProfiles->get($treatment->id, collect()),
+            );
             $sortOrder = ((int) DB::table('reservation_items')->where('reservation_id', $reservationId)->max('sort_order')) + 1;
             $itemId = DB::table('reservation_items')->insertGetId([
                 'reservation_id' => $reservationId,
@@ -358,8 +370,8 @@ class ReservationService
                 'discount_percent' => FixedPoint::normalizePercent(0),
                 'discount_amount' => 0,
                 'net_price' => $treatment->normal_price,
-                'commission_percent' => $commissionPercent,
-                'commission_amount' => $commissionAmount,
+                'commission_percent' => $commission['total_percent'],
+                'commission_amount' => $commission['total_amount'],
                 'scheduled_start_at' => $candidate['start'],
                 'scheduled_end_at' => $candidate['end'],
                 'scheduled_ready_at' => $candidate['ready'],
@@ -371,13 +383,13 @@ class ReservationService
             ]);
 
             foreach ($data['staff'] as $staff) {
-                $isPrimary = $staff['role'] === 'primary';
+                $staffCommission = $commission['by_employee'][(int) $staff['employee_id']];
                 DB::table('reservation_item_staff')->insert([
                     'reservation_item_id' => $itemId,
                     'employee_id' => (int) $staff['employee_id'],
                     'role' => $staff['role'],
-                    'commission_percent' => $isPrimary ? $commissionPercent : FixedPoint::normalizePercent(0),
-                    'commission_amount' => $isPrimary ? $commissionAmount : 0,
+                    'commission_percent' => $staffCommission['percent'],
+                    'commission_amount' => $staffCommission['amount'],
                     'conflict_override_reason' => null,
                     'conflict_overridden_by' => null,
                     'conflict_overridden_at' => null,
@@ -393,7 +405,12 @@ class ReservationService
                 'reservation_item',
                 $itemId,
                 "Menambahkan treatment {$treatment->name} dari kasir",
-                ['reservation_id' => $reservationId, 'treatment_id' => (int) $treatment->id],
+                [
+                    'reservation_id' => $reservationId,
+                    'treatment_id' => (int) $treatment->id,
+                    'commission_percent' => $commission['total_percent'],
+                    'commission_amount' => $commission['total_amount'],
+                ],
             );
 
             return [
@@ -748,6 +765,102 @@ class ReservationService
                 'items' => ['Therapist libur pada tanggal tersebut: '.implode(', ', $off).'.'],
             ]);
         }
+    }
+
+    /** @param Collection<int, int> $treatmentIds */
+    private function commissionProfilesForTreatments(Collection $treatmentIds): Collection
+    {
+        if ($treatmentIds->isEmpty()) {
+            return collect();
+        }
+
+        return DB::table('treatment_commission_splits')
+            ->whereIn('treatment_id', $treatmentIds->all())
+            ->orderBy('therapist_count')
+            ->orderBy('therapist_position')
+            ->get([
+                'treatment_id',
+                'therapist_count',
+                'therapist_position',
+                'commission_percent',
+            ])
+            ->groupBy('treatment_id');
+    }
+
+    /**
+     * Membagi satu komisi treatment ke therapist yang terpasang pada item.
+     * Posisi pertama selalu therapist primary, lalu therapist pendamping sesuai
+     * urutan pada reservasi. Bila belum ada profil khusus, komisi dibagi rata.
+     *
+     * @param  array<int, array{employee_id: int|string, role: string}>  $staff
+     * @param  Collection<int, object>  $profiles
+     * @return array{total_percent: string, total_amount: int, by_employee: array<int, array{percent: string, amount: int}>}
+     */
+    private function commissionAllocation(object $treatment, int $unitPrice, array $staff, Collection $profiles): array
+    {
+        $totalPercent = FixedPoint::normalizePercent((string) $treatment->default_commission_percent);
+        $totalPercentScaled = FixedPoint::parse($totalPercent, FixedPoint::PERCENT_SCALE);
+        $staffCount = count($staff);
+        $orderedStaff = collect($staff)
+            ->sortBy(fn (array $assignment): int => $assignment['role'] === 'primary' ? 0 : 1)
+            ->values();
+        $customPercents = $profiles
+            ->where('therapist_count', $staffCount)
+            ->sortBy('therapist_position')
+            ->pluck('commission_percent')
+            ->values()
+            ->all();
+        $customScaled = array_map(
+            fn ($percent): int => FixedPoint::parse((string) $percent, FixedPoint::PERCENT_SCALE),
+            $customPercents,
+        );
+
+        if (count($customScaled) === $staffCount && array_sum($customScaled) === $totalPercentScaled) {
+            $percentages = $customScaled;
+        } else {
+            $basePercent = intdiv($totalPercentScaled, $staffCount);
+            $remainder = $totalPercentScaled % $staffCount;
+            $percentages = array_map(
+                fn (int $position): int => $basePercent + ($position < $remainder ? 1 : 0),
+                range(0, $staffCount - 1),
+            );
+        }
+
+        $totalAmount = FixedPoint::percentOf($unitPrice, $totalPercent);
+        $remainingAmount = $totalAmount;
+        $remainingPercent = $totalPercentScaled;
+        $amounts = [];
+
+        foreach ($percentages as $position => $percent) {
+            if ($position === array_key_last($percentages)) {
+                $amount = $remainingAmount;
+            } elseif ($remainingPercent === 0) {
+                $amount = 0;
+            } else {
+                $amount = intdiv(
+                    ($remainingAmount * $percent) + intdiv($remainingPercent, 2),
+                    $remainingPercent,
+                );
+            }
+
+            $amounts[] = $amount;
+            $remainingAmount -= $amount;
+            $remainingPercent -= $percent;
+        }
+
+        $byEmployee = [];
+        foreach ($orderedStaff as $position => $assignment) {
+            $byEmployee[(int) $assignment['employee_id']] = [
+                'percent' => FixedPoint::format($percentages[$position], FixedPoint::PERCENT_SCALE),
+                'amount' => $amounts[$position],
+            ];
+        }
+
+        return [
+            'total_percent' => $totalPercent,
+            'total_amount' => $totalAmount,
+            'by_employee' => $byEmployee,
+        ];
     }
 
     private function buildCandidates(array $data, Collection $treatments): array

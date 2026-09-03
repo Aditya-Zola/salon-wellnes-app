@@ -92,10 +92,10 @@ class SalonOperationSeeder extends Seeder
             });
 
             $products = collect([
-                ['code' => 'PRD-LOREAL-SPA', 'name' => "Hair Spa L'Oreal", 'category' => 'Hair', 'purchase_unit' => 'GR', 'usage_unit' => 'GR', 'factor' => 1, 'stock' => 400, 'minimum' => 150, 'price' => 0],
-                ['code' => 'PRD-ERHA-SERUM', 'name' => 'ERHA Hair Growth Serum', 'category' => 'Hair', 'purchase_unit' => 'ML', 'usage_unit' => 'ML', 'factor' => 1, 'stock' => 120, 'minimum' => 75, 'price' => 0],
-                ['code' => 'PRD-BARRIER-MASK', 'name' => 'Skin Barrier Mask', 'category' => 'Facial', 'purchase_unit' => 'PCS', 'usage_unit' => 'PCS', 'factor' => 1, 'stock' => 18, 'minimum' => 10, 'price' => 0],
-                ['code' => 'PRD-HERBAL-DRINK', 'name' => 'Herbal Drink', 'category' => 'Konsumsi', 'purchase_unit' => 'SACHET', 'usage_unit' => 'SACHET', 'factor' => 1, 'stock' => 9, 'minimum' => 12, 'price' => 10000],
+                ['code' => 'PRD-LOREAL-SPA', 'name' => "Hair Spa L'Oreal", 'category' => 'Hair', 'purchase_unit' => 'GR', 'usage_unit' => 'GR', 'factor' => 1, 'stock' => 400, 'minimum' => 150, 'price' => 0, 'cost' => 150],
+                ['code' => 'PRD-ERHA-SERUM', 'name' => 'ERHA Hair Growth Serum', 'category' => 'Hair', 'purchase_unit' => 'ML', 'usage_unit' => 'ML', 'factor' => 1, 'stock' => 120, 'minimum' => 75, 'price' => 0, 'cost' => 1000],
+                ['code' => 'PRD-BARRIER-MASK', 'name' => 'Skin Barrier Mask', 'category' => 'Facial', 'purchase_unit' => 'PCS', 'usage_unit' => 'PCS', 'factor' => 1, 'stock' => 18, 'minimum' => 10, 'price' => 0, 'cost' => 10000],
+                ['code' => 'PRD-HERBAL-DRINK', 'name' => 'Herbal Drink', 'category' => 'Konsumsi', 'purchase_unit' => 'SACHET', 'usage_unit' => 'SACHET', 'factor' => 1, 'stock' => 9, 'minimum' => 12, 'price' => 10000, 'cost' => 4500],
             ])->mapWithKeys(function (array $attributes) use ($units) {
                 $product = Product::firstOrCreate(
                     ['code' => $attributes['code']],
@@ -108,6 +108,7 @@ class SalonOperationSeeder extends Seeder
                         'current_stock' => $attributes['stock'],
                         'minimum_stock' => $attributes['minimum'],
                         'selling_price' => $attributes['price'],
+                        'cost_price' => $attributes['cost'],
                         'is_active' => true,
                     ],
                 );

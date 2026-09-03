@@ -50,14 +50,16 @@ class CheckoutService
 
             $serviceSubtotal = $this->sumMoney($billableItems->map(fn (object $item): int => (int) $item->unit_price));
             $productLines = $this->resolveProductItems($reservationId, $data);
+            $treatmentCosts = $this->treatmentCosts($billableItems);
             $productSubtotal = $this->sumMoney($productLines->map(fn (array $line): int => $line['gross_amount']));
             $subtotal = $this->safeAdd($serviceSubtotal, $productSubtotal);
             [$discountPercent, $discountAmount, $promotionId, $discountType] = $this->resolveDiscount($data, $customer, $serviceSubtotal);
-            $total = $subtotal - $discountAmount;
+            $baseTotal = $subtotal - $discountAmount;
 
-            abort_if($total <= 0, 422, 'Transaksi tanpa nilai pembayaran belum didukung.');
+            abort_if($baseTotal <= 0, 422, 'Transaksi tanpa nilai pembayaran belum didukung.');
 
-            $payments = $this->resolvePayments($data, $total);
+            [$payments, $paymentChargeAmount] = $this->resolvePayments($data, $baseTotal);
+            $total = $this->safeAdd($baseTotal, $paymentChargeAmount);
             $changeAmount = $this->sumMoney(collect($payments)->map(
                 fn (array $payment): int => $payment['tendered_amount'],
             )) - $total;
@@ -80,6 +82,7 @@ class CheckoutService
                 'subtotal' => $subtotal,
                 'discount_percent' => $discountPercent,
                 'discount_amount' => $discountAmount,
+                'payment_charge_amount' => $paymentChargeAmount,
                 'total' => $total,
                 'paid_amount' => $total,
                 'change_amount' => $changeAmount,
@@ -98,6 +101,7 @@ class CheckoutService
                 $gross = (int) $item->unit_price;
                 $lineDiscount = $lineDiscounts[$index];
                 $lineTotal = $gross - $lineDiscount;
+                $costAmount = (int) $treatmentCosts->get((int) $item->id, 0);
 
                 DB::table('transaction_items')->insert([
                     'transaction_id' => $transactionId,
@@ -107,10 +111,12 @@ class CheckoutService
                     'name' => $item->treatment_name,
                     'quantity' => FixedPoint::format(10 ** FixedPoint::STOCK_SCALE, FixedPoint::STOCK_SCALE),
                     'unit_price' => $gross,
+                    'unit_cost' => $costAmount,
                     'gross_amount' => $gross,
                     'discount_percent' => $discountPercent,
                     'discount_amount' => $lineDiscount,
                     'total_amount' => $lineTotal,
+                    'cost_amount' => $costAmount,
                     'sort_order' => $index,
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -133,10 +139,12 @@ class CheckoutService
                     'name' => $line['product']->name,
                     'quantity' => FixedPoint::format($line['quantity'], FixedPoint::STOCK_SCALE),
                     'unit_price' => $line['unit_price'],
+                    'unit_cost' => $line['unit_cost'],
                     'gross_amount' => $line['gross_amount'],
                     'discount_percent' => FixedPoint::normalizePercent(0),
                     'discount_amount' => 0,
                     'total_amount' => $line['gross_amount'],
+                    'cost_amount' => $line['cost_amount'],
                     'sort_order' => $billableItems->count() + $index,
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -152,6 +160,10 @@ class CheckoutService
                     'transaction_id' => $transactionId,
                     'payment_method_id' => $payment['method']->id,
                     'amount' => $payment['amount'],
+                    'base_amount' => $payment['base_amount'],
+                    'charge_percent' => $payment['charge_percent'],
+                    'charge_amount' => $payment['charge_amount'],
+                    'charge_enabled' => $payment['charge_enabled'],
                     'tendered_amount' => $payment['tendered_amount'],
                     'reference_number' => $payment['reference_number'],
                     'paid_at' => $now,
@@ -196,6 +208,7 @@ class CheckoutService
                     'subtotal' => $subtotal,
                     'product_item_ids' => $productLines->map(fn (array $line): int => (int) $line['product']->id)->all(),
                     'discount_amount' => $discountAmount,
+                    'payment_charge_amount' => $paymentChargeAmount,
                     'total' => $total,
                     'payment_method_ids' => collect($payments)->pluck('method.id')->all(),
                 ],
@@ -205,9 +218,12 @@ class CheckoutService
                 'id' => $transactionId,
                 'number' => $number,
                 'total' => $total,
+                'base_total' => $baseTotal,
+                'payment_charge_amount' => $paymentChargeAmount,
                 'paid_amount' => $total,
                 'change_amount' => $changeAmount,
                 'cashier_name' => $request->user()?->name,
+                'therapists' => $this->transactionTherapists($transactionId),
                 'status' => 'paid',
                 'idempotent_replay' => false,
             ];
@@ -272,9 +288,63 @@ class CheckoutService
                 'product' => $product,
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
+                'unit_cost' => (int) ($product->cost_price ?? 0),
                 'gross_amount' => FixedPoint::multiply($unitPrice, $quantity, FixedPoint::STOCK_SCALE),
+                'cost_amount' => FixedPoint::multiply((int) ($product->cost_price ?? 0), $quantity, FixedPoint::STOCK_SCALE),
             ];
         });
+    }
+
+    /**
+     * HPP treatment adalah total bahan resep untuk satu kali treatment.
+     * Nilai akhirnya disalin ke item transaksi pada saat pembayaran.
+     *
+     * @return Collection<int, int>
+     */
+    private function treatmentCosts(Collection $billableItems): Collection
+    {
+        $treatmentIds = $billableItems->pluck('treatment_id')->map(fn ($id): int => (int) $id)->unique()->values();
+        if ($treatmentIds->isEmpty()) {
+            return collect();
+        }
+
+        $recipes = DB::table('treatment_product_recipes as recipe')
+            ->join('products as product', 'product.id', '=', 'recipe.product_id')
+            ->whereIn('recipe.treatment_id', $treatmentIds)
+            ->get([
+                'recipe.treatment_id',
+                'recipe.unit_id',
+                'recipe.quantity',
+                'product.purchase_unit_id',
+                'product.usage_unit_id',
+                'product.purchase_to_usage_factor',
+                'product.cost_price',
+            ]);
+        $costsByTreatment = [];
+
+        foreach ($recipes as $recipe) {
+            $quantity = FixedPoint::parse((string) $recipe->quantity, FixedPoint::STOCK_SCALE);
+            if ((int) $recipe->unit_id === (int) $recipe->usage_unit_id) {
+                $usageQuantity = $quantity;
+            } elseif ((int) $recipe->unit_id === (int) $recipe->purchase_unit_id) {
+                $factor = FixedPoint::parse((string) $recipe->purchase_to_usage_factor, FixedPoint::STOCK_SCALE);
+                $usageQuantity = FixedPoint::multiply($quantity, $factor, FixedPoint::STOCK_SCALE);
+            } else {
+                throw ValidationException::withMessages([
+                    'reservation_id' => ['Satuan resep tidak kompatibel dengan produk.'],
+                ]);
+            }
+
+            $treatmentId = (int) $recipe->treatment_id;
+            $costsByTreatment[$treatmentId] = $this->safeAdd(
+                $costsByTreatment[$treatmentId] ?? 0,
+                FixedPoint::multiply((int) ($recipe->cost_price ?? 0), $usageQuantity, FixedPoint::STOCK_SCALE),
+            );
+        }
+
+        return $billableItems->mapWithKeys(fn (object $item): array => [
+            (int) $item->id => (int) ($costsByTreatment[(int) $item->treatment_id] ?? 0),
+        ]);
     }
 
     private function resolveDiscount(array $data, object $customer, int $subtotal): array
@@ -378,13 +448,23 @@ class CheckoutService
         }
 
         $resolved = [];
-        $paid = 0;
+        $basePaid = 0;
+        $chargeTotal = 0;
 
         foreach ($paymentInputs as $index => $input) {
             $method = $methods->get((int) $input['payment_method_id']);
             $reference = isset($input['reference_number']) ? trim((string) $input['reference_number']) : null;
 
-            $amount = (int) $input['amount'];
+            $baseAmount = (int) $input['amount'];
+            $chargeRequested = array_key_exists('charge_enabled', $input)
+                ? filter_var($input['charge_enabled'], FILTER_VALIDATE_BOOLEAN)
+                : (bool) ($method->charge_default_enabled ?? true);
+            $chargePercent = FixedPoint::normalizePercent((string) ($method->charge_percent ?? 0));
+            $chargeEnabled = ! (bool) $method->is_cash
+                && $chargeRequested
+                && FixedPoint::parse($chargePercent, FixedPoint::PERCENT_SCALE) > 0;
+            $chargeAmount = $chargeEnabled ? FixedPoint::percentOf($baseAmount, $chargePercent) : 0;
+            $amount = $this->safeAdd($baseAmount, $chargeAmount);
             $tenderedAmount = isset($input['tendered_amount'])
                 ? (int) $input['tendered_amount']
                 : $amount;
@@ -401,23 +481,28 @@ class CheckoutService
                 ]);
             }
 
-            $paid = $this->safeAdd($paid, $amount);
+            $basePaid = $this->safeAdd($basePaid, $baseAmount);
+            $chargeTotal = $this->safeAdd($chargeTotal, $chargeAmount);
             $resolved[] = [
                 'method' => $method,
                 'amount' => $amount,
+                'base_amount' => $baseAmount,
+                'charge_percent' => $chargePercent,
+                'charge_amount' => $chargeAmount,
+                'charge_enabled' => $chargeEnabled,
                 'tendered_amount' => $tenderedAmount,
                 'reference_number' => $reference ?: null,
                 'notes' => $input['notes'] ?? null,
             ];
         }
 
-        if ($paid !== $total) {
+        if ($basePaid !== $total) {
             throw ValidationException::withMessages([
-                'payments' => ["Jumlah pembayaran harus tepat Rp{$total}; diterima Rp{$paid}."],
+                'payments' => ["Jumlah pembayaran sebelum charge harus tepat Rp{$total}; diterima Rp{$basePaid}."],
             ]);
         }
 
-        return $resolved;
+        return [$resolved, $chargeTotal];
     }
 
     private function allocateDiscounts(Collection $items, string $percent, int $discountAmount, string $discountType): array
@@ -524,6 +609,7 @@ class CheckoutService
                 'quantity' => FixedPoint::format($usage, FixedPoint::STOCK_SCALE),
                 'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
                 'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'unit_cost' => (int) ($product->cost_price ?? 0),
                 'source_type' => 'transaction',
                 'source_id' => $transactionId,
                 'reference' => $number,
@@ -570,6 +656,7 @@ class CheckoutService
                 'quantity' => FixedPoint::format($quantity, FixedPoint::STOCK_SCALE),
                 'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
                 'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'unit_cost' => (int) ($product->cost_price ?? 0),
                 'source_type' => 'transaction_sale',
                 'source_id' => $transactionId,
                 'reference' => $number,
@@ -582,14 +669,47 @@ class CheckoutService
         }
     }
 
+    /** @return array<int, array{id: int, name: string, position: string|null, stars: int|null}> */
+    private function transactionTherapists(int $transactionId): array
+    {
+        return DB::table('transaction_items as item')
+            ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->leftJoin('therapist_ratings as rating', function ($join) use ($transactionId): void {
+                $join->on('rating.employee_id', '=', 'employee.id')
+                    ->where('rating.transaction_id', '=', $transactionId);
+            })
+            ->where('item.transaction_id', $transactionId)
+            ->distinct()
+            ->orderBy('employee.name')
+            ->get([
+                'employee.id',
+                'employee.name',
+                'employee.position',
+                'rating.stars',
+                'rating.review',
+            ])
+            ->map(fn (object $therapist): array => [
+                'id' => (int) $therapist->id,
+                'name' => $therapist->name,
+                'position' => $therapist->position,
+                'stars' => $therapist->stars === null ? null : (int) $therapist->stars,
+                'review' => $therapist->review,
+            ])
+            ->all();
+    }
+
     private function transactionResult(object $transaction, bool $replay): array
     {
         return [
             'id' => (int) $transaction->id,
             'number' => $transaction->number,
             'total' => (int) $transaction->total,
+            'base_total' => (int) $transaction->total - (int) ($transaction->payment_charge_amount ?? 0),
+            'payment_charge_amount' => (int) ($transaction->payment_charge_amount ?? 0),
             'paid_amount' => (int) $transaction->paid_amount,
             'change_amount' => (int) $transaction->change_amount,
+            'therapists' => $this->transactionTherapists((int) $transaction->id),
             'status' => $transaction->status,
             'idempotent_replay' => $replay,
         ];

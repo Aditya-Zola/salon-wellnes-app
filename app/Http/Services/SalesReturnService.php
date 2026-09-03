@@ -140,6 +140,7 @@ class SalesReturnService
                     'quantity' => FixedPoint::format($line['quantity'], FixedPoint::STOCK_SCALE),
                     'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
                     'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                    'unit_cost' => (int) ($line['item']->unit_cost ?? 0),
                     'source_type' => 'sales_return',
                     'source_id' => $returnId,
                     'reference' => $number,

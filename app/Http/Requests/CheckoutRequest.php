@@ -33,6 +33,7 @@ class CheckoutRequest extends FormRequest
             'payments' => ['required_without:payment_method', 'array', 'min:1', 'max:10'],
             'payments.*.payment_method_id' => ['required', 'integer', 'exists:payment_methods,id'],
             'payments.*.amount' => ['required', 'integer', 'min:1', 'max:999999999999'],
+            'payments.*.charge_enabled' => ['nullable', 'boolean'],
             'payments.*.tendered_amount' => ['nullable', 'integer', 'min:1', 'max:999999999999'],
             'payments.*.reference_number' => ['nullable', 'string', 'max:100'],
             'payments.*.notes' => ['nullable', 'string', 'max:500'],

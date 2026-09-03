@@ -95,8 +95,9 @@ class SalonOperationsTest extends TestCase
             ['primary', 'assistant'],
             $firstItemStaff->pluck('role')->all(),
         );
-        $this->assertSame((int) $reservationItems[0]->commission_amount, (int) $firstItemStaff[0]->commission_amount);
-        $this->assertSame(0, (int) $firstItemStaff[1]->commission_amount);
+        $this->assertSame(4500, (int) $reservationItems[0]->commission_amount);
+        $this->assertSame(2250, (int) $firstItemStaff[0]->commission_amount);
+        $this->assertSame(2250, (int) $firstItemStaff[1]->commission_amount);
 
         \DB::table('treatments')->where('id', $facial->id)->update([
             'name' => 'Nama Treatment Berubah',
@@ -672,6 +673,116 @@ class SalonOperationsTest extends TestCase
         $this->assertSame(0, (int) $revenueByMethod->firstWhere('type', 'bank_transfer')['total']);
     }
 
+    public function test_dashboard_shows_payment_flows_per_configured_method_and_top_treatments(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 10:00:00'));
+        $bank = $this->paymentMethod('BANK-001');
+        $qris = $this->paymentMethod('QRIS-001');
+        DB::table('payment_methods')->where('id', $bank->id)->update([
+            'name' => 'BCA Transfer',
+            'account_name' => 'Selesa Salon',
+            'account_number' => '1234567890',
+        ]);
+        DB::table('payment_methods')->where('id', $qris->id)->update([
+            'name' => 'QRIS BCA',
+            'account_name' => 'QRIS Selesa Salon',
+            'account_number' => 'NMID-SEL-001',
+        ]);
+
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000177');
+        $bankAmount = 100000;
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [
+                    ['payment_method_id' => $bank->id, 'amount' => $bankAmount],
+                    ['payment_method_id' => $qris->id, 'amount' => $total - $bankAmount],
+                ],
+            ])
+            ->assertCreated();
+
+        $dashboard = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json('dashboard');
+        $monthFlows = collect($dashboard['payment_flows_month']);
+        $bankFlow = $monthFlows->firstWhere('id', $bank->id);
+        $qrisFlow = $monthFlows->firstWhere('id', $qris->id);
+
+        $this->assertSame('BCA Transfer', $bankFlow['name']);
+        $this->assertSame('Selesa Salon', $bankFlow['account_name']);
+        $this->assertSame($bankAmount, (int) $bankFlow['inflow']);
+        $this->assertSame(0, (int) $bankFlow['outflow']);
+        $this->assertSame($bankAmount, (int) $bankFlow['net']);
+        $this->assertSame('QRIS BCA', $qrisFlow['name']);
+        $this->assertSame($total - $bankAmount, (int) $qrisFlow['inflow']);
+
+        $popularTreatments = collect($dashboard['treatment_most_frequent_current_month']);
+        $this->assertCount(2, $popularTreatments);
+        $this->assertSame(1.0, (float) $popularTreatments->firstWhere('name', 'Makarizo Creambath')['total']);
+        $this->assertSame(1.0, (float) $popularTreatments->firstWhere('name', 'Nail Gel Polish - Hand')['total']);
+    }
+
+    public function test_checkout_applies_configured_payment_charge_and_cashier_can_turn_it_off(): void
+    {
+        $bank = $this->paymentMethod('BANK-001');
+        DB::table('payment_methods')->where('id', $bank->id)->update([
+            'charge_percent' => '2.0000',
+            'charge_default_enabled' => true,
+        ]);
+
+        [$chargedReservationId, $baseTotal] = $this->finishedTwoItemReservation('081290000042');
+        $charge = (int) round($baseTotal * 0.02);
+        $charged = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $chargedReservationId,
+                'payments' => [[
+                    'payment_method_id' => $bank->id,
+                    'amount' => $baseTotal,
+                    'charge_enabled' => true,
+                    'tendered_amount' => $baseTotal + $charge,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('base_total', $baseTotal)
+            ->assertJsonPath('payment_charge_amount', $charge)
+            ->assertJsonPath('total', $baseTotal + $charge);
+
+        $this->assertDatabaseHas('transactions', [
+            'id' => $charged->json('id'),
+            'payment_charge_amount' => $charge,
+            'total' => $baseTotal + $charge,
+        ]);
+        $this->assertDatabaseHas('transaction_payments', [
+            'transaction_id' => $charged->json('id'),
+            'payment_method_id' => $bank->id,
+            'base_amount' => $baseTotal,
+            'charge_percent' => '2.0000',
+            'charge_amount' => $charge,
+            'charge_enabled' => true,
+            'amount' => $baseTotal + $charge,
+        ]);
+
+        [$unchargedReservationId, $unchargedBaseTotal] = $this->finishedTwoItemReservation('081290000043');
+        $uncharged = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $unchargedReservationId,
+                'payments' => [[
+                    'payment_method_id' => $bank->id,
+                    'amount' => $unchargedBaseTotal,
+                    'charge_enabled' => false,
+                    'tendered_amount' => $unchargedBaseTotal,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('payment_charge_amount', 0)
+            ->assertJsonPath('total', $unchargedBaseTotal);
+
+        $this->assertDatabaseHas('transaction_payments', [
+            'transaction_id' => $uncharged->json('id'),
+            'charge_enabled' => false,
+            'charge_amount' => 0,
+            'amount' => $unchargedBaseTotal,
+        ]);
+    }
+
     public function test_cash_checkout_records_received_amount_and_change(): void
     {
         [$reservationId, $total] = $this->finishedTwoItemReservation('081290000041');
@@ -1242,6 +1353,207 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_stock_reduction_requires_a_description_and_keeps_an_audit_trail(): void
+    {
+        $product = DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $stockBefore = (float) $product->current_stock;
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$product->id}/stok", [
+                'type' => 'keluar',
+                'quantity' => '2',
+                'source' => 'Rusak',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('notes');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/produk/{$product->id}/stok", [
+                'type' => 'keluar',
+                'quantity' => '2',
+                'source' => 'Rusak',
+                'notes' => 'Kemasan bocor saat pengecekan rak.',
+            ])
+            ->assertOk();
+
+        $this->assertSame(
+            $stockBefore - 2,
+            (float) DB::table('products')->where('id', $product->id)->value('current_stock'),
+        );
+        $this->assertDatabaseHas('stock_movements', [
+            'product_id' => $product->id,
+            'type' => 'out',
+            'quantity' => '2.0000',
+            'source_type' => 'manual_adjustment',
+        ]);
+    }
+
+    public function test_financial_reports_use_hpp_snapshots_and_exclude_capital_from_profit_loss(): void
+    {
+        Carbon::setTestNow('2033-05-10 10:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $therapist = $this->employee('EMP-DITA');
+        $product = DB::table('products')->where('code', 'PRD-HERBAL-DRINK')->firstOrFail();
+        $cash = $this->paymentMethod('CASH');
+
+        DB::table('products')->where('code', 'PRD-BARRIER-MASK')->update(['cost_price' => 10000]);
+        DB::table('products')->where('id', $product->id)->update(['cost_price' => 4500, 'current_stock' => 10]);
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [
+                ['employee_id' => $therapist->id, 'role' => 'primary'],
+            ]),
+        ], ['phone' => '081299900001'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+        DB::table('reservation_items')->where('reservation_id', $reservationId)->update([
+            'work_status' => 'finished',
+            'finished_at' => now(),
+        ]);
+
+        $total = (int) $treatment->normal_price + ((int) $product->selling_price * 2);
+        $checkout = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'product_items' => [['product_id' => $product->id, 'quantity' => '2']],
+                'payments' => [['payment_method_id' => $cash->id, 'amount' => $total]],
+            ])
+            ->assertCreated();
+        $transactionId = (int) $checkout->json('id');
+
+        $this->assertDatabaseHas('transaction_items', [
+            'transaction_id' => $transactionId,
+            'item_type' => 'treatment',
+            'unit_cost' => 10000,
+            'cost_amount' => 10000,
+        ]);
+        $this->assertDatabaseHas('transaction_items', [
+            'transaction_id' => $transactionId,
+            'item_type' => 'product',
+            'unit_cost' => 4500,
+            'cost_amount' => 9000,
+        ]);
+        // Perubahan HPP setelah transaksi tidak boleh mengubah laporan transaksi ini.
+        DB::table('products')->where('id', $product->id)->update(['cost_price' => 9000]);
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/keuangan/arus-kas', [
+                'type' => 'expense',
+                'report_group' => 'operating',
+                'category' => 'Biaya operasional',
+                'description' => 'Pembelian air minum untuk pelanggan.',
+                'amount' => 2000,
+                'entry_date' => '2033-05-10',
+            ])
+            ->assertCreated();
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/keuangan/arus-kas', [
+                'type' => 'income',
+                'report_group' => 'capital',
+                'category' => 'Modal usaha',
+                'description' => 'Tambahan modal pemilik.',
+                'amount' => 50000,
+                'entry_date' => '2033-05-10',
+            ])
+            ->assertCreated();
+
+        $dashboard = $this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('dashboard');
+
+        $this->assertSame(115000, $dashboard['profit_loss_month']['sales_revenue']);
+        $this->assertSame(19000, $dashboard['profit_loss_month']['hpp_total']);
+        $this->assertSame(2000, $dashboard['profit_loss_month']['manual_expense']);
+        $this->assertSame(0, $dashboard['profit_loss_month']['manual_income']);
+        $this->assertSame(94000, $dashboard['profit_loss_month']['net_profit']);
+        $this->assertSame(163000, $dashboard['balance_sheet']['cash']);
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/keuangan/laporan?from=2033-05-10&to=2033-05-10&as_of=2033-05-10')
+            ->assertOk()
+            ->assertJsonPath('cash_flow.from', '2033-05-10')
+            ->assertJsonPath('cash_flow.to', '2033-05-10')
+            ->assertJsonPath('cash_flow.income', 50000)
+            ->assertJsonPath('cash_flow.expense', 2000)
+            ->assertJsonPath('profit_loss.net_profit', 94000)
+            ->assertJsonPath('balance_sheet.as_of', '2033-05-10');
+    }
+
+    public function test_cashier_can_rate_each_therapist_and_dashboard_ranks_the_result(): void
+    {
+        Carbon::setTestNow('2033-06-14 11:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $dita = $this->employee('EMP-DITA');
+        $rani = $this->employee('EMP-RANI');
+        $cash = $this->paymentMethod('CASH');
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [
+                ['employee_id' => $dita->id, 'role' => 'primary'],
+                ['employee_id' => $rani->id, 'role' => 'assistant'],
+            ]),
+        ], ['phone' => '081299900002'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+        DB::table('reservation_items')->where('reservation_id', $reservationId)->update([
+            'work_status' => 'finished',
+            'finished_at' => now(),
+        ]);
+
+        $payment = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => (int) $treatment->normal_price,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'therapists');
+        $transactionId = (int) $payment->json('id');
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/penjualan/{$transactionId}/penilaian-therapist", [
+                'ratings' => [['employee_id' => $dita->id, 'stars' => 5]],
+            ])
+            ->assertUnprocessable();
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/penjualan/{$transactionId}/penilaian-therapist", [
+                'ratings' => [
+                    ['employee_id' => $dita->id, 'stars' => 5, 'review' => 'Sangat telaten dan hasil facial memuaskan.'],
+                    ['employee_id' => $rani->id, 'stars' => 1, 'review' => 'Perlu lebih teliti saat menyiapkan layanan.'],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Penilaian therapist berhasil disimpan.');
+
+        $this->assertDatabaseHas('therapist_ratings', [
+            'transaction_id' => $transactionId,
+            'employee_id' => $dita->id,
+            'rating' => 'professional',
+            'stars' => 5,
+            'review' => 'Sangat telaten dan hasil facial memuaskan.',
+        ]);
+        $this->assertDatabaseHas('therapist_ratings', [
+            'transaction_id' => $transactionId,
+            'employee_id' => $rani->id,
+            'rating' => 'poor',
+            'stars' => 1,
+            'review' => 'Perlu lebih teliti saat menyiapkan layanan.',
+        ]);
+
+        $summary = $this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('dashboard.therapist_rating_summary_current_month');
+        $this->assertSame('Dita', $summary[0]['name']);
+        $this->assertSame(5, $summary[0]['average']);
+        $this->assertSame(1, $summary[0]['review_count']);
+        $this->assertSame('Sangat telaten dan hasil facial memuaskan.', $summary[0]['reviews'][0]['review']);
+        $this->assertSame(5, $summary[0]['reviews'][0]['stars']);
+        $this->assertNotEmpty($summary[0]['reviews'][0]['rated_at']);
+        $this->assertSame('Rani', $summary[1]['name']);
+        $this->assertSame(1, $summary[1]['average']);
+    }
+
     public function test_admin_can_update_default_commission_for_a_treatment(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');
@@ -1257,6 +1569,58 @@ class SalonOperationsTest extends TestCase
             'id' => $treatment->id,
             'default_commission_percent' => '12.5000',
         ]);
+    }
+
+    public function test_treatment_commission_profile_can_be_customized_for_three_therapists(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $dita = $this->employee('EMP-DITA');
+        $rani = $this->employee('EMP-RANI');
+        $sari = $this->employee('EMP-SARI');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/treatment/{$treatment->id}/komisi", [
+                'default_commission_percent' => '5',
+                'commission_profiles' => [[
+                    'therapist_count' => 3,
+                    'commission_percents' => ['2', '1.5', '1.5'],
+                ]],
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('treatment_commission_splits', [
+            'treatment_id' => $treatment->id,
+            'therapist_count' => 3,
+            'therapist_position' => 1,
+            'commission_percent' => '2.0000',
+        ]);
+        $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+        $snapshotTreatment = collect($snapshot['treatments'])->firstWhere('id', $treatment->id);
+        $snapshotProfile = collect($snapshotTreatment['commission_profiles'])->firstWhere('therapist_count', 3);
+        $this->assertSame([2.0, 1.5, 1.5], array_map('floatval', $snapshotProfile['commission_percents']));
+
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '14:00', [
+                ['employee_id' => $dita->id, 'role' => 'primary'],
+                ['employee_id' => $rani->id, 'role' => 'assistant'],
+                ['employee_id' => $sari->id, 'role' => 'assistant'],
+            ]),
+        ], ['phone' => '081290000333'])->assertCreated();
+
+        $item = DB::table('reservation_items')->where('reservation_id', $reservation->json('id'))->first();
+        $staff = DB::table('reservation_item_staff')
+            ->where('reservation_item_id', $item->id)
+            ->get()
+            ->keyBy('employee_id');
+
+        $this->assertSame(4750, (int) $item->commission_amount);
+        $this->assertEquals('2.0000', $staff[$dita->id]->commission_percent);
+        $this->assertSame(1900, (int) $staff[$dita->id]->commission_amount);
+        $this->assertEquals('1.5000', $staff[$rani->id]->commission_percent);
+        $this->assertSame(1425, (int) $staff[$rani->id]->commission_amount);
+        $this->assertEquals('1.5000', $staff[$sari->id]->commission_percent);
+        $this->assertSame(1425, (int) $staff[$sari->id]->commission_amount);
+        $this->assertSame((int) $item->commission_amount, (int) $staff->sum('commission_amount'));
     }
 
     public function test_repeated_checkout_replays_existing_invoice_without_duplicate_side_effects(): void

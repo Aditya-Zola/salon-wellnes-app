@@ -28,7 +28,17 @@
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
         ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
-        ['page' => 'keuangan', 'label' => 'Keuangan', 'icon' => 'payments', 'permission' => 'finance.view'],
+        [
+            'page' => 'keuangan',
+            'label' => 'Keuangan',
+            'icon' => 'payments',
+            'permission' => 'finance.view',
+            'children' => [
+                ['page' => 'keuangan-arus-kas', 'label' => 'Arus Kas'],
+                ['page' => 'keuangan-laba-rugi', 'label' => 'Laba-Rugi'],
+                ['page' => 'keuangan-neraca', 'label' => 'Neraca'],
+            ],
+        ],
         ['page' => 'penggajian', 'label' => 'Penggajian', 'icon' => 'account_balance_wallet', 'permission' => 'payroll.view'],
     ];
 @endphp
@@ -42,7 +52,7 @@
         @foreach ($modules as $module)
             @can($module['permission'])
                 @if (!empty($module['children']))
-                    <details class="access-menu {{ $module['page'] === 'reservasi' ? 'reservation-menu' : 'stock-menu' }}">
+                    <details class="access-menu {{ match ($module['page']) { 'reservasi' => 'reservation-menu', 'stok' => 'stock-menu', 'keuangan' => 'finance-menu', default => '' } }}">
                         <summary>
                             <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
                             <span>{{ $module['label'] }}</span>

@@ -22,6 +22,7 @@ class Product extends Model
         'current_stock',
         'minimum_stock',
         'selling_price',
+        'cost_price',
         'is_active',
         'description',
     ];
@@ -33,6 +34,7 @@ class Product extends Model
             'current_stock' => 'decimal:4',
             'minimum_stock' => 'decimal:4',
             'selling_price' => 'integer',
+            'cost_price' => 'integer',
             'is_active' => 'boolean',
         ];
     }

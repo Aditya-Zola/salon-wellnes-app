@@ -89,6 +89,8 @@ let therapistAttendance = [];
 let therapistAttendanceMonth = null;
 let therapistAttendanceOffByDate = {};
 let stocktakeDraft = new Map();
+let financeReports = {};
+let financeFiltersNeedReset = false;
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
@@ -103,7 +105,9 @@ const copy = {
     'stok-riwayat': ['Riwayat Keluar-Masuk', 'Telusuri seluruh pergerakan stok produk'],
     'stok-opname': ['Stok opname', 'Tambahkan stok produk yang baru masuk'],
     penjualan: ['Penjualan', 'Riwayat transaksi lunas dan cetak ulang nota'],
-    keuangan: ['Keuangan', 'Arus kas dan laporan transaksi'],
+    'keuangan-arus-kas': ['Arus Kas', 'Dana masuk, pengeluaran, dan catatan kas salon'],
+    'keuangan-laba-rugi': ['Laba-Rugi', 'Pendapatan, HPP, biaya operasional, dan laba bersih'],
+    'keuangan-neraca': ['Neraca', 'Posisi aset, kewajiban, dan ekuitas salon'],
     penggajian: ['Penggajian', 'Gaji, bonus, keterlambatan, dan komisi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
@@ -199,9 +203,12 @@ async function api(url, options = {}) {
 }
 
 async function refresh() {
+    financeReports = {};
+    financeFiltersNeedReset = true;
     state = await api('/operasional/data');
     populateSelects();
     renderAll();
+    financeFiltersNeedReset = false;
     if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesPageState)?.meta?.current_page || 1);
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
@@ -600,7 +607,7 @@ function statusClass(status) {
 }
 
 function openPage(id) {
-    const pageId = id === 'reservasi' ? 'reservasi-antrean' : id;
+    const pageId = ({ reservasi: 'reservasi-antrean', keuangan: 'keuangan-arus-kas' })[id] || id;
     const navigationPage = pageId === 'stok-opname' ? 'stok' : pageId;
     const nav = document.querySelector(`#navigation [data-page="${navigationPage}"]`);
     const page = document.getElementById(pageId);
@@ -1326,16 +1333,22 @@ function receiptPayload(result, reservation, productItems, payments) {
         items: [...treatments, ...products],
         payments: payments.map((payment) => {
             const method = paymentMethods().find((item) => Number(item.id) === Number(payment.payment_method_id));
+            const chargeAmount = Number(payment.charge_amount || 0);
             return {
                 name: method?.name || 'Pembayaran',
                 isCash: Boolean(Number(method?.is_cash ?? 0)),
-                amount: Number(payment.amount),
-                tenderedAmount: Number(payment.tendered_amount || payment.amount),
+                amount: Number(payment.amount) + chargeAmount,
+                baseAmount: Number(payment.amount),
+                chargeAmount,
+                chargePercent: Number(payment.charge_percent || 0),
+                tenderedAmount: Number(payment.tendered_amount || Number(payment.amount) + chargeAmount),
                 reference: payment.reference_number,
             };
         }),
         subtotal,
         discount,
+        baseTotal: subtotal - discount,
+        paymentCharge: payments.reduce((total, payment) => total + Number(payment.charge_amount || 0), 0),
         total: Number(result.total),
         change: Number(result.change_amount || 0),
         cashier: result.cashier_name || 'Kasir Selesa',
@@ -1403,15 +1416,19 @@ function printReceipt(receipt, format) {
     const totals = [
         `<tr><td class="receipt-summary-label">Subtotal</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.subtotal)}</td></tr>`,
         ...(receipt.discount ? [`<tr><td class="receipt-summary-label">Diskon member</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">-${receiptMoney(receipt.discount)}</td></tr>`] : []),
+        ...(receipt.paymentCharge ? [`<tr><td class="receipt-summary-label">Charge pembayaran</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.paymentCharge)}</td></tr>`] : []),
         `<tr><td class="receipt-summary-label">Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
         `<tr class="grand-total"><td class="receipt-summary-label">Grand Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
     ].join('');
     const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
+    const salon = state.salon || {};
+    const salonAddress = String(salon.address || 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang');
+    const salonWhatsapp = String(salon.whatsapp || '081128702019');
     const pageSize = 'A4';
     const sheetClass = compact ? 'thermal' : 'nota';
     const receiptHeader = compact
-        ? `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa">`
-        : `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa"><p class="receipt-code">${escapeHtml(receipt.number)}</p>`;
+        ? `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa"><p class="receipt-address">${escapeHtml(salonAddress)}</p>`
+        : `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa"><p class="receipt-address">${escapeHtml(salonAddress)}</p><p class="receipt-code">${escapeHtml(receipt.number)}</p>`;
 
     documentWindow.document.write(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
@@ -1420,7 +1437,7 @@ function printReceipt(receipt, format) {
 *{box-sizing:border-box}
 body{margin:0;color:#202020;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:${compact ? '9px' : '12px'};line-height:${compact ? '1.3' : '1.3'}}
 .sheet{margin:0 auto}.sheet.thermal{width:56mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
-.receipt-header{height:${compact ? '58mm' : 'auto'};padding-top:${compact ? '18mm' : '0'};text-align:center}.receipt-header img{display:block;width:${compact ? '28mm' : '56mm'};height:auto;margin:0 auto ${compact ? '1.5mm' : '3px'};filter:grayscale(1) contrast(1.35)}.receipt-brand{margin:0;font-size:${compact ? '16px' : '20px'};font-weight:700;line-height:1}
+.receipt-header{height:auto;padding-top:${compact ? '4mm' : '0'};text-align:center}.receipt-header img{display:block;width:${compact ? '36mm' : '64mm'};height:auto;margin:0 auto ${compact ? '1.5mm' : '3px'};filter:grayscale(1) contrast(1.35)}.receipt-brand{margin:0;font-size:${compact ? '16px' : '20px'};font-weight:700;line-height:1}.receipt-address{max-width:${compact ? '54mm' : '120mm'};margin:${compact ? '0 auto 1.5mm' : '0 auto 4px'};color:#514a44;font-size:${compact ? '8px' : '10px'};line-height:1.35}
 .receipt-code{margin:0;font-size:${compact ? '9px' : '12px'};font-weight:700}
 .dash{border-top:1px dashed #777;margin:${compact ? '0 0 2mm' : '7px 0 6px'}}.dash.thin{margin:${compact ? '2mm 0' : '6px 0'}}
 .receipt-meta,.receipt-items,.receipt-totals,.receipt-payments,.receipt-contact{width:100%;border-collapse:collapse}.receipt-meta{font-size:${compact ? '9px' : '11px'}}.receipt-meta td{padding:${compact ? '.45mm 0' : '1px 0'}}.receipt-meta td:nth-child(1){width:${compact ? '17mm' : 'max-content'};white-space:nowrap}.receipt-meta td:nth-child(2){width:3mm;text-align:center}.receipt-meta td:nth-child(3){padding-left:${compact ? '.7mm' : '2px'};font-weight:400;white-space:nowrap}
@@ -1443,7 +1460,7 @@ body{margin:0;color:#202020;background:#fff;font-family:Arial,Helvetica,sans-ser
     <div class="dash thin"></div>
     <table class="receipt-totals"><tbody>${totals}</tbody></table>
     <table class="receipt-payments"><tbody>${paymentRows}</tbody></table>
-    <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>Whatsapp&nbsp;&nbsp;: 081128702019</p><p>Instagram&nbsp;: @selesa.salonspa</p></footer>
+    <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>${escapeHtml(salonAddress)}</p><p>WhatsApp&nbsp;&nbsp;: ${escapeHtml(salonWhatsapp)}</p></footer>
 </main>
 <script>window.addEventListener('load',()=>window.print());<\/script>
 </body></html>`);
@@ -1461,15 +1478,184 @@ function openReceiptPrintChoice(receipt, options = {}) {
         .filter(Boolean)
         .map((detail) => `<span>${escapeHtml(detail)}</span>`)
         .join('');
+    const ratingTherapists = array(options.ratingTherapists);
+    const starRatings = [1, 2, 3, 4, 5];
+    const ratingPanel = ratingTherapists.length ? `<section class="therapist-rating-panel">
+        <div class="therapist-rating-head"><span class="material-symbols-outlined" aria-hidden="true">star</span><div><b>Rating therapist</b><small>Pilih 1 sampai 5 bintang untuk setiap therapist.</small></div></div>
+        <div class="therapist-rating-fields">${ratingTherapists.map((therapist) => `<fieldset class="therapist-rating-field" data-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="therapist-rating-stars-input">${starRatings.map((stars) => `<label class="therapist-rating-choice" title="${stars} bintang"><input type="radio" name="therapist-rating-${Number(therapist.id)}" value="${stars}" ${Number(therapist.stars) === stars ? 'checked' : ''}><span class="material-symbols-outlined" aria-label="${stars} bintang">star</span></label>`).join('')}</div><label class="therapist-rating-review">Deskripsi review <textarea name="therapist-review-${Number(therapist.id)}" maxlength="500" placeholder="Contoh: pelayanan ramah dan hasilnya memuaskan.">${escapeHtml(therapist.review || '')}</textarea><small>Opsional, maksimal 500 karakter.</small></label></fieldset>`).join('')}</div>
+        <button type="button" class="save-therapist-ratings">Simpan rating therapist</button>
+    </section>` : '';
     wrapper.innerHTML = showSuccessAnimation
         ? `<div class="modal-box transaction-success-modal" role="status" style="position:relative;width:min(390px,calc(100vw - 32px));min-height:410px;overflow:hidden;border:0;border-radius:22px;background:#f2f1ee;"><button type="button" class="quick-close transaction-success-close" aria-label="Tutup" style="position:absolute;z-index:1;top:13px;right:13px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;cursor:pointer;"><span class="material-symbols-outlined">close</span></button><div class="transaction-success-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:295px;padding:52px 24px 30px;text-align:center;"><span class="transaction-success-emblem" aria-hidden="true" style="display:grid;place-items:center;width:90px;height:90px;margin-bottom:23px;background:#62c52f;clip-path:polygon(50% 0%,61% 9%,76% 6%,83% 20%,97% 25%,92% 40%,100% 50%,92% 60%,97% 75%,83% 80%,76% 94%,61% 91%,50% 100%,39% 91%,24% 94%,17% 80%,3% 75%,8% 60%,0 50%,8% 40%,3% 25%,17% 20%,24% 6%,39% 9%);"><svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="width:61px;height:61px;"><path d="M17 33l10 10 21-22"/></svg></span><h2 style="margin:0;color:#171513;font-size:21px;letter-spacing:.02em;">TRANSAKSI BERHASIL</h2><p style="margin:10px 0 0;color:#69635e;font-size:12px;font-weight:650;">${escapeHtml(description)}</p><div class="transaction-success-meta" style="display:grid;gap:4px;margin-top:12px;color:#827b75;font-size:9px;font-weight:600;line-height:1.35;">${transactionMeta}</div></div><div class="transaction-success-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:13px;padding:0 26px 30px;"><button type="button" class="success-print-button" data-print="struk" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak struk</button><button type="button" class="success-print-button" data-print="nota" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak nota</button></div></div>`
         : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
+    if (showSuccessAnimation && ratingPanel) {
+        wrapper.querySelector('.transaction-success-body')?.insertAdjacentHTML('beforeend', ratingPanel);
+    }
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelectorAll('[data-print]').forEach((button) => {
         button.onclick = () => printReceipt(receipt, button.dataset.print);
     });
+    wrapper.querySelector('.save-therapist-ratings')?.addEventListener('click', async (event) => {
+        const saveButton = event.currentTarget;
+        const ratings = ratingTherapists.map((therapist) => ({
+            employee_id: Number(therapist.id),
+            stars: Number(wrapper.querySelector(`input[name="therapist-rating-${Number(therapist.id)}"]:checked`)?.value || 0),
+            review: String(wrapper.querySelector(`[name="therapist-review-${Number(therapist.id)}"]`)?.value || '').trim(),
+        }));
+        if (ratings.some((rating) => !rating.stars)) {
+            toast('Pilih rating untuk setiap therapist terlebih dahulu.', true);
+            return;
+        }
 
+        saveButton.disabled = true;
+        try {
+            const result = await api(`/operasional/penjualan/${Number(receipt.transactionId)}/penilaian-therapist`, {
+                method: 'POST',
+                body: JSON.stringify({ ratings }),
+            });
+            saveButton.textContent = 'Rating tersimpan';
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            saveButton.disabled = false;
+            toast(error.message, true);
+        }
+    });
+}
+
+function openTherapistReviews(therapist) {
+    const reviews = array(therapist.reviews);
+    const stars = (value) => Array.from({ length: 5 }, (_, index) => `<i class="material-symbols-outlined${index < Number(value || 0) ? ' filled' : ''}" aria-hidden="true">star</i>`).join('');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal therapist-review-overlay';
+    wrapper.innerHTML = `<section class="modal-box small therapist-review-modal" role="dialog" aria-modal="true" aria-labelledby="therapist-review-title">
+        <div class="modal-head"><div><h2 id="therapist-review-title">Review ${escapeHtml(therapist.name)}</h2><p>Ulasan rating pada bulan berjalan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="therapist-review-list">${reviews.length ? reviews.map((review) => `<article class="therapist-review-item"><div><span class="therapist-review-stars">${stars(review.stars)}</span><time>${escapeHtml(formatTransactionDate(review.rated_at))}</time></div><p>${escapeHtml(review.review)}</p></article>`).join('') : '<p class="empty-state">Belum ada review tertulis untuk therapist ini pada bulan berjalan.</p>'}</div>
+    </section>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.addEventListener('click', (event) => {
+        if (event.target === wrapper) wrapper.remove();
+    });
+}
+
+function commissionPercentValue(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return '0';
+    return String(Number(number.toFixed(4)));
+}
+
+function equalCommissionPercents(totalPercent, therapistCount) {
+    const total = Math.max(0, Math.round(Number(totalPercent || 0) * 10000));
+    const base = Math.floor(total / therapistCount);
+    const remainder = total % therapistCount;
+
+    return Array.from({ length: therapistCount }, (_, index) => commissionPercentValue((base + (index < remainder ? 1 : 0)) / 10000));
+}
+
+function treatmentCommissionProfile(treatment, therapistCount, totalPercent) {
+    const profile = array(treatment.commission_profiles)
+        .find((item) => Number(item.therapist_count) === Number(therapistCount));
+    const values = array(profile?.commission_percents).map(commissionPercentValue);
+
+    return values.length === therapistCount
+        ? values
+        : equalCommissionPercents(totalPercent, therapistCount);
+}
+
+function openTreatmentCommissionEditor(treatment) {
+    const wrapper = document.createElement('div');
+    const initialTotal = commissionPercentValue(treatment.default_commission_percent ?? treatment.commission_percent ?? 0);
+    const countOptions = Array.from({ length: 9 }, (_, index) => index + 2);
+    const drafts = new Map();
+    array(treatment.commission_profiles).forEach((profile) => {
+        const count = Number(profile.therapist_count);
+        const values = array(profile.commission_percents).map(commissionPercentValue);
+        if (count >= 2 && count <= 10 && values.length === count) drafts.set(count, values);
+    });
+
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi: ${escapeHtml(treatment.name)}</h2><p>Komisi total dibagi ke therapist sesuai jumlah yang menangani treatment.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Komisi total untuk 1 therapist (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Profil jumlah therapist<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} therapist</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan profil</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+
+    const form = wrapper.querySelector('form');
+    const totalInput = form.elements.default_commission_percent;
+    const countInput = form.elements.therapist_count;
+    const fields = wrapper.querySelector('.commission-profile-fields');
+    const note = wrapper.querySelector('.commission-profile-note');
+    let activeCount = Number(countInput.value);
+    const labelForPosition = (index) => index === 0 ? 'Therapist utama (%)' : `Therapist pendamping ${index} (%)`;
+    const currentCount = () => activeCount;
+    const currentFields = () => [...fields.querySelectorAll('input')];
+    const saveDraft = (count = currentCount()) => {
+        const inputs = currentFields();
+        if (inputs.length) drafts.set(count, inputs.map((input) => input.value));
+    };
+    const renderProfile = () => {
+        const count = currentCount();
+        const values = drafts.get(count) || treatmentCommissionProfile(treatment, count, totalInput.value);
+        fields.innerHTML = values.map((value, index) => `<label>${labelForPosition(index)}<input type="number" min="0" max="100" step="0.0001" value="${escapeHtml(value)}" required></label>`).join('');
+        updateNote();
+    };
+    const updateNote = () => {
+        const total = Math.round(Number(totalInput.value || 0) * 10000);
+        const allocated = currentFields().reduce((sum, input) => sum + Math.round(Number(input.value || 0) * 10000), 0);
+        const valid = Number.isFinite(total) && total >= 0 && allocated === total;
+        note.classList.toggle('is-invalid', !valid);
+        note.textContent = valid
+            ? `Total pembagian ${commissionPercentValue(allocated / 10000)}% — sesuai komisi treatment.`
+            : `Total pembagian ${commissionPercentValue(allocated / 10000)}%; harus sama dengan ${commissionPercentValue(total / 10000)}%.`;
+    };
+
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    countInput.addEventListener('change', () => {
+        saveDraft();
+        activeCount = Number(countInput.value);
+        renderProfile();
+    });
+    totalInput.addEventListener('input', updateNote);
+    fields.addEventListener('input', updateNote);
+    wrapper.querySelector('[data-equal-commission]').onclick = () => {
+        const values = equalCommissionPercents(totalInput.value, currentCount());
+        drafts.set(currentCount(), values);
+        renderProfile();
+    };
+    form.onsubmit = async (event) => {
+        event.preventDefault();
+        saveDraft();
+        const totalPercent = commissionPercentValue(totalInput.value);
+        const commissionPercents = drafts.get(currentCount()) || [];
+        const total = Math.round(Number(totalPercent) * 10000);
+        const allocated = commissionPercents.reduce((sum, value) => sum + Math.round(Number(value || 0) * 10000), 0);
+        if (allocated !== total) {
+            toast('Total pembagian komisi harus sama dengan komisi treatment.', true);
+            return;
+        }
+
+        const button = form.querySelector('button[type="submit"], footer .primary');
+        button.disabled = true;
+        try {
+            const result = await api(`/operasional/treatment/${Number(treatment.id)}/komisi`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    default_commission_percent: totalPercent,
+                    commission_profiles: [{
+                        therapist_count: currentCount(),
+                        commission_percents: commissionPercents,
+                    }],
+                }),
+            });
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            button.disabled = false;
+            toast(error.message, true);
+        }
+    };
+
+    renderProfile();
 }
 
 function renderTreatments() {
@@ -1502,12 +1688,7 @@ function renderTreatments() {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
         button.onclick = () => {
             if (!treatment) return;
-            quickForm(`Ubah komisi: ${treatment.name}`, [
-                ['default_commission_percent', 'Komisi treatment (%)', 'number', [], Number(treatment.default_commission_percent ?? 0)],
-            ], (data) => api(`/operasional/treatment/${Number(treatment.id)}/komisi`, {
-                method: 'PATCH',
-                body: JSON.stringify(data),
-            }));
+            openTreatmentCommissionEditor(treatment);
         };
     });
     document.querySelectorAll('.recipe-info-button').forEach((button) => {
@@ -1732,7 +1913,7 @@ function renderStock() {
     if (count) count.textContent = Number(meta?.total ?? products.length);
 
     if (box) {
-        box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>HARGA JUAL</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
+        box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>HARGA JUAL</span><span>HPP / SATUAN</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
             const stock = productStock(product);
             const minimum = productMinimum(product);
             const unit = productUnit(product);
@@ -1740,6 +1921,7 @@ function renderStock() {
                 <span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || '-')}</small></span>
                 <span><b>${stock} ${escapeHtml(unit)}</b></span><span>${minimum} ${escapeHtml(unit)}</span>
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
+                <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unit)}</small></span>
                 <span><div class="progress"><i style="width:${Math.min(100, stock / Math.max(1, minimum) * 50)}%"></i></div></span>
                 <em class="pill">${stock <= minimum ? 'Menipis' : 'Aman'}</em>
                 <span class="product-row-actions"><button type="button" class="product-edit" data-id="${Number(product.id)}" aria-label="Edit produk ${escapeHtml(product.name)}" title="Edit produk"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit produk</span></button></span>
@@ -1951,6 +2133,37 @@ async function submitStocktake(event) {
     }
 }
 
+function openStockReductionForm() {
+    const products = stocktakeProducts()
+        .filter((product) => productStock(product) > 0)
+        .sort((first, second) => String(first.name).localeCompare(String(second.name), 'id'));
+    if (!products.length) {
+        toast('Tidak ada produk dengan stok yang dapat dikurangi.', true);
+        return;
+    }
+
+    quickForm('Pengurangan stok', [
+        ['product_id', 'Produk', 'select', products.map((product) => `${product.id}|${product.name} · tersedia ${formatStockQuantity(productStock(product))} ${productUnit(product)}`)],
+        ['quantity', 'Jumlah keluar', 'number', null, ''],
+        ['source', 'Alasan', 'select', ['Rusak / kedaluwarsa', 'Hilang', 'Pemakaian internal', 'Sampel / tester', 'Lainnya']],
+        ['notes', 'Deskripsi alasan', 'text', null, ''],
+    ], async (data) => {
+        if (String(data.notes || '').trim().length < 3) {
+            throw new Error('Deskripsi alasan minimal 3 karakter.');
+        }
+
+        return api(`/operasional/produk/${Number(data.product_id)}/stok`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                type: 'keluar',
+                quantity: String(data.quantity || '').trim(),
+                source: String(data.source || '').trim(),
+                notes: String(data.notes || '').trim(),
+            }),
+        });
+    });
+}
+
 function openProductEdit(product) {
     const form = document.getElementById('product-edit-form');
     if (!form) return;
@@ -1961,6 +2174,7 @@ function openProductEdit(product) {
     form.querySelector('[name="unit_id"]').innerHTML = productUnitOptions(product.usage_unit_id);
     form.querySelector('[name="minimum_stock"]').value = Number(product.minimum_stock ?? 0);
     form.querySelector('[name="selling_price"]').value = Number(product.selling_price ?? 0);
+    form.querySelector('[name="cost_price"]').value = Number(product.cost_price ?? 0);
     form.querySelector('[name="is_active"]').value = Number(product.is_active ?? 1) ? '1' : '0';
     form.querySelector('[name="description"]').value = product.description || '';
     const title = document.getElementById('product-edit-title');
@@ -1969,21 +2183,145 @@ function openProductEdit(product) {
     requestAnimationFrame(() => form.querySelector('[name="name"]')?.focus());
 }
 
+function financePeriodLabel(from, to) {
+    if (!from && !to) return 'Bulan berjalan';
+    if (!to || from === to) return `Per ${formatCashEntryDate(to || from)}`;
+
+    return `${formatCashEntryDate(from)}–${formatCashEntryDate(to)}`;
+}
+
+function setFinanceDateValue(id, value, force = false) {
+    const input = document.getElementById(id);
+    if (input && value && (force || !input.value)) input.value = value;
+}
+
+function renderFinancePeriodControls() {
+    const controls = [
+        {
+            page: 'keuangan-arus-kas',
+            id: 'cash-flow-period-controls',
+            title: 'Rentang arus kas',
+            description: 'Menyaring ringkasan, rekening pembayaran, dan riwayat kas.',
+            fields: '<label>Dari<input id="cash-flow-from" type="date" aria-label="Tanggal awal arus kas"></label><label>Sampai<input id="cash-flow-to" type="date" aria-label="Tanggal akhir arus kas"></label>',
+            button: 'Terapkan',
+            icon: 'filter_alt',
+            scope: 'cash',
+        },
+        {
+            page: 'keuangan-laba-rugi',
+            id: 'profit-loss-period-controls',
+            title: 'Rentang laba-rugi',
+            description: 'Pendapatan, HPP, retur, dan biaya dihitung pada periode yang dipilih.',
+            fields: '<label>Dari<input id="profit-loss-from" type="date" aria-label="Tanggal awal laba-rugi"></label><label>Sampai<input id="profit-loss-to" type="date" aria-label="Tanggal akhir laba-rugi"></label>',
+            button: 'Terapkan',
+            icon: 'filter_alt',
+            scope: 'profit-loss',
+        },
+        {
+            page: 'keuangan-neraca',
+            id: 'balance-sheet-period-controls',
+            title: 'Tanggal neraca',
+            description: 'Neraca adalah posisi saldo per satu tanggal, bukan akumulasi rentang.',
+            fields: '<label>Per tanggal<input id="balance-sheet-as-of" type="date" aria-label="Tanggal neraca"></label>',
+            button: 'Tampilkan',
+            icon: 'event',
+            scope: 'balance-sheet',
+        },
+    ];
+
+    controls.forEach((control) => {
+        const page = document.getElementById(control.page);
+        if (!page) return;
+        if (!document.getElementById(control.id)) {
+            page.insertAdjacentHTML('afterbegin', `<div class="finance-period-toolbar" id="${control.id}"><div><b>${control.title}</b><small>${control.description}</small></div>${control.fields}<button type="button" class="secondary" data-finance-period="${control.scope}"><span class="material-symbols-outlined" aria-hidden="true">${control.icon}</span>${control.button}</button></div>`);
+        }
+        const button = document.querySelector(`#${control.id} [data-finance-period]`);
+        if (button) button.onclick = () => loadFinanceReport(control.scope).catch((error) => toast(error.message, true));
+    });
+}
+
+async function loadFinanceReport(scope) {
+    const today = localDate();
+    const isCash = scope === 'cash';
+    const isProfitLoss = scope === 'profit-loss';
+    const from = isCash
+        ? document.getElementById('cash-flow-from')?.value
+        : (isProfitLoss ? document.getElementById('profit-loss-from')?.value : '');
+    const to = isCash
+        ? document.getElementById('cash-flow-to')?.value
+        : (isProfitLoss ? document.getElementById('profit-loss-to')?.value : '');
+    const asOf = scope === 'balance-sheet' ? document.getElementById('balance-sheet-as-of')?.value : '';
+    if ((isCash || isProfitLoss) && (!from || !to)) throw new Error('Isi tanggal awal dan tanggal akhir terlebih dahulu.');
+    if ((isCash || isProfitLoss) && from > to) throw new Error('Tanggal awal tidak boleh melewati tanggal akhir.');
+    if (scope === 'balance-sheet' && !asOf) throw new Error('Pilih tanggal neraca terlebih dahulu.');
+    if ([from, to, asOf].filter(Boolean).some((date) => date > today)) throw new Error('Tanggal laporan tidak boleh melewati hari ini.');
+
+    const button = document.querySelector(`[data-finance-period="${scope}"]`);
+    const originalHtml = button?.innerHTML;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">progress_activity</span>Memuat';
+    }
+    try {
+        const query = new URLSearchParams();
+        if (from) query.set('from', from);
+        if (to) query.set('to', to);
+        if (asOf) query.set('as_of', asOf);
+        const report = await api(`/operasional/keuangan/laporan?${query.toString()}`);
+        if (isCash) {
+            financeReports.cash = report.cash_flow;
+            setFinanceDateValue('cash-entry-from', report.cash_flow.from, true);
+            setFinanceDateValue('cash-entry-to', report.cash_flow.to, true);
+        } else if (isProfitLoss) {
+            financeReports.profitLoss = report.profit_loss;
+        } else {
+            financeReports.balanceSheet = report.balance_sheet;
+        }
+        renderFinance();
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
 function renderFinance() {
     const dashboard = state.dashboard || {};
     const set = (id, value) => {
         const element = document.getElementById(id);
         if (element) element.textContent = value;
     };
-    const income = Number(dashboard.month_income || 0);
-    const expense = Number(dashboard.month_expense || 0);
+    const defaultProfitLoss = dashboard.profit_loss_month || {};
+    const defaultCashFlow = {
+        from: defaultProfitLoss.from || '',
+        to: defaultProfitLoss.to || localDate(),
+        income: Number(dashboard.month_income || 0),
+        expense: Number(dashboard.month_expense || 0),
+        balance: Number(dashboard.month_balance || 0),
+        entry_count: Number(dashboard.month_cash_entry_count || 0),
+        expense_categories: array(dashboard.month_expense_categories),
+        payment_flows: array(dashboard.payment_flows_month),
+        cash_entries: array(state.cash_entries),
+    };
+    const cashFlow = financeReports.cash || defaultCashFlow;
+    const profitLoss = financeReports.profitLoss || defaultProfitLoss;
+    const balanceSheet = financeReports.balanceSheet || dashboard.balance_sheet || {};
+    renderFinancePeriodControls();
+    setFinanceDateValue('cash-flow-from', cashFlow.from, Boolean(financeReports.cash) || financeFiltersNeedReset);
+    setFinanceDateValue('cash-flow-to', cashFlow.to, Boolean(financeReports.cash) || financeFiltersNeedReset);
+    setFinanceDateValue('profit-loss-from', profitLoss.from, Boolean(financeReports.profitLoss) || financeFiltersNeedReset);
+    setFinanceDateValue('profit-loss-to', profitLoss.to, Boolean(financeReports.profitLoss) || financeFiltersNeedReset);
+    setFinanceDateValue('balance-sheet-as-of', balanceSheet.as_of || localDate(), Boolean(financeReports.balanceSheet) || financeFiltersNeedReset);
+    const income = Number(cashFlow.income || 0);
+    const expense = Number(cashFlow.expense || 0);
 
     set('finance-income', money(income));
     set('finance-expense', money(expense));
-    set('finance-balance', money(dashboard.month_balance));
-    set('finance-period', new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }));
-    set('finance-cash-entry-count', Number(dashboard.month_cash_entry_count || 0));
-    set('finance-cash-entry-note', 'Bulan berjalan');
+    set('finance-balance', money(cashFlow.balance));
+    set('finance-period', financePeriodLabel(cashFlow.from, cashFlow.to));
+    set('finance-cash-entry-count', Number(cashFlow.entry_count || 0));
+    set('finance-cash-entry-note', financePeriodLabel(cashFlow.from, cashFlow.to));
 
     const flow = document.getElementById('cash-bars');
     const maximum = Math.max(income, expense, 1);
@@ -1996,7 +2334,69 @@ function renderFinance() {
             <div class="cash-flow-row">
                 <div class="cash-flow-head"><span>Pengeluaran</span><b>${money(expense)}</b></div>
                 <div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${expense / maximum * 100}%"></i></div>
-            </div>` : '<p class="empty-state">Belum ada arus kas bulan ini.</p>';
+            </div>` : '<p class="empty-state">Belum ada arus kas pada rentang ini.</p>';
+    }
+
+    const paymentFlows = array(cashFlow.payment_flows);
+    const paymentFlowBox = document.getElementById('finance-payment-flows');
+    const paymentFlowTotal = paymentFlows.reduce((sum, item) => sum + Number(item.net ?? item.total ?? 0), 0);
+    set('finance-payment-flow-total', money(paymentFlowTotal));
+    if (paymentFlowBox) {
+        const typeMeta = {
+            cash: { name: 'Tunai', icon: 'payments' },
+            bank_transfer: { name: 'Transfer bank', icon: 'account_balance' },
+            card: { name: 'Kartu / EDC', icon: 'credit_card' },
+            qris: { name: 'QRIS', icon: 'qr_code_2' },
+        };
+        paymentFlowBox.innerHTML = paymentFlows.length
+            ? paymentFlows.map((payment) => {
+                const inflow = Number(payment.inflow || 0);
+                const outflow = Number(payment.outflow || 0);
+                const net = Number(payment.net ?? payment.total ?? 0);
+                const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
+                const meta = typeMeta[key] || { name: String(key || 'Lainnya'), icon: 'payments' };
+                const account = [payment.account_name, payment.account_number].filter(Boolean).join(' · ');
+                const subtitle = [meta.name, account, payment.is_active === false ? 'Nonaktif · riwayat tetap ditampilkan' : null]
+                    .filter(Boolean)
+                    .join(' · ');
+
+                return `<article class="finance-payment-flow-row"><div class="finance-payment-method"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${escapeHtml(subtitle || 'Metode pembayaran')}</small></span></div><div class="finance-payment-amounts"><span><small>Masuk</small><b>${money(inflow)}</b></span><span><small>Refund</small><b class="expense">${money(outflow)}</b></span><strong>${money(net)}</strong></div></article>`;
+            }).join('')
+            : '<p class="empty-state">Belum ada metode pembayaran yang dapat ditampilkan.</p>';
+    }
+
+    const profitLossBox = document.getElementById('profit-loss-report');
+    if (profitLossBox) {
+        const revenueTotal = Number(profitLoss.revenue_total || 0);
+        const profit = Number(profitLoss.net_profit || 0);
+        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
+        profitLossBox.innerHTML = `${row('Penjualan treatment & produk', profitLoss.sales_revenue)}
+            ${Number(profitLoss.sales_returns || 0) ? row('Retur penjualan', -Number(profitLoss.sales_returns || 0), 'negative') : ''}
+            ${Number(profitLoss.payment_charge_income || 0) ? row('Charge pembayaran', profitLoss.payment_charge_income) : ''}
+            ${Number(profitLoss.manual_income || 0) ? row('Pemasukan manual operasional', profitLoss.manual_income) : ''}
+            ${row('Total pendapatan', revenueTotal, 'subtotal')}
+            ${row('HPP treatment & produk', -Number(profitLoss.gross_hpp || 0), 'negative')}
+            ${Number(profitLoss.restocked_return_hpp || 0) ? row('HPP kembali dari retur', profitLoss.restocked_return_hpp) : ''}
+            ${row('Total HPP', -Number(profitLoss.hpp_total || 0), 'subtotal negative')}
+            ${row('Biaya operasional manual', -Number(profitLoss.manual_expense || 0), 'negative')}
+            ${row(profit >= 0 ? 'Laba bersih' : 'Rugi bersih', profit, `total ${profit < 0 ? 'negative' : 'positive'}`)}
+            <p class="finance-statement-note">Periode ${escapeHtml(profitLoss.from || '-')} s.d. ${escapeHtml(profitLoss.to || '-')}.</p>`;
+    }
+
+    const balanceSheetBox = document.getElementById('balance-sheet-report');
+    if (balanceSheetBox) {
+        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
+        const accounts = array(balanceSheet.payment_accounts);
+        balanceSheetBox.innerHTML = `${row('Kas fisik & mutasi manual', balanceSheet.cash)}
+            ${accounts.map((account) => row(
+                `${account.name}${account.account_number ? ` · ${account.account_number}` : ''}`,
+                account.balance,
+            )).join('')}
+            ${row('Nilai persediaan (HPP)', balanceSheet.inventory)}
+            ${row('Total aset', balanceSheet.assets_total, 'subtotal')}
+            ${row('Kewajiban tercatat', balanceSheet.liabilities)}
+            ${row('Ekuitas berjalan', balanceSheet.equity, 'total positive')}
+            <p class="finance-statement-note">Per ${escapeHtml(balanceSheet.as_of || '-')}. Utang dan piutang akan bernilai nol sampai modulnya digunakan.</p>`;
     }
 
     const today = localDate();
@@ -2011,14 +2411,14 @@ function renderFinance() {
 
     const categoryBox = document.getElementById('finance-category-bars');
     if (categoryBox) {
-        const categories = array(dashboard.month_expense_categories);
+        const categories = array(cashFlow.expense_categories);
         const categoryMaximum = Math.max(1, ...categories.map((item) => Number(item.total || 0)));
         categoryBox.innerHTML = categories.length
             ? categories.map((item) => `<div class="cash-flow-row"><div class="cash-flow-head"><span>${escapeHtml(item.category)}</span><b>${money(item.total)}</b></div><div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${Number(item.total || 0) / categoryMaximum * 100}%"></i></div></div>`).join('')
-            : '<p class="empty-state">Belum ada pengeluaran kas pada bulan ini.</p>';
+            : '<p class="empty-state">Belum ada pengeluaran kas pada rentang ini.</p>';
     }
 
-    renderCashEntryHistory();
+    renderCashEntryHistory(cashFlow.cash_entries);
 }
 
 function transactionReceiptPayload(transaction) {
@@ -2044,11 +2444,16 @@ function transactionReceiptPayload(transaction) {
             name: payment.payment_method_name || payment.payment_method?.name || 'Pembayaran',
             isCash: Boolean(Number(payment.payment_method_is_cash ?? payment.payment_method?.is_cash ?? 0)),
             amount: Number(payment.amount || 0),
+            baseAmount: Number(payment.base_amount ?? payment.amount ?? 0),
+            chargeAmount: Number(payment.charge_amount || 0),
+            chargePercent: Number(payment.charge_percent || 0),
             tenderedAmount: Number(payment.tendered_amount || payment.amount || 0),
             reference: payment.reference_number,
         })),
         subtotal: Number(transaction.subtotal || 0),
         discount: Number(transaction.discount_amount || 0),
+        baseTotal: Number(transaction.total || 0) - Number(transaction.payment_charge_amount || 0),
+        paymentCharge: Number(transaction.payment_charge_amount || 0),
         total: Number(transaction.total || 0),
         change: Number(transaction.change_amount || 0),
     };
@@ -2354,7 +2759,7 @@ function formatCashEntryDate(value) {
     });
 }
 
-function renderCashEntryHistory() {
+function renderCashEntryHistory(cashEntries = state.cash_entries) {
     const box = document.getElementById('cash-entry-history');
     if (!box) return;
 
@@ -2364,7 +2769,7 @@ function renderCashEntryHistory() {
     const to = document.getElementById('cash-entry-to')?.value || '';
     const type = typeFilter?.value || '';
     const keyword = String(search?.value || '').trim().toLocaleLowerCase('id-ID');
-    const entries = array(state.cash_entries).filter((entry) => {
+    const entries = array(cashEntries).filter((entry) => {
         const matchesType = !type || entry.type === type;
         const entryDate = String(entry.entry_date || '').slice(0, 10);
         const matchesDate = (!from || entryDate >= from) && (!to || entryDate <= to);
@@ -2402,6 +2807,7 @@ function openCashEntryForm() {
             <div class="quick-fields">
                 <label>Jenis arus<select name="type"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
                 <label>Tanggal<input name="entry_date" type="date" value="${localDate()}" max="${localDate()}" required></label>
+                <label>Kelompok laporan<select name="report_group"><option value="operating">Operasional (laba-rugi)</option><option value="capital">Modal pemilik (neraca)</option><option value="inventory">Pembelian persediaan (neraca)</option><option value="owner_draw">Prive pemilik (neraca)</option></select></label>
                 <label>Kategori<input name="category" list="cash-entry-categories" maxlength="100" placeholder="Pilih atau tulis kategori" required><datalist id="cash-entry-categories"><option value="Modal usaha"></option><option value="Pembelian bahan & produk"></option><option value="Biaya operasional"></option><option value="Gaji & komisi"></option><option value="Sewa & utilitas"></option></datalist></label>
                 <label>Nominal (Rp)<input name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
                 <label class="finance-entry-description">Catatan<textarea name="description" rows="3" maxlength="2000" placeholder="Contoh: Beli tisu dan air minum untuk operasional" required></textarea></label>
@@ -2517,6 +2923,7 @@ function activityCategory(action) {
     if (value.startsWith('membership')) return 'Membership';
     if (value.startsWith('promotion')) return 'Promo membership';
     if (value.startsWith('employee')) return 'Pegawai';
+    if (value.startsWith('therapist.rated')) return 'Penilaian therapist';
     if (value.startsWith('therapist')) return 'Kehadiran terapis';
     if (value.startsWith('settings')) return 'Pengaturan';
     return 'Aktivitas sistem';
@@ -2537,6 +2944,7 @@ function activityIcon(action) {
         'Promo membership': 'campaign',
         Pegawai: 'badge',
         'Kehadiran terapis': 'event_available',
+        'Penilaian therapist': 'sentiment_satisfied',
         Pengaturan: 'settings',
     }[category] || 'work_history';
 }
@@ -2724,32 +3132,33 @@ function renderDashboard() {
     const paymentRevenueList = document.getElementById('payment-revenue-list');
     const totalPaymentRevenue = paymentRevenue.find((payment) => payment.key === 'total');
     const paymentMethodsRevenue = paymentRevenue.filter((payment) => payment.key !== 'total');
-    const paymentCategoryMeta = {
-        cash: { name: 'TUNAI', icon: 'payments', order: 1 },
-        bank_transfer: { name: 'BANK', icon: 'account_balance', order: 2 },
-        card: { name: 'CC', icon: 'credit_card', order: 3 },
-        qris: { name: 'QRIS', icon: 'qr_code_2', order: 4 },
+    const paymentTypeMeta = {
+        cash: { name: 'Tunai', icon: 'payments' },
+        bank_transfer: { name: 'Transfer bank', icon: 'account_balance' },
+        card: { name: 'Kartu / EDC', icon: 'credit_card' },
+        qris: { name: 'QRIS', icon: 'qr_code_2' },
     };
-    const paymentCategories = [...paymentMethodsRevenue.reduce((groups, payment) => {
-        const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
-        const meta = paymentCategoryMeta[key] || { name: String(key || 'LAINNYA').toUpperCase(), icon: 'payments', order: 99 };
-        const existing = groups.get(key) || { key, ...meta, total: 0, activeCount: 0 };
-        existing.total += Number(payment.total || 0);
-        existing.activeCount += payment.is_active === false ? 0 : 1;
-        groups.set(key, existing);
-        return groups;
-    }, new Map()).values()].sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));
     set('payment-revenue-total', money(totalPaymentRevenue?.total || 0));
-    set('payment-revenue-note', `${paymentCategories.length} kategori pembayaran`);
+    set('payment-revenue-note', `${paymentMethodsRevenue.length} metode pembayaran`);
     if (paymentRevenueList) {
-        const total = Number(totalPaymentRevenue?.total || 0);
-        paymentRevenueList.innerHTML = paymentCategories.length ? paymentCategories.map((payment) => {
-            const amount = payment.total;
-            const percent = total > 0 ? Math.round((amount / total) * 100) : 0;
+        const totalInflow = paymentMethodsRevenue.reduce((sum, payment) => sum + Number(payment.inflow || 0), 0);
+        paymentRevenueList.innerHTML = paymentMethodsRevenue.length ? paymentMethodsRevenue.map((payment) => {
+            const inflow = Number(payment.inflow || 0);
+            const outflow = Number(payment.outflow || 0);
+            const net = Number(payment.net ?? payment.total ?? 0);
+            const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
+            const meta = paymentTypeMeta[key] || { name: String(key || 'Lainnya'), icon: 'payments' };
+            const account = [payment.account_name, payment.account_number].filter(Boolean).join(' · ');
+            const percent = totalInflow > 0 ? Math.round((inflow / totalInflow) * 100) : 0;
+            payment.icon = meta.icon;
+            payment.activeCount = true;
+            payment.name = [payment.name, meta.name, account, outflow > 0 ? `Refund ${money(outflow)}` : null]
+                .filter(Boolean)
+                .join(' · ');
             return `<article class="payment-revenue-item">
                 <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${payment.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${payment.activeCount ? `${percent}% dari pendapatan hari ini` : 'Kategori nonaktif · riwayat tetap tercatat'}</small></span></div>
-                <strong>${money(amount)}</strong>
-                <div class="payment-revenue-track" aria-label="${percent}% dari pendapatan"><i style="width:${percent}%"></i></div>
+                <strong>${money(net)}</strong>
+                <div class="payment-revenue-track" aria-label="Dana masuk ${money(inflow)}"><i style="width:${percent}%"></i></div>
             </article>`;
         }).join('') : '<p class="empty-state">Belum ada metode pembayaran aktif.</p>';
     }
@@ -2822,6 +3231,21 @@ function renderDashboard() {
         });
     }
 
+    const popularTreatments = document.getElementById('popular-treatments');
+    if (popularTreatments) {
+        const items = array(dashboard.treatment_most_frequent_current_month);
+        const maximum = Math.max(1, ...items.map((item) => Number(item.total || 0)));
+        popularTreatments.innerHTML = items.length
+            ? items.map((item, index) => {
+                const total = Number(item.total || 0);
+                const quantity = total.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+                const width = Math.max(3, Math.round((total / maximum) * 100));
+
+                return `<article class="performance-item"><span class="performance-rank">${index + 1}</span><div><b>${escapeHtml(item.name || 'Treatment')}</b><small>${quantity} treatment dibayar</small><i><em style="width:${width}%"></em></i></div><strong>${quantity}×</strong></article>`;
+            }).join('')
+            : '<p class="empty-state">Belum ada treatment yang dibayar bulan ini.</p>';
+    }
+
     const treatmentStockAlerts = document.getElementById('treatment-stock-alerts');
     if (treatmentStockAlerts) {
         const alerts = array(dashboard.treatment_stock_alerts);
@@ -2843,6 +3267,28 @@ function renderDashboard() {
             <span><i class="material-symbols-outlined present" aria-hidden="true">check_circle</i><b>${present.length}</b><small>hadir</small></span>
             <span><i class="material-symbols-outlined off" aria-hidden="true">event_busy</i><b>${off.length}</b><small>libur</small></span>
         </div><div class="therapist-attendance-status present"><div><i class="material-symbols-outlined" aria-hidden="true">check</i><b>Hadir</b></div><p>${names(present)}</p></div><div class="therapist-attendance-status off"><div><i class="material-symbols-outlined" aria-hidden="true">hotel</i><b>Libur</b></div><p>${names(off)}</p></div>`;
+    }
+
+    const therapistRatingList = document.getElementById('therapist-rating-list');
+    if (therapistRatingList) {
+        const ratings = array(dashboard.therapist_rating_summary_current_month);
+        const quality = (average) => {
+            if (Number(average) >= 4.5) return ['Sangat baik', 'professional'];
+            if (Number(average) >= 3.5) return ['Bagus', 'good'];
+            return ['Perlu evaluasi', 'poor'];
+        };
+        const stars = (average) => Array.from({ length: 5 }, (_, index) => `<i class="material-symbols-outlined${index < Math.round(Number(average || 0)) ? ' filled' : ''}" aria-hidden="true">star</i>`).join('');
+        therapistRatingList.innerHTML = ratings.length
+            ? ratings.map((therapist, index) => {
+                const [label, tone] = quality(therapist.average);
+                const score = Math.max(0, Math.min(100, (Number(therapist.average || 0) / 5) * 100));
+                const reviewCount = Number(therapist.review_count || 0);
+                return `<article class="therapist-rating-summary"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
+            }).join('')
+            : '<p class="empty-state">Belum ada rating therapist pada bulan ini.</p>';
+        therapistRatingList.querySelectorAll('[data-therapist-review-index]').forEach((button) => {
+            button.addEventListener('click', () => openTherapistReviews(ratings[Number(button.dataset.therapistReviewIndex)]));
+        });
     }
 }
 
@@ -2875,6 +3321,56 @@ function employeeOptions(selected = '') {
 
 function treatmentOptions(selected = '') {
     return array(state.treatments).map((treatment) => `<option value="${Number(treatment.id)}" ${Number(treatment.id) === Number(selected) ? 'selected' : ''}>${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('');
+}
+
+function reservationTreatmentMatches(query = '') {
+    const normalized = String(query).trim().toLocaleLowerCase('id-ID');
+
+    return array(state.treatments)
+        .filter((treatment) => Number(treatment.is_active ?? 1) === 1)
+        .filter((treatment) => !normalized || [
+            treatment.name,
+            treatment.code,
+            treatment.category_name,
+            treatment.category,
+            treatment.description,
+        ].some((value) => String(value || '').toLocaleLowerCase('id-ID').includes(normalized)))
+        .slice(0, 12);
+}
+
+function closeReservationTreatmentPickers(except = null) {
+    document.querySelectorAll('.treatment-picker-label').forEach((label) => {
+        if (label === except) return;
+        label.classList.remove('open', 'opens-up');
+        const results = label.querySelector('.treatment-search-results');
+        if (results) results.hidden = true;
+    });
+}
+
+function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
+    const label = card.querySelector('.treatment-picker-label');
+    const select = card.querySelector('.item-treatment');
+    const input = card.querySelector('.item-treatment-search');
+    const results = card.querySelector('.treatment-search-results');
+    if (!label || !select || !input || !results) return;
+
+    const matches = reservationTreatmentMatches(input.value);
+    const selectedId = Number(select.value || 0);
+    results.innerHTML = matches.map((treatment) => `<button type="button" class="treatment-search-option${Number(treatment.id) === selectedId ? ' selected' : ''}" data-treatment-id="${Number(treatment.id)}" role="option" aria-selected="${Number(treatment.id) === selectedId}"><span><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || 'Treatment')} &middot; ${money(treatmentPrice(treatment))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment tidak ditemukan.</p>';
+    results.hidden = !showResults;
+    label.classList.toggle('open', showResults);
+    label.classList.toggle('opens-up', showResults && results.getBoundingClientRect().bottom > window.innerHeight - 16);
+
+    results.querySelectorAll('[data-treatment-id]').forEach((option) => {
+        option.addEventListener('click', () => {
+            const treatment = array(state.treatments).find((item) => Number(item.id) === Number(option.dataset.treatmentId));
+            if (!treatment) return;
+            select.value = String(treatment.id);
+            input.value = treatment.name;
+            select.dispatchEvent(new Event('change'));
+            closeReservationTreatmentPickers();
+        });
+    });
 }
 
 function addStaffRow(container, role = 'primary') {
@@ -3053,7 +3549,7 @@ function addReservationItem(values = {}) {
     const itemNumber = container.children.length + 1;
     card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment"><span class="material-symbols-outlined">delete</span></button></div>
         <div class="reservation-item-grid">
-            <label>Treatment<select class="item-treatment" required><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select></label>
+            <label class="treatment-picker-label">Treatment<select class="item-treatment" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results" role="listbox" hidden></div></label>
             <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
             ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : '<span class="reservation-price-note"><small>Harga</small><b>Mengikuti harga normal</b></span>'}
         </div>
@@ -3062,6 +3558,18 @@ function addReservationItem(values = {}) {
     container.appendChild(card);
 
     const staffContainer = card.querySelector('.staff-rows');
+    const selectedTreatment = array(state.treatments).find((item) => Number(item.id) === Number(values.treatment_id));
+    const treatmentSearch = card.querySelector('.item-treatment-search');
+    if (selectedTreatment && treatmentSearch) treatmentSearch.value = selectedTreatment.name;
+    treatmentSearch?.addEventListener('focus', () => {
+        closeReservationTreatmentPickers(card.querySelector('.treatment-picker-label'));
+        renderReservationTreatmentPicker(card, { showResults: true });
+    });
+    treatmentSearch?.addEventListener('input', () => renderReservationTreatmentPicker(card, { showResults: true }));
+    treatmentSearch?.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeReservationTreatmentPickers();
+    });
+    renderReservationTreatmentPicker(card);
     addStaffRow(staffContainer, 'primary');
     card.querySelector('.add-staff').onclick = () => addStaffRow(staffContainer, 'assistant');
     card.querySelector('.remove-reservation-item').onclick = () => {
@@ -3074,6 +3582,7 @@ function addReservationItem(values = {}) {
     };
     card.querySelector('.item-treatment').onchange = (event) => {
         const treatment = array(state.treatments).find((item) => Number(item.id) === Number(event.target.value));
+        if (treatment && treatmentSearch) treatmentSearch.value = treatment.name;
         const priceInput = card.querySelector('.item-price');
         if (treatment && priceInput && !priceInput.value) priceInput.placeholder = String(treatmentPrice(treatment));
         refreshReservationTherapistAvailability(card);
@@ -3420,6 +3929,48 @@ function renderPaymentModeChoices() {
     });
 }
 
+function paymentChargeMeta(row) {
+    const methodId = Number(row.querySelector('.payment-method')?.value || 0);
+    const method = paymentMethods().find((item) => Number(item.id) === methodId);
+    const baseAmount = Number(row.querySelector('.payment-amount')?.value || 0);
+    const percent = Number(method?.charge_percent || 0);
+    const enabled = row.dataset.chargeEnabled === 'true' && !Boolean(Number(method?.is_cash ?? 0)) && percent > 0;
+    const amount = enabled ? Math.round(baseAmount * percent / 100) : 0;
+
+    return { method, baseAmount, percent, enabled, amount, total: baseAmount + amount };
+}
+
+function syncPaymentCharge(row, resetToDefault = false) {
+    const methodId = Number(row.querySelector('.payment-method')?.value || 0);
+    const method = paymentMethods().find((item) => Number(item.id) === methodId);
+    const control = row.querySelector('.payment-charge-control');
+    const toggle = row.querySelector('.payment-charge-toggle');
+    const summary = row.querySelector('.payment-charge-summary');
+    const percent = Number(method?.charge_percent || 0);
+    const chargeable = !Boolean(Number(method?.is_cash ?? 0)) && percent > 0;
+    const defaultEnabled = ![false, 0, '0'].includes(method?.charge_default_enabled);
+
+    if (!chargeable) {
+        row.dataset.chargeEnabled = 'false';
+        if (control) control.hidden = true;
+        return paymentChargeMeta(row);
+    }
+
+    if (resetToDefault || row.dataset.chargeEnabled === undefined || row.dataset.chargeEnabled === '') {
+        row.dataset.chargeEnabled = String(defaultEnabled);
+    }
+    const charge = paymentChargeMeta(row);
+    if (control) control.hidden = false;
+    if (toggle) {
+        toggle.setAttribute('aria-pressed', String(charge.enabled));
+        toggle.classList.toggle('active', charge.enabled);
+        toggle.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">${charge.enabled ? 'toggle_on' : 'toggle_off'}</span> Charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}% ${charge.enabled ? 'aktif' : 'nonaktif'}`;
+    }
+    if (summary) summary.textContent = charge.enabled ? `+ ${money(charge.amount)} · Total ${money(charge.total)}` : 'Charge tidak dipakai';
+
+    return charge;
+}
+
 function addPaymentRow(values = {}) {
     const container = document.getElementById('payment-rows');
     if (!container) return;
@@ -3429,15 +3980,18 @@ function addPaymentRow(values = {}) {
     row.className = `payment-row${values.fixed_method ? ' fixed-method' : ''}${values.fixed_method && selectedMethod?.type === 'card' ? ' has-card-details' : ''}`;
     row.dataset.autoBalance = values.auto_balance ? 'true' : 'false';
     row.dataset.autoTendered = 'true';
+    row.dataset.chargeEnabled = values.charge_enabled === undefined ? '' : String(Boolean(values.charge_enabled));
     row.innerHTML = `<label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
         <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
         <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
+        <div class="payment-charge-control" hidden><button type="button" class="payment-charge-toggle" aria-pressed="false"></button><small class="payment-charge-summary"></small></div>
         <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.payment-amount').addEventListener('input', () => {
         row.dataset.autoBalance = 'false';
         syncCashTendered(row);
+        syncPaymentCharge(row);
         syncSplitAutoBalance();
         updatePaymentReconciliation();
     });
@@ -3447,7 +4001,13 @@ function addPaymentRow(values = {}) {
     });
     row.querySelector('.payment-method').disabled = Boolean(values.fixed_method);
     row.querySelector('.payment-method').addEventListener('change', () => {
-        syncPaymentReference(row);
+        syncPaymentReference(row, true);
+        updatePaymentReconciliation();
+    });
+    row.querySelector('.payment-charge-toggle').addEventListener('click', () => {
+        row.dataset.chargeEnabled = String(row.dataset.chargeEnabled !== 'true');
+        syncPaymentCharge(row);
+        syncCashTendered(row);
         updatePaymentReconciliation();
     });
     row.querySelector('.payment-reference').addEventListener('input', updatePaymentReconciliation);
@@ -3460,11 +4020,11 @@ function addPaymentRow(values = {}) {
         syncSplitAutoBalance();
         updatePaymentReconciliation();
     };
-    syncPaymentReference(row);
+    syncPaymentReference(row, values.charge_enabled === undefined);
     updatePaymentReconciliation();
 }
 
-function syncPaymentReference(row) {
+function syncPaymentReference(row, resetCharge = false) {
     const methodId = Number(row.querySelector('.payment-method')?.value || 0);
     const method = paymentMethods().find((item) => Number(item.id) === methodId);
     const input = row.querySelector('.payment-reference');
@@ -3482,6 +4042,7 @@ function syncPaymentReference(row) {
     if (isCash) {
         syncCashTendered(row);
     }
+    syncPaymentCharge(row, resetCharge);
 }
 
 function syncCashTendered(row) {
@@ -3534,17 +4095,27 @@ function renderPaymentRowsForMode() {
 
 function updatePaymentReconciliation() {
     const total = selectedTotal();
-    const entered = [...document.querySelectorAll('.payment-amount')]
-        .reduce((sum, input) => sum + Number(input.value || 0), 0);
+    const rows = [...document.querySelectorAll('.payment-row')];
+    const charges = rows.map((row) => syncPaymentCharge(row));
+    const entered = charges.reduce((sum, charge) => sum + charge.total, 0);
+    const totalCharge = charges.reduce((sum, charge) => sum + charge.amount, 0);
+    const payable = total + totalCharge;
     const cashRows = [...document.querySelectorAll('.payment-row.is-cash')];
     const cashTendered = cashRows.reduce((sum, row) => sum + Number(row.querySelector('.payment-tendered')?.value || 0), 0);
-    const cashAllocated = cashRows.reduce((sum, row) => sum + Number(row.querySelector('.payment-amount')?.value || 0), 0);
+    const cashAllocated = cashRows.reduce((sum, row) => sum + paymentChargeMeta(row).total, 0);
     const change = Math.max(0, cashTendered - cashAllocated);
-    const invalidCashTender = cashRows.some((row) => Number(row.querySelector('.payment-tendered')?.value || 0) < Number(row.querySelector('.payment-amount')?.value || 0));
-    const difference = total - entered;
+    const invalidCashTender = cashRows.some((row) => Number(row.querySelector('.payment-tendered')?.value || 0) < paymentChargeMeta(row).total);
+    const difference = payable - entered;
     const panel = document.querySelector('.payment-reconciliation');
+    document.getElementById('payment-base-total').textContent = money(total);
     document.getElementById('payment-entered').textContent = money(entered);
     document.getElementById('payment-difference').textContent = money(difference);
+    document.getElementById('payment-total').textContent = money(payable);
+    const chargeTotal = document.getElementById('payment-charge-total');
+    if (chargeTotal) {
+        chargeTotal.hidden = totalCharge <= 0;
+        chargeTotal.querySelector('b').textContent = money(totalCharge);
+    }
     const changeElement = document.getElementById('payment-change');
     if (changeElement) {
         changeElement.hidden = !cashRows.length;
@@ -3871,6 +4442,7 @@ document.getElementById('reservation-date')?.addEventListener('change', () => {
 });
 document.addEventListener('click', (event) => {
     if (!event.target.closest('.therapist-picker-label')) closeReservationTherapistPickers();
+    if (!event.target.closest('.treatment-picker-label')) closeReservationTreatmentPickers();
 });
 document.getElementById('open-product')?.addEventListener('click', () => modal('product-modal'));
 document.getElementById('open-product-import')?.addEventListener('click', () => {
@@ -4016,6 +4588,7 @@ document.getElementById('product-form')?.addEventListener('submit', async (event
                 unit: fields[3].value,
                 minimum_stock: fields[4].value,
                 selling_price: fields[5].value,
+                cost_price: fields[6].value,
             }),
         });
         dialog.classList.remove('open');
@@ -4079,6 +4652,7 @@ document.getElementById('product-edit-form')?.addEventListener('submit', async (
                 unit_id: Number(form.querySelector('[name="unit_id"]')?.value),
                 minimum_stock: form.querySelector('[name="minimum_stock"]')?.value,
                 selling_price: Number(form.querySelector('[name="selling_price"]')?.value),
+                cost_price: Number(form.querySelector('[name="cost_price"]')?.value),
                 is_active: Number(form.querySelector('[name="is_active"]')?.value),
                 description: form.querySelector('[name="description"]')?.value,
             }),
@@ -4133,15 +4707,22 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
     const button = document.getElementById('complete-payment');
     const cardNumber = document.querySelector('.payment-card-number')?.value.trim() || null;
     const cardReference = document.querySelector('.payment-card-reference')?.value.trim() || null;
-    const payments = [...document.querySelectorAll('.payment-row')].map((row) => ({
-        payment_method_id: Number(row.querySelector('.payment-method').value),
-        amount: Number(row.querySelector('.payment-amount').value),
-        tendered_amount: row.classList.contains('is-cash')
-            ? Number(row.querySelector('.payment-tendered').value)
-            : Number(row.querySelector('.payment-amount').value),
-        reference_number: cardReference || row.querySelector('.payment-reference').value.trim() || null,
-        notes: cardNumber ? `Nomor kartu: ${cardNumber}` : null,
-    }));
+    const payments = [...document.querySelectorAll('.payment-row')].map((row) => {
+        const charge = paymentChargeMeta(row);
+
+        return {
+            payment_method_id: Number(row.querySelector('.payment-method').value),
+            amount: charge.baseAmount,
+            charge_enabled: charge.enabled,
+            charge_percent: charge.percent,
+            charge_amount: charge.amount,
+            tendered_amount: row.classList.contains('is-cash')
+                ? Number(row.querySelector('.payment-tendered').value)
+                : charge.total,
+            reference_number: cardReference || row.querySelector('.payment-reference').value.trim() || null,
+            notes: cardNumber ? `Nomor kartu: ${cardNumber}` : null,
+        };
+    });
     button.disabled = true;
     try {
         const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
@@ -4162,9 +4743,13 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
         receipt.number = compactInvoiceNumber(result.number || result.transaction_number || receipt.number);
         receipt.transactionId = Number(result.id || receipt.transactionId || 0) || null;
         receipt.total = Number(result.total || receipt.total);
+        receipt.baseTotal = Number(result.base_total || receipt.baseTotal);
+        receipt.paymentCharge = Number(result.payment_charge_amount || receipt.paymentCharge);
         receipt.change = Number(result.change_amount || receipt.change || 0);
         receipt.cashier = result.cashier_name || receipt.cashier;
-        openReceiptPrintChoice(receipt);
+        const ratedTherapists = array(result.therapists);
+        receipt.therapists = ratedTherapists.map((therapist) => therapist.name).filter(Boolean);
+        openReceiptPrintChoice(receipt, { ratingTherapists: ratedTherapists });
         selectedReservation = null;
         paymentIdempotencyKey = null;
         await refresh();
@@ -4280,6 +4865,7 @@ document.getElementById('open-stocktake')?.addEventListener('click', () => {
     openPage('stok-opname');
     requestAnimationFrame(() => document.getElementById('stocktake-search')?.focus());
 });
+document.getElementById('open-stock-reduction')?.addEventListener('click', openStockReductionForm);
 document.getElementById('stocktake-back')?.addEventListener('click', () => openPage('stok'));
 document.getElementById('stocktake-reset')?.addEventListener('click', () => {
     stocktakeDraft.clear();

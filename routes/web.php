@@ -23,6 +23,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/retur', [SalonController::class, 'salesReturnsPage'])->middleware('permission:sales.view')->name('sales.returns.page');
         Route::get('/produk', [SalonController::class, 'productsPage'])->middleware('permission:products.view')->name('products.page');
         Route::get('/produk/riwayat', [SalonController::class, 'stockHistoryPage'])->middleware('permission:products.view')->name('stock.history.page');
+        Route::get('/keuangan/laporan', [SalonController::class, 'financeReport'])->middleware('permission:finance.view')->name('finance.report');
         Route::post('/produk/import', [SalonController::class, 'importProducts'])->middleware('permission:products.create')->name('products.import');
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
@@ -53,6 +54,7 @@ Route::middleware('auth')->group(function () {
         Route::patch('/promo/{id}', [SalonController::class, 'updatePromotion'])->middleware('permission:memberships.manage')->name('promotions.update');
         Route::delete('/promo/{id}', [SalonController::class, 'destroyPromotion'])->middleware('permission:memberships.manage')->name('promotions.destroy');
         Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
+        Route::post('/penjualan/{transaction}/penilaian-therapist', [SalonController::class, 'storeTherapistRatings'])->middleware('permission:cashier.process')->name('sales.therapist-ratings.store');
         Route::get('/penjualan/{transaction}/nota.pdf', [SalonController::class, 'invoicePdf'])->middleware('permission:cashier.process|sales.view')->name('sales.invoice.pdf');
         Route::post('/penjualan/{transaction}/retur', [SalonController::class, 'storeSalesReturn'])->middleware('permission:cashier.refund')->name('sales.returns.store');
         Route::get('/retur/{salesReturn}/struk.pdf', [SalonController::class, 'salesReturnPdf'])->middleware('permission:cashier.refund|sales.view')->name('sales.returns.receipt.pdf');

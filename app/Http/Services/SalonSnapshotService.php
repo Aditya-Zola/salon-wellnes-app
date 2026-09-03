@@ -2,6 +2,7 @@
 
 namespace App\Http\Services;
 
+use App\Http\Support\FixedPoint;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Collection;
@@ -69,7 +70,8 @@ class SalonSnapshotService
             $snapshot['payment_methods'] = DB::table('payment_methods')
                 ->where('is_active', true)
                 ->orderBy('name')
-                ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference', 'account_name', 'account_number']);
+                ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference', 'account_name', 'account_number', 'charge_percent', 'charge_default_enabled']);
+            $snapshot['salon'] = $this->salonContact();
         }
 
         if ($this->can($user, 'payroll.view')) {
@@ -419,9 +421,34 @@ class SalonSnapshotService
                 'unit.code as unit',
             ])
             ->groupBy('treatment_id');
+        $commissionProfilesByTreatment = DB::table('treatment_commission_splits')
+            ->whereIn('treatment_id', $treatments->pluck('id')->all())
+            ->orderBy('therapist_count')
+            ->orderBy('therapist_position')
+            ->get([
+                'treatment_id',
+                'therapist_count',
+                'therapist_position',
+                'commission_percent',
+            ])
+            ->groupBy('treatment_id');
 
-        return $treatments->map(function (object $treatment) use ($recipesByTreatment): object {
+        return $treatments->map(function (object $treatment) use ($recipesByTreatment, $commissionProfilesByTreatment): object {
             $treatment->recipes = ($recipesByTreatment->get($treatment->id) ?? collect())->values();
+            $treatment->commission_profiles = collect($commissionProfilesByTreatment->get($treatment->id, []))
+                ->groupBy('therapist_count')
+                ->map(function ($splits, $therapistCount): array {
+                    return [
+                        'therapist_count' => (int) $therapistCount,
+                        'commission_percents' => collect($splits)
+                            ->sortBy('therapist_position')
+                            ->pluck('commission_percent')
+                            ->values()
+                            ->all(),
+                    ];
+                })
+                ->values()
+                ->all();
 
             return $treatment;
         });
@@ -451,6 +478,7 @@ class SalonSnapshotService
                 'product.current_stock as stock',
                 'product.minimum_stock',
                 'product.selling_price',
+                'product.cost_price',
                 'product.purchase_unit_id',
                 'product.usage_unit_id',
                 'product.purchase_to_usage_factor',
@@ -530,6 +558,7 @@ class SalonSnapshotService
             'transaction.subtotal',
             'transaction.discount_percent',
             'transaction.discount_amount',
+            'transaction.payment_charge_amount',
             'transaction.total',
             'transaction.paid_amount',
             'transaction.change_amount',
@@ -546,7 +575,7 @@ class SalonSnapshotService
                 ->whereIn('payment.transaction_id', $transactions->pluck('id'))
                 ->where('payment.status', 'confirmed')
                 ->orderBy('payment.id')
-                ->get(['payment.id', 'payment.transaction_id', 'payment.amount', 'payment.tendered_amount', 'payment.reference_number', 'payment.paid_at', 'method.id as payment_method_id', 'method.code as payment_method_code', 'method.name as payment_method_name', 'method.is_cash as payment_method_is_cash'])
+                ->get(['payment.id', 'payment.transaction_id', 'payment.amount', 'payment.base_amount', 'payment.charge_percent', 'payment.charge_amount', 'payment.charge_enabled', 'payment.tendered_amount', 'payment.reference_number', 'payment.paid_at', 'method.id as payment_method_id', 'method.code as payment_method_code', 'method.name as payment_method_name', 'method.is_cash as payment_method_is_cash'])
                 ->groupBy('transaction_id');
             $items = DB::table('transaction_items')
                 ->whereIn('transaction_id', $transactions->pluck('id'))
@@ -747,6 +776,7 @@ class SalonSnapshotService
             'product.current_stock as stock',
             'product.minimum_stock',
             'product.selling_price',
+            'product.cost_price',
             'product.purchase_unit_id',
             'product.usage_unit_id',
             'product.purchase_to_usage_factor',
@@ -830,6 +860,7 @@ class SalonSnapshotService
                 'transaction.subtotal',
                 'transaction.discount_percent',
                 'transaction.discount_amount',
+                'transaction.payment_charge_amount',
                 'transaction.total',
                 'transaction.paid_amount',
                 'transaction.change_amount',
@@ -852,6 +883,10 @@ class SalonSnapshotService
                 'payment.id',
                 'payment.transaction_id',
                 'payment.amount',
+                'payment.base_amount',
+                'payment.charge_percent',
+                'payment.charge_amount',
+                'payment.charge_enabled',
                 'payment.tendered_amount',
                 'payment.reference_number',
                 'payment.paid_at',
@@ -899,32 +934,101 @@ class SalonSnapshotService
         });
     }
 
-    private function cashEntries(): mixed
+    private function salonContact(): array
     {
-        return DB::table('cash_entries as entry')
+        $settings = DB::table('sale_settings')
+            ->whereIn('key', ['salon_address', 'salon_whatsapp'])
+            ->pluck('value', 'key');
+
+        return [
+            'address' => $settings->get('salon_address') ?: 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang',
+            'whatsapp' => $settings->get('salon_whatsapp') ?: '081128702019',
+        ];
+    }
+
+    private function cashEntries(
+        ?CarbonImmutable $from = null,
+        ?CarbonImmutable $to = null,
+        ?int $limit = 100,
+    ): mixed {
+        $query = DB::table('cash_entries as entry')
             ->leftJoin('users as creator', 'creator.id', '=', 'entry.created_by')
             ->where('entry.status', 'posted')
             ->whereNull('entry.transaction_payment_id')
+            ->when($from, fn ($builder, CarbonImmutable $date) => $builder->whereDate('entry.entry_date', '>=', $date->toDateString()))
+            ->when($to, fn ($builder, CarbonImmutable $date) => $builder->whereDate('entry.entry_date', '<=', $date->toDateString()))
             ->orderByDesc('entry.entry_date')
-            ->orderByDesc('entry.id')
-            ->limit(100)
-            ->get([
-                'entry.id',
-                'entry.transaction_payment_id',
-                'entry.type',
-                'entry.category',
-                'entry.description',
-                'entry.amount',
-                'entry.entry_date',
-                'entry.created_at',
-                'creator.name as created_by_name',
-            ])
+            ->orderByDesc('entry.id');
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
+
+        return $query->get([
+            'entry.id',
+            'entry.transaction_payment_id',
+            'entry.type',
+            'entry.report_group',
+            'entry.category',
+            'entry.description',
+            'entry.amount',
+            'entry.entry_date',
+            'entry.created_at',
+            'creator.name as created_by_name',
+        ])
             ->map(function (object $entry): object {
                 $entry->automated = false;
 
                 return $entry;
             })
             ->values();
+    }
+
+    /**
+     * Menyediakan laporan keuangan untuk rentang pilihan pengguna. Neraca
+     * bersifat posisi saldo, sehingga memakai satu tanggal "per" yang terpisah
+     * dari rentang arus kas dan laba-rugi.
+     */
+    public function financeReport(
+        Authenticatable $user,
+        CarbonImmutable $from,
+        CarbonImmutable $to,
+        CarbonImmutable $asOf,
+    ): array {
+        abort_unless($this->can($user, 'finance.view'), 403);
+
+        $manualCashEntries = DB::table('cash_entries')
+            ->where('status', 'posted')
+            ->whereNull('transaction_payment_id')
+            ->whereBetween('entry_date', [$from->toDateString(), $to->toDateString()]);
+        $income = (int) (clone $manualCashEntries)->where('type', 'income')->sum('amount');
+        $expense = (int) (clone $manualCashEntries)->where('type', 'expense')->sum('amount');
+        $count = (clone $manualCashEntries)->count();
+        $expenseCategories = (clone $manualCashEntries)
+            ->where('type', 'expense')
+            ->select('category', DB::raw('SUM(amount) as total'))
+            ->groupBy('category')
+            ->orderByDesc('total')
+            ->limit(5)
+            ->get()
+            ->map(fn (object $item): array => ['category' => $item->category, 'total' => (int) $item->total])
+            ->values()
+            ->all();
+
+        return [
+            'cash_flow' => [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'income' => $income,
+                'expense' => $expense,
+                'balance' => $income - $expense,
+                'entry_count' => $count,
+                'expense_categories' => $expenseCategories,
+                'payment_flows' => $this->paymentFlows($from, $to)->values()->all(),
+                'cash_entries' => $this->cashEntries($from, $to, null)->all(),
+            ],
+            'profit_loss' => $this->profitLoss($from, $to),
+            'balance_sheet' => $this->balanceSheet($asOf),
+        ];
     }
 
     private function dashboardAnalytics(Authenticatable $user): array
@@ -977,6 +1081,13 @@ class SalonSnapshotService
             ];
         }
 
+        if ($this->can($user, 'employees.view')) {
+            $data['therapist_rating_summary_current_month'] = $this->therapistRatingSummary(
+                $today->startOfMonth(),
+                $today,
+            );
+        }
+
         if ($this->canAny($user, ['cashier.view', 'finance.view'])) {
             $todayRevenue = $this->netRevenueForDate($today);
             $data['revenue_today'] = $todayRevenue;
@@ -985,42 +1096,10 @@ class SalonSnapshotService
             $monthStart = $today->startOfMonth();
             $revenueStart = $weekStart->lessThan($yearStart) ? $weekStart : $yearStart;
             $revenueByDay = $this->netRevenueByDay($revenueStart, $today);
-            $paymentRevenueTotals = DB::table('transaction_payments as payment')
-                ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
-                ->where('transaction.status', 'paid')
-                ->where('payment.status', 'confirmed')
-                ->whereDate('payment.paid_at', $today)
-                ->select('payment.payment_method_id', DB::raw('SUM(payment.amount) as total'))
-                ->groupBy('payment.payment_method_id')
-                ->get()
-                ->mapWithKeys(fn (object $payment): array => [(int) $payment->payment_method_id => (int) $payment->total]);
-            $paymentRefundTotals = DB::table('sales_returns')
-                ->where('status', 'posted')
-                ->whereDate('returned_at', $today)
-                ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
-                ->groupBy('refund_payment_method_id')
-                ->get()
-                ->mapWithKeys(fn (object $refund): array => [(int) $refund->refund_payment_method_id => (int) $refund->total]);
-            $methods = DB::table('payment_methods')
-                ->where(function ($query) use ($paymentRevenueTotals, $paymentRefundTotals): void {
-                    $query->where('is_active', true);
-                    $usedMethodIds = $paymentRevenueTotals->keys()->concat($paymentRefundTotals->keys())->unique()->values();
-                    if ($usedMethodIds->isNotEmpty()) {
-                        $query->orWhereIn('id', $usedMethodIds->all());
-                    }
-                })
-                ->orderBy('name')
-                ->get(['id', 'name', 'type', 'is_cash', 'is_active']);
+            $paymentFlowsToday = $this->paymentFlows($today, $today);
             $data['revenue_by_payment_method_today'] = collect([
                 ['key' => 'total', 'name' => 'Total pendapatan', 'total' => $todayRevenue, 'type' => 'total'],
-            ])->concat($methods->map(fn (object $method): array => [
-                'key' => 'method-'.$method->id,
-                'id' => (int) $method->id,
-                'name' => $method->name,
-                'type' => $method->type,
-                'total' => (int) $paymentRevenueTotals->get((int) $method->id, 0) - (int) $paymentRefundTotals->get((int) $method->id, 0),
-                'is_active' => (bool) $method->is_active,
-            ]))->values()->all();
+            ])->concat($paymentFlowsToday)->values()->all();
             $data['revenue_last_7_days'] = collect(range(0, 6))->map(function (int $offset) use ($weekStart, $revenueByDay): array {
                 $date = $weekStart->addDays($offset);
                 $dayNames = [1 => 'Sen', 2 => 'Sel', 3 => 'Rab', 4 => 'Kam', 5 => 'Jum', 6 => 'Sab', 7 => 'Min'];
@@ -1069,6 +1148,24 @@ class SalonSnapshotService
                 ->get()
                 ->map(fn (object $item): array => ['name' => $item->name, 'total' => (int) $item->total])
                 ->values();
+            $data['treatment_most_frequent_current_month'] = DB::table('transaction_items as item')
+                ->join('transactions as transaction', 'transaction.id', '=', 'item.transaction_id')
+                ->where('transaction.status', 'paid')
+                ->where('item.item_type', 'treatment')
+                ->whereBetween('transaction.transacted_at', [$monthStart->startOfDay(), $today->endOfDay()])
+                ->select('item.item_id', 'item.name', DB::raw('SUM(item.quantity) as total'))
+                ->groupBy('item.item_id', 'item.name')
+                ->orderByDesc('total')
+                ->orderBy('item.name')
+                ->limit(5)
+                ->get()
+                ->map(fn (object $item): array => [
+                    'id' => $item->item_id ? (int) $item->item_id : null,
+                    'name' => $item->name,
+                    'total' => (float) $item->total,
+                ])
+                ->values()
+                ->all();
             $treatmentsByDay = DB::table('transaction_items as item')
                 ->join('transactions as trx', 'trx.id', '=', 'item.transaction_id')
                 ->where('trx.status', 'paid')
@@ -1181,10 +1278,278 @@ class SalonSnapshotService
                 'month_balance' => $income - $expense,
                 'month_cash_entry_count' => $count,
                 'month_expense_categories' => $expenseCategories,
+                'payment_flows_month' => $this->paymentFlows($monthStart, $today)->values()->all(),
+                'profit_loss_month' => $this->profitLoss($monthStart, $today),
+                'balance_sheet' => $this->balanceSheet($today),
             ];
         }
 
         return $data;
+    }
+
+    /**
+     * Rekap ini sengaja menggunakan jumlah dan rerata bersamaan. Therapist
+     * dengan satu penilaian sempurna tidak otomatis mengalahkan therapist
+     * yang konsisten dinilai baik oleh lebih banyak pelanggan.
+     */
+    private function therapistRatingSummary(CarbonImmutable $from, CarbonImmutable $to): array
+    {
+        $ratings = DB::table('therapist_ratings as rating')
+            ->join('employees as employee', 'employee.id', '=', 'rating.employee_id')
+            ->whereBetween('rating.rated_at', [$from->startOfDay(), $to->endOfDay()])
+            ->orderBy('employee.name')
+            ->get([
+                'employee.id as employee_id',
+                'employee.name',
+                'employee.position',
+                'rating.stars',
+                'rating.review',
+                'rating.rated_at',
+            ]);
+
+        return $ratings
+            ->groupBy('employee_id')
+            ->map(function (Collection $employeeRatings): array {
+                $first = $employeeRatings->first();
+                $total = $employeeRatings->count();
+                $counts = [
+                    'stars_1' => $employeeRatings->where('stars', 1)->count(),
+                    'stars_2' => $employeeRatings->where('stars', 2)->count(),
+                    'stars_3' => $employeeRatings->where('stars', 3)->count(),
+                    'stars_4' => $employeeRatings->where('stars', 4)->count(),
+                    'stars_5' => $employeeRatings->where('stars', 5)->count(),
+                ];
+                $score = $employeeRatings->sum(fn (object $rating): int => (int) $rating->stars);
+                $reviews = $employeeRatings
+                    ->filter(fn (object $rating): bool => filled($rating->review))
+                    ->sortByDesc('rated_at')
+                    ->map(fn (object $rating): array => [
+                        'stars' => (int) $rating->stars,
+                        'review' => trim($rating->review),
+                        'rated_at' => CarbonImmutable::parse($rating->rated_at)->toIso8601String(),
+                    ])
+                    ->values()
+                    ->all();
+
+                return [
+                    'employee_id' => (int) $first->employee_id,
+                    'name' => $first->name,
+                    'position' => $first->position,
+                    'total' => $total,
+                    ...$counts,
+                    'average' => round($score / max(1, $total), 2),
+                    'review_count' => count($reviews),
+                    'reviews' => $reviews,
+                ];
+            })
+            ->sort(function (array $first, array $second): int {
+                return ($second['average'] <=> $first['average'])
+                    ?: ($second['total'] <=> $first['total'])
+                    ?: ($second['stars_5'] <=> $first['stars_5'])
+                    ?: strcasecmp($first['name'], $second['name']);
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Laba-rugi berbasis transaksi yang sudah dibayar. HPP memakai snapshot
+     * pada item transaksi, sehingga mengubah HPP master hari ini tidak mengubah
+     * hasil transaksi yang sudah lampau.
+     */
+    private function profitLoss(CarbonImmutable $from, CarbonImmutable $to): array
+    {
+        $items = DB::table('transaction_items as item')
+            ->join('transactions as transaction', 'transaction.id', '=', 'item.transaction_id')
+            ->where('transaction.status', 'paid')
+            ->whereBetween('transaction.transacted_at', [$from->startOfDay(), $to->endOfDay()]);
+        $salesRevenue = (int) (clone $items)->sum('item.total_amount');
+        $grossHpp = (int) (clone $items)->sum('item.cost_amount');
+        $paymentCharges = (int) DB::table('transactions')
+            ->where('status', 'paid')
+            ->whereBetween('transacted_at', [$from->startOfDay(), $to->endOfDay()])
+            ->sum('payment_charge_amount');
+        $returns = (int) DB::table('sales_return_items as item')
+            ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+            ->where('sales_return.status', 'posted')
+            ->whereBetween('sales_return.returned_at', [$from->startOfDay(), $to->endOfDay()])
+            ->sum('item.amount');
+        $restockedReturnCosts = DB::table('sales_return_items as return_item')
+            ->join('sales_returns as sales_return', 'sales_return.id', '=', 'return_item.sales_return_id')
+            ->join('transaction_items as item', 'item.id', '=', 'return_item.transaction_item_id')
+            ->where('sales_return.status', 'posted')
+            ->where('return_item.restocked', true)
+            ->whereBetween('sales_return.returned_at', [$from->startOfDay(), $to->endOfDay()])
+            ->get(['item.unit_cost', 'return_item.quantity'])
+            ->reduce(
+                fn (int $total, object $item): int => $total + FixedPoint::multiply(
+                    (int) ($item->unit_cost ?? 0),
+                    FixedPoint::parse((string) $item->quantity, FixedPoint::STOCK_SCALE),
+                    FixedPoint::STOCK_SCALE,
+                ),
+                0,
+            );
+        $manualEntries = DB::table('cash_entries')
+            ->where('status', 'posted')
+            ->whereNull('transaction_payment_id')
+            ->where('report_group', 'operating')
+            ->whereBetween('entry_date', [$from->toDateString(), $to->toDateString()]);
+        $manualIncome = (int) (clone $manualEntries)->where('type', 'income')->sum('amount');
+        $manualExpense = (int) (clone $manualEntries)->where('type', 'expense')->sum('amount');
+        $revenue = $salesRevenue - $returns + $paymentCharges + $manualIncome;
+        $netHpp = max(0, $grossHpp - $restockedReturnCosts);
+
+        return [
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+            'sales_revenue' => $salesRevenue,
+            'sales_returns' => $returns,
+            'payment_charge_income' => $paymentCharges,
+            'manual_income' => $manualIncome,
+            'revenue_total' => $revenue,
+            'gross_hpp' => $grossHpp,
+            'restocked_return_hpp' => $restockedReturnCosts,
+            'hpp_total' => $netHpp,
+            'manual_expense' => $manualExpense,
+            'net_profit' => $revenue - $netHpp - $manualExpense,
+        ];
+    }
+
+    /**
+     * Neraca dasar tanpa utang/piutang: kas fisik, saldo setiap rekening, dan
+     * nilai stok berdasarkan HPP aktif pada master produk.
+     */
+    private function balanceSheet(CarbonImmutable $to): array
+    {
+        $from = CarbonImmutable::parse('2000-01-01', config('app.timezone'));
+        $paymentFlows = $this->paymentFlows($from, $to);
+        $manualEntries = DB::table('cash_entries')
+            ->where('status', 'posted')
+            ->whereNull('transaction_payment_id')
+            ->whereDate('entry_date', '<=', $to->toDateString());
+        $manualCash = (int) (clone $manualEntries)->where('type', 'income')->sum('amount')
+            - (int) (clone $manualEntries)->where('type', 'expense')->sum('amount');
+        $cashPayments = (int) $paymentFlows->where('is_cash', true)->sum('net');
+        $cash = $cashPayments + $manualCash;
+        $inventory = $this->inventoryValueAt($to);
+        $accounts = $paymentFlows
+            ->reject(fn (array $flow): bool => $flow['is_cash'])
+            ->map(fn (array $flow): array => [
+                'id' => $flow['id'],
+                'name' => $flow['name'],
+                'type' => $flow['type'],
+                'account_name' => $flow['account_name'],
+                'account_number' => $flow['account_number'],
+                'balance' => $flow['net'],
+            ])
+            ->values()
+            ->all();
+        $bankBalance = array_sum(array_column($accounts, 'balance'));
+        $assets = $cash + $bankBalance + $inventory;
+
+        return [
+            'as_of' => $to->toDateString(),
+            'cash' => $cash,
+            'manual_cash' => $manualCash,
+            'payment_accounts' => $accounts,
+            'bank_total' => $bankBalance,
+            'inventory' => $inventory,
+            'liabilities' => 0,
+            'assets_total' => $assets,
+            'equity' => $assets,
+        ];
+    }
+
+    /**
+     * Kuantitas stok lampau direkonstruksi dari posisi stok saat ini dikurangi
+     * seluruh mutasi setelah tanggal neraca. Dengan begitu stok awal yang
+     * sudah ada sebelum sistem dipakai juga tetap ikut terhitung.
+     */
+    private function inventoryValueAt(CarbonImmutable $to): int
+    {
+        $changesAfter = DB::table('stock_movements')
+            ->where('occurred_at', '>', $to->endOfDay())
+            ->get(['product_id', 'stock_before', 'stock_after'])
+            ->groupBy('product_id')
+            ->map(fn (Collection $movements): int => $movements->reduce(
+                fn (int $total, object $movement): int => $total
+                    + FixedPoint::parse((string) $movement->stock_after, FixedPoint::STOCK_SCALE)
+                    - FixedPoint::parse((string) $movement->stock_before, FixedPoint::STOCK_SCALE),
+                0,
+            ));
+
+        return DB::table('products')
+            ->where('is_active', true)
+            ->where('created_at', '<=', $to->endOfDay())
+            ->get(['id', 'current_stock', 'cost_price'])
+            ->reduce(function (int $total, object $product) use ($changesAfter): int {
+                $currentStock = FixedPoint::parse((string) $product->current_stock, FixedPoint::STOCK_SCALE);
+                $stockAtDate = max(0, $currentStock - (int) $changesAfter->get($product->id, 0));
+
+                return $total + FixedPoint::multiply(
+                    (int) ($product->cost_price ?? 0),
+                    $stockAtDate,
+                    FixedPoint::STOCK_SCALE,
+                );
+            }, 0);
+    }
+
+    /**
+     * Arus aktual per rekening/metode: dana yang masuk saat pembayaran dan
+     * dana yang keluar saat refund. Metode aktif tetap ditampilkan meski belum
+     * ada transaksi agar nama rekening yang baru diatur langsung terlihat.
+     */
+    private function paymentFlows(CarbonImmutable $from, CarbonImmutable $to): Collection
+    {
+        $inflows = DB::table('transaction_payments as payment')
+            ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
+            ->where('transaction.status', 'paid')
+            ->where('payment.status', 'confirmed')
+            ->whereBetween('payment.paid_at', [$from->startOfDay(), $to->endOfDay()])
+            ->select('payment.payment_method_id', DB::raw('SUM(payment.amount) as total'))
+            ->groupBy('payment.payment_method_id')
+            ->pluck('total', 'payment.payment_method_id');
+        $outflows = DB::table('sales_returns')
+            ->where('status', 'posted')
+            ->whereBetween('returned_at', [$from->startOfDay(), $to->endOfDay()])
+            ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
+            ->groupBy('refund_payment_method_id')
+            ->pluck('total', 'refund_payment_method_id');
+        $usedMethodIds = $inflows->keys()->merge($outflows->keys())->map(fn ($id): int => (int) $id)->unique()->values();
+        $methods = DB::table('payment_methods')
+            ->where(function ($query) use ($usedMethodIds): void {
+                $query->where('is_active', true);
+                if ($usedMethodIds->isNotEmpty()) {
+                    $query->orWhereIn('id', $usedMethodIds->all());
+                }
+            })
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get([
+                'id',
+                'name',
+                'type',
+                'is_cash',
+                'is_active',
+                'account_name',
+                'account_number',
+            ]);
+
+        return $methods->map(fn (object $method): array => [
+            'key' => 'method-'.$method->id,
+            'id' => (int) $method->id,
+            'name' => $method->name,
+            'type' => $method->type,
+            'is_cash' => (bool) $method->is_cash,
+            'is_active' => (bool) $method->is_active,
+            'account_name' => $method->account_name,
+            'account_number' => $method->account_number,
+            'inflow' => (int) $inflows->get($method->id, 0),
+            'outflow' => (int) $outflows->get($method->id, 0),
+            'net' => (int) $inflows->get($method->id, 0) - (int) $outflows->get($method->id, 0),
+            // Alias yang mempertahankan kontrak data dashboard sebelumnya.
+            'total' => (int) $inflows->get($method->id, 0) - (int) $outflows->get($method->id, 0),
+        ]);
     }
 
     private function netRevenueForDate(CarbonImmutable $date): int

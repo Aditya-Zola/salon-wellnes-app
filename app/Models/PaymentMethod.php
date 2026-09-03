@@ -18,6 +18,8 @@ class PaymentMethod extends Model
         'type',
         'is_cash',
         'requires_reference',
+        'charge_percent',
+        'charge_default_enabled',
         'is_active',
         'sort_order',
     ];
@@ -27,6 +29,8 @@ class PaymentMethod extends Model
         return [
             'is_cash' => 'boolean',
             'requires_reference' => 'boolean',
+            'charge_percent' => 'decimal:4',
+            'charge_default_enabled' => 'boolean',
             'is_active' => 'boolean',
             'sort_order' => 'integer',
         ];
