@@ -15,6 +15,10 @@ class TransactionPayment extends Model
         'transaction_id',
         'payment_method_id',
         'amount',
+        'base_amount',
+        'charge_percent',
+        'charge_amount',
+        'charge_enabled',
         'tendered_amount',
         'reference_number',
         'paid_at',
@@ -27,6 +31,10 @@ class TransactionPayment extends Model
     {
         return [
             'amount' => 'integer',
+            'base_amount' => 'integer',
+            'charge_percent' => 'decimal:4',
+            'charge_amount' => 'integer',
+            'charge_enabled' => 'boolean',
             'tendered_amount' => 'integer',
             'paid_at' => 'datetime',
         ];

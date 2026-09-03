@@ -59,6 +59,34 @@ class SalonController extends Controller
         return response()->json($this->snapshots->forUser($request->user()));
     }
 
+    public function financeReport(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'from' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'as_of' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+        ]);
+        $timezone = config('app.timezone');
+        $today = CarbonImmutable::today($timezone);
+        $from = isset($data['from'])
+            ? CarbonImmutable::createFromFormat('Y-m-d', $data['from'], $timezone)
+            : $today->startOfMonth();
+        $to = isset($data['to'])
+            ? CarbonImmutable::createFromFormat('Y-m-d', $data['to'], $timezone)
+            : $today;
+        abort_if($from->greaterThan($to), 422, 'Tanggal awal tidak boleh melewati tanggal akhir.');
+        $asOf = isset($data['as_of'])
+            ? CarbonImmutable::createFromFormat('Y-m-d', $data['as_of'], $timezone)
+            : $to;
+
+        return response()->json($this->snapshots->financeReport(
+            $request->user(),
+            $from,
+            $to,
+            $asOf,
+        ));
+    }
+
     public function salesPage(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -734,6 +762,7 @@ class SalonController extends Controller
             'current_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
             'minimum_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
             'selling_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'cost_price' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'description' => ['nullable', 'string', 'max:2000'],
         ]);
         $stock = FixedPoint::parse($data['current_stock'], FixedPoint::STOCK_SCALE);
@@ -755,6 +784,7 @@ class SalonController extends Controller
                     FixedPoint::STOCK_SCALE,
                 ),
                 'selling_price' => $data['selling_price'],
+                'cost_price' => (int) ($data['cost_price'] ?? 0),
                 'is_active' => true,
                 'description' => $data['description'] ?? null,
                 'created_at' => $now,
@@ -769,6 +799,7 @@ class SalonController extends Controller
                     'quantity' => FixedPoint::format($stock, FixedPoint::STOCK_SCALE),
                     'stock_before' => FixedPoint::format(0, FixedPoint::STOCK_SCALE),
                     'stock_after' => FixedPoint::format($stock, FixedPoint::STOCK_SCALE),
+                    'unit_cost' => (int) ($data['cost_price'] ?? 0),
                     'source_type' => 'opening_stock',
                     'reference' => null,
                     'notes' => 'Stok awal',
@@ -825,6 +856,7 @@ class SalonController extends Controller
             'unit_id' => ['required', 'integer', 'exists:units,id'],
             'minimum_stock' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
             'selling_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+            'cost_price' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'description' => ['nullable', 'string', 'max:2000'],
             'is_active' => ['required', 'boolean'],
         ]);
@@ -834,6 +866,7 @@ class SalonController extends Controller
             abort_unless($product, 404, 'Produk tidak ditemukan.');
 
             $unitId = (int) $data['unit_id'];
+            $costPrice = array_key_exists('cost_price', $data) ? (int) $data['cost_price'] : (int) $product->cost_price;
             $now = now();
             $before = [
                 'name' => $product->name,
@@ -841,6 +874,7 @@ class SalonController extends Controller
                 'unit_id' => (int) $product->usage_unit_id,
                 'minimum_stock' => $product->minimum_stock,
                 'selling_price' => (int) $product->selling_price,
+                'cost_price' => (int) $product->cost_price,
                 'is_active' => (bool) $product->is_active,
             ];
 
@@ -857,6 +891,7 @@ class SalonController extends Controller
                     FixedPoint::STOCK_SCALE,
                 ),
                 'selling_price' => (int) $data['selling_price'],
+                'cost_price' => $costPrice,
                 'description' => $data['description'] ?: null,
                 'is_active' => (bool) $data['is_active'],
                 'updated_at' => $now,
@@ -876,7 +911,7 @@ class SalonController extends Controller
                 'product',
                 $id,
                 "Data produk {$product->name} diperbarui",
-                ['before' => $before, 'after' => ['name' => $data['name'], 'unit_id' => $unitId]],
+                ['before' => $before, 'after' => ['name' => $data['name'], 'unit_id' => $unitId, 'cost_price' => $costPrice]],
             );
         }, 3);
 
@@ -891,7 +926,7 @@ class SalonController extends Controller
             'type' => ['required', Rule::in(['in', 'out', 'adjustment'])],
             'quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
             'source' => ['required', 'string', 'max:150'],
-            'notes' => ['nullable', 'string', 'max:1000'],
+            'notes' => ['nullable', 'string', 'min:3', 'max:1000', Rule::requiredIf($request->input('type') === 'out')],
         ]);
 
         DB::transaction(function () use ($data, $id, $request): void {
@@ -921,6 +956,7 @@ class SalonController extends Controller
                 'quantity' => FixedPoint::format($movementQuantity, FixedPoint::STOCK_SCALE),
                 'stock_before' => FixedPoint::format($before, FixedPoint::STOCK_SCALE),
                 'stock_after' => FixedPoint::format($after, FixedPoint::STOCK_SCALE),
+                'unit_cost' => (int) ($product->cost_price ?? 0),
                 'source_type' => 'manual_adjustment',
                 'reference' => null,
                 'notes' => trim($data['source'].($data['notes'] ?? '' ? ' · '.$data['notes'] : '')),
@@ -992,21 +1028,97 @@ class SalonController extends Controller
         abort_unless($treatment, 404, 'Treatment tidak ditemukan.');
         $data = $request->validate([
             'default_commission_percent' => ['required', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
+            'commission_profiles' => ['nullable', 'array', 'max:9'],
+            'commission_profiles.*.therapist_count' => ['required', 'integer', 'min:2', 'max:10'],
+            'commission_profiles.*.commission_percents' => ['required', 'array', 'min:2', 'max:10'],
+            'commission_profiles.*.commission_percents.*' => ['required', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
         ]);
         $commission = FixedPoint::parse($data['default_commission_percent'], FixedPoint::PERCENT_SCALE);
         abort_if($commission > 100 * (10 ** FixedPoint::PERCENT_SCALE), 422, 'Persentase komisi tidak boleh lebih dari 100.');
+        $commissionPercent = FixedPoint::format($commission, FixedPoint::PERCENT_SCALE);
 
-        DB::table('treatments')->where('id', $id)->update([
-            'default_commission_percent' => FixedPoint::normalizePercent($data['default_commission_percent']),
-            'updated_at' => now(),
-        ]);
+        $profiles = collect($data['commission_profiles'] ?? [])->map(function (array $profile) use ($commission): array {
+            $therapistCount = (int) $profile['therapist_count'];
+            $percents = array_values($profile['commission_percents']);
+
+            if (count($percents) !== $therapistCount) {
+                throw ValidationException::withMessages([
+                    'commission_profiles' => ["Profil {$therapistCount} therapist harus memiliki {$therapistCount} bagian komisi."],
+                ]);
+            }
+
+            $scaledPercents = array_map(
+                fn ($percent): int => FixedPoint::parse((string) $percent, FixedPoint::PERCENT_SCALE),
+                $percents,
+            );
+
+            if (array_sum($scaledPercents) !== $commission) {
+                throw ValidationException::withMessages([
+                    'commission_profiles' => ["Total pembagian untuk {$therapistCount} therapist harus sama dengan komisi treatment."],
+                ]);
+            }
+
+            return [
+                'therapist_count' => $therapistCount,
+                'commission_percents' => array_map(
+                    fn (int $percent): string => FixedPoint::format($percent, FixedPoint::PERCENT_SCALE),
+                    $scaledPercents,
+                ),
+            ];
+        });
+
+        if ($profiles->pluck('therapist_count')->unique()->count() !== $profiles->count()) {
+            throw ValidationException::withMessages([
+                'commission_profiles' => ['Setiap jumlah therapist hanya boleh memiliki satu profil pembagian.'],
+            ]);
+        }
+
+        $defaultChanged = FixedPoint::parse((string) $treatment->default_commission_percent, FixedPoint::PERCENT_SCALE) !== $commission;
+
+        DB::transaction(function () use ($id, $commissionPercent, $profiles, $defaultChanged): void {
+            $now = now();
+            DB::table('treatments')->where('id', $id)->update([
+                'default_commission_percent' => $commissionPercent,
+                'updated_at' => $now,
+            ]);
+
+            // Jika komisi total berubah, aturan lama tidak lagi valid. Aturan yang
+            // dikirim bersama perubahan ini disimpan ulang; jumlah therapist lain
+            // otomatis kembali dibagi rata dari komisi total yang baru.
+            if ($defaultChanged) {
+                DB::table('treatment_commission_splits')->where('treatment_id', $id)->delete();
+            }
+
+            foreach ($profiles as $profile) {
+                DB::table('treatment_commission_splits')
+                    ->where('treatment_id', $id)
+                    ->where('therapist_count', $profile['therapist_count'])
+                    ->delete();
+
+                DB::table('treatment_commission_splits')->insert(
+                    collect($profile['commission_percents'])->map(
+                        fn (string $percent, int $index): array => [
+                            'treatment_id' => $id,
+                            'therapist_count' => $profile['therapist_count'],
+                            'therapist_position' => $index + 1,
+                            'commission_percent' => $percent,
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ],
+                    )->all(),
+                );
+            }
+        }, 3);
         $this->logger->log(
             $request,
             'treatment.commission_updated',
             'treatment',
             $id,
             "Memperbarui komisi treatment {$treatment->name}",
-            ['default_commission_percent' => $data['default_commission_percent']],
+            [
+                'default_commission_percent' => $commissionPercent,
+                'commission_profiles' => $profiles->values()->all(),
+            ],
         );
 
         return response()->json(['message' => 'Komisi treatment berhasil diperbarui.']);
@@ -1210,6 +1322,72 @@ class SalonController extends Controller
         ], $status);
     }
 
+    public function storeTherapistRatings(Request $request, int $transaction): JsonResponse
+    {
+        $data = $request->validate([
+            'ratings' => ['required', 'array', 'min:1', 'max:30'],
+            'ratings.*.employee_id' => ['required', 'integer', 'distinct', 'exists:employees,id'],
+            'ratings.*.stars' => ['required', 'integer', 'between:1,5'],
+            'ratings.*.review' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        DB::transaction(function () use ($data, $transaction, $request): void {
+            $sale = DB::table('transactions')->where('id', $transaction)->lockForUpdate()->first();
+            abort_unless($sale && $sale->status === 'paid', 404, 'Transaksi lunas tidak ditemukan.');
+
+            $therapistIds = DB::table('transaction_items as item')
+                ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+                ->where('item.transaction_id', $transaction)
+                ->orderBy('assignment.employee_id')
+                ->pluck('assignment.employee_id')
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->values();
+            abort_if($therapistIds->isEmpty(), 422, 'Transaksi ini tidak memiliki therapist yang dapat dinilai.');
+
+            $submittedIds = collect($data['ratings'])->pluck('employee_id')->map(fn ($id): int => (int) $id)->sort()->values();
+            abort_if(
+                $submittedIds->all() !== $therapistIds->sort()->values()->all(),
+                422,
+                'Penilaian harus diisi untuk setiap therapist pada transaksi ini.',
+            );
+
+            $now = now();
+            DB::table('therapist_ratings')->upsert(
+                collect($data['ratings'])->map(fn (array $rating): array => [
+                    'transaction_id' => $transaction,
+                    'employee_id' => (int) $rating['employee_id'],
+                    // Kolom label dipertahankan agar riwayat rilis awal tetap
+                    // terbaca; nilai sebenarnya menggunakan skala 1--5 bintang.
+                    'rating' => match ((int) $rating['stars']) {
+                        1, 2 => 'poor',
+                        3, 4 => 'good',
+                        5 => 'professional',
+                    },
+                    'stars' => (int) $rating['stars'],
+                    'review' => filled($rating['review'] ?? null) ? trim($rating['review']) : null,
+                    'rated_at' => $now,
+                    'rated_by' => $request->user()?->id,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])->all(),
+                ['transaction_id', 'employee_id'],
+                ['rating', 'stars', 'review', 'rated_at', 'rated_by', 'updated_at'],
+            );
+
+            $this->logger->log(
+                $request,
+                'therapist.rated',
+                'transaction',
+                $transaction,
+                "Mencatat penilaian therapist untuk transaksi {$sale->number}",
+                ['ratings' => $data['ratings']],
+            );
+        }, 3);
+
+        return response()->json(['message' => 'Penilaian therapist berhasil disimpan.']);
+    }
+
     public function invoicePdf(int $transaction): Response
     {
         $invoice = DB::table('transactions as transaction')
@@ -1257,10 +1435,17 @@ class SalonController extends Controller
         $logoDataUri = is_file($logoPath)
             ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
             : null;
+        $salonSettings = DB::table('sale_settings')
+            ->whereIn('key', ['salon_address', 'salon_whatsapp'])
+            ->pluck('value', 'key');
+        $salon = [
+            'address' => $salonSettings->get('salon_address') ?: 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang',
+            'whatsapp' => $salonSettings->get('salon_whatsapp') ?: '081128702019',
+        ];
 
         $invoiceFilename = preg_replace('/[-_\s]+/', '', $invoice->number);
 
-        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri'))
+        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri', 'salon'))
             ->setPaper('a4')
             ->stream($invoiceFilename.'.pdf');
     }
@@ -1317,6 +1502,7 @@ class SalonController extends Controller
     {
         $data = $request->validate([
             'type' => ['required', Rule::in(['income', 'expense'])],
+            'report_group' => ['nullable', Rule::in(['operating', 'capital', 'owner_draw', 'inventory'])],
             'category' => ['required', 'string', 'max:100'],
             'description' => ['required', 'string', 'max:2000'],
             'amount' => ['required', 'integer', 'min:1', 'max:999999999999'],
@@ -1327,6 +1513,7 @@ class SalonController extends Controller
             $now = now();
             $id = DB::table('cash_entries')->insertGetId([
                 'type' => $data['type'],
+                'report_group' => $data['report_group'] ?? 'operating',
                 'category' => trim($data['category']),
                 'description' => trim($data['description']),
                 'amount' => $data['amount'],
@@ -1346,7 +1533,7 @@ class SalonController extends Controller
                 'cash_entry',
                 $id,
                 "Mencatat {$typeLabel}: {$data['category']}",
-                ['type' => $data['type'], 'amount' => $data['amount'], 'entry_date' => $data['entry_date']],
+                ['type' => $data['type'], 'report_group' => $data['report_group'] ?? 'operating', 'amount' => $data['amount'], 'entry_date' => $data['entry_date']],
             );
 
             return $id;

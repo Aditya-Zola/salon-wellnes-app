@@ -6,10 +6,10 @@
         @page { margin: 18mm 16mm; }
         * { box-sizing: border-box; }
         body { color: #2d2926; font-family: DejaVu Sans, sans-serif; font-size: 10px; }
-        .header { padding-bottom: 14px; border-bottom: 2px solid #765039; }
-        .brand-logo { display: block; width: 170px; height: auto; margin: 0 0 8px; }
+        .header { padding-bottom: 14px; border-bottom: 2px solid #765039; text-align: center; }
+        .brand-logo { display: block; width: 225px; height: auto; margin: 0 auto 10px; }
         .brand { margin: 0; color: #765039; font-size: 27px; font-weight: bold; letter-spacing: 1px; }
-        .subtitle { display: none; }
+        .subtitle { margin: 4px 0 0; color: #716862; font-size: 9px; line-height: 1.45; }
         .title { margin: 22px 0 5px; color: #1f1b18; font-size: 17px; }
         .invoice-number { color: #765039; font-size: 11px; font-weight: bold; }
         .meta { width: 100%; margin: 17px 0 20px; border-collapse: collapse; }
@@ -40,7 +40,7 @@
         @else
             <p class="brand">selesa</p>
         @endif
-        <p class="subtitle">SALON · SPA · WELLNESS · NAIL · EYELASH</p>
+        <p class="subtitle">{{ $salon['address'] }}@if($salon['whatsapp'])<br>WhatsApp: {{ $salon['whatsapp'] }}@endif</p>
     </header>
 
     <h1 class="title">NOTA PEMBAYARAN</h1>
@@ -74,6 +74,7 @@
     <table class="summary">
         <tr><td>Subtotal</td><td>Rp {{ number_format($invoice->subtotal, 0, ',', '.') }}</td></tr>
         @if ($invoice->discount_amount > 0)<tr><td>Diskon</td><td>-Rp {{ number_format($invoice->discount_amount, 0, ',', '.') }}</td></tr>@endif
+        @if ($invoice->payment_charge_amount > 0)<tr><td>Charge pembayaran</td><td>Rp {{ number_format($invoice->payment_charge_amount, 0, ',', '.') }}</td></tr>@endif
         <tr class="grand"><td>Total</td><td>Rp {{ number_format($invoice->total, 0, ',', '.') }}</td></tr>
         @if ($invoice->refunded_amount > 0)
             <tr><td>Sudah direfund</td><td>-Rp {{ number_format($invoice->refunded_amount, 0, ',', '.') }}</td></tr>
@@ -84,7 +85,16 @@
     <section class="payments">
         <h3>PEMBAYARAN</h3>
         @foreach ($payments as $payment)
-            <p>{{ $payment->method_name }}@if($payment->reference_number) · {{ $payment->reference_number }}@endif <b>Rp {{ number_format($payment->amount, 0, ',', '.') }}</b></p>
+            <p>
+                {{ $payment->method_name }}
+                @if ($payment->charge_amount > 0)
+                    · Charge {{ rtrim(rtrim(number_format((float) $payment->charge_percent, 4, '.', ''), '0'), '.') }}%
+                @endif
+                @if ($payment->reference_number)
+                    · {{ $payment->reference_number }}
+                @endif
+                <b>Rp {{ number_format($payment->amount, 0, ',', '.') }}</b>
+            </p>
         @endforeach
         @if ($invoice->change_amount > 0)<p>Kembalian <b>Rp {{ number_format($invoice->change_amount, 0, ',', '.') }}</b></p>@endif
     </section>

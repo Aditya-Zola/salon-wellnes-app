@@ -76,6 +76,8 @@ class ProductSpreadsheetImportService
             $stock = $this->fixedPointValue($this->value($row, $headers, 'stock'), 'Stok awal', $rowErrors);
             $minimumStock = $this->fixedPointValue($this->value($row, $headers, 'minimum_stock'), 'Stok minimum', $rowErrors);
             $sellingPrice = $this->priceValue($this->value($row, $headers, 'selling_price'), $rowErrors);
+            $costPriceRaw = $this->value($row, $headers, 'cost_price');
+            $costPrice = $costPriceRaw === '' ? 0 : $this->priceValue($costPriceRaw, $rowErrors, 'HPP');
             $isActive = $this->activeValue($this->value($row, $headers, 'status'), $rowErrors);
 
             if ($code !== '' && (isset($existingCodes[$code]) || isset($seenCodes[$code]))) {
@@ -87,6 +89,7 @@ class ProductSpreadsheetImportService
                 if (count($issues) < 50) {
                     $issues[] = ['row' => $rowNumber, 'message' => implode(' ', $rowErrors)];
                 }
+
                 continue;
             }
 
@@ -99,6 +102,7 @@ class ProductSpreadsheetImportService
                 'stock' => $stock,
                 'minimum_stock' => $minimumStock,
                 'selling_price' => $sellingPrice,
+                'cost_price' => $costPrice,
                 'is_active' => $isActive,
                 'description' => $description !== '' ? $description : null,
             ];
@@ -123,6 +127,7 @@ class ProductSpreadsheetImportService
                     'current_stock' => FixedPoint::format($record['stock'], FixedPoint::STOCK_SCALE),
                     'minimum_stock' => FixedPoint::format($record['minimum_stock'], FixedPoint::STOCK_SCALE),
                     'selling_price' => $record['selling_price'],
+                    'cost_price' => $record['cost_price'],
                     'is_active' => $record['is_active'],
                     'description' => $record['description'],
                     'created_at' => $now,
@@ -137,6 +142,7 @@ class ProductSpreadsheetImportService
                         'quantity' => FixedPoint::format($record['stock'], FixedPoint::STOCK_SCALE),
                         'stock_before' => FixedPoint::format(0, FixedPoint::STOCK_SCALE),
                         'stock_after' => FixedPoint::format($record['stock'], FixedPoint::STOCK_SCALE),
+                        'unit_cost' => $record['cost_price'],
                         'source_type' => 'opening_stock_import',
                         'reference' => 'IMPORT-'.$record['code'],
                         'notes' => 'Stok awal dari import Excel',
@@ -344,6 +350,7 @@ class ProductSpreadsheetImportService
             }
             if ($part === '..') {
                 array_pop($parts);
+
                 continue;
             }
             $parts[] = $part;
@@ -400,6 +407,7 @@ class ProductSpreadsheetImportService
             'stok', 'stok_awal', 'current_stock', 'opening_stock' => 'stock',
             'stok_minimum', 'minimum_stok', 'batas_minimum', 'minimum_stock' => 'minimum_stock',
             'harga', 'harga_jual', 'selling_price' => 'selling_price',
+            'hpp', 'harga_modal', 'cost_price', 'harga_pokok' => 'cost_price',
             'status', 'aktif', 'is_active' => 'status',
             'deskripsi', 'description', 'catatan' => 'description',
             default => null,
@@ -450,18 +458,18 @@ class ProductSpreadsheetImportService
     }
 
     /** @param array<int, string> $errors */
-    private function priceValue(string $value, array &$errors): ?int
+    private function priceValue(string $value, array &$errors, string $label = 'Harga jual'): ?int
     {
         $normalized = $this->normalizeDecimal((string) preg_replace('/^\s*rp\.?\s*/i', '', $value));
         if ($normalized === null || preg_match('/^\d+(?:\.0+)?$/', $normalized) !== 1) {
-            $errors[] = 'Harga jual harus berupa bilangan bulat positif.';
+            $errors[] = "{$label} harus berupa bilangan bulat positif.";
 
             return null;
         }
 
         $price = (int) $normalized;
         if ($price > 999999999999) {
-            $errors[] = 'Harga jual terlalu besar.';
+            $errors[] = "{$label} terlalu besar.";
 
             return null;
         }

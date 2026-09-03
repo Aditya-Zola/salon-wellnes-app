@@ -2,8 +2,8 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
 use App\Models\Employee;
+use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +21,14 @@ class DatabaseSeeder extends Seeder
         DB::table('sale_settings')->updateOrInsert(
             ['key' => 'invoice_prefix'],
             ['value' => 'INV', 'created_at' => now(), 'updated_at' => now()],
+        );
+        DB::table('sale_settings')->updateOrInsert(
+            ['key' => 'salon_address'],
+            ['value' => 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang', 'created_at' => now(), 'updated_at' => now()],
+        );
+        DB::table('sale_settings')->updateOrInsert(
+            ['key' => 'salon_whatsapp'],
+            ['value' => '081128702019', 'created_at' => now(), 'updated_at' => now()],
         );
 
         $accounts = [
