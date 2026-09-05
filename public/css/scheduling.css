@@ -33,12 +33,17 @@
 .therapist-attendance-head label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
 .therapist-attendance-head input { min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); font: inherit; font-size: 12px; }
 .therapist-attendance-table { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.therapist-attendance-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 16px; min-height: 58px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.therapist-attendance-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px 170px; align-items: center; gap: 16px; min-height: 58px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
 .therapist-attendance-row:last-child { border-bottom: 0; }
 .therapist-attendance-row > span b, .therapist-attendance-row > span small { display: block; }
 .therapist-attendance-row > span b { font-size: 12px; }
 .therapist-attendance-row > span small { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .therapist-attendance-row select { min-height: 35px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; font: inherit; font-size: 12px; }
+.therapist-overtime-field { display: flex; align-items: center; min-height: 35px; overflow: hidden; border: 1px solid #d8c9be; border-radius: 7px; background: #fffaf4; transition: opacity .16s ease, visibility .16s ease; }
+.therapist-overtime-field > span { padding: 0 9px; color: #8b5d35; font-size: 11px; font-weight: 750; }
+.therapist-overtime-field input { width: 100%; min-width: 0; min-height: 33px; padding: 6px 9px; border: 0; border-left: 1px solid #e3d5ca; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 12px; }
+.therapist-overtime-field:focus-within { border-color: #a66d3f; box-shadow: 0 0 0 3px rgb(166 109 63 / .12); }
+.therapist-overtime-field.is-hidden { visibility: hidden; pointer-events: none; }
 .therapist-attendance-table-head { min-height: 38px; padding: 7px 14px; background: #faf9f8; color: var(--muted); font-size: 10px; font-weight: 700; }
 .therapist-attendance-page form > footer { display: flex; justify-content: flex-end; padding: 16px 0 0; }
 .therapist-attendance-modal .modal-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
@@ -134,7 +139,7 @@
     .recipe-product { grid-template-columns: 30px minmax(0, 1fr); gap: 8px; padding: 10px; }
     .recipe-modal .recipe-product-quantity { grid-column: 2; }
     .therapist-attendance-head { align-items: flex-start; flex-direction: column; }
-    .therapist-attendance-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 10px; }
+    .therapist-attendance-row { grid-template-columns: minmax(0, 1fr) 120px 145px; gap: 10px; }
     .recipe-modal footer { padding: 14px 18px 18px; }
     #queue-short .queue-row { grid-template-columns: 78px 46px minmax(0, 1fr) 16px; gap: 8px; }
     #queue-short .queue-status { display: none; }

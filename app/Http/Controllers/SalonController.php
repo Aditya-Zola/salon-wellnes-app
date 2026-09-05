@@ -12,6 +12,7 @@ use App\Http\Requests\UpdateReservationStatusRequest;
 use App\Http\Services\ActivityLogger;
 use App\Http\Services\CheckoutService;
 use App\Http\Services\ProductSpreadsheetImportService;
+use App\Http\Services\RemunerationReportService;
 use App\Http\Services\ReservationService;
 use App\Http\Services\SalesReturnService;
 use App\Http\Services\SalonSnapshotService;
@@ -38,6 +39,7 @@ class SalonController extends Controller
         private readonly SalonSnapshotService $snapshots,
         private readonly SpreadsheetExportService $spreadsheets,
         private readonly ProductSpreadsheetImportService $productImports,
+        private readonly RemunerationReportService $remuneration,
         private readonly ActivityLogger $logger,
     ) {}
 
@@ -85,6 +87,467 @@ class SalonController extends Controller
             $to,
             $asOf,
         ));
+    }
+
+    public function remunerationReport(Request $request): JsonResponse
+    {
+        [$from, $to] = $this->remunerationRange($request);
+
+        return response()->json($this->remuneration->report($request->user(), $from, $to));
+    }
+
+    public function exportRemuneration(Request $request): StreamedResponse
+    {
+        [$from, $to] = $this->remunerationRange($request);
+        $report = $this->remuneration->report($request->user(), $from, $to);
+
+        // The workbook follows the salon's manual recap: one monthly table for
+        // commission/overtime, one income table, and one stock in-out table.
+        // The selected range controls the source data; the commission grid still
+        // shows the complete payroll month so it can be completed manually.
+        $calendarStart = $to->startOfMonth();
+        $calendarEnd = $to->endOfMonth();
+        $dates = [];
+        for ($date = $calendarStart; $date->lessThanOrEqualTo($calendarEnd); $date = $date->addDay()) {
+            $dates[] = $date->toDateString();
+        }
+
+        $commissionByEmployeeAndDate = collect($report['commission_details'])
+            ->groupBy(fn (array $item): string => $item['employee_id'].'|'.$item['date']);
+        $overtimeByEmployeeAndDate = collect($report['attendance'])
+            ->where('status', 'overtime')
+            ->groupBy(fn (array $item): string => $item['employee_id'].'|'.$item['date']);
+        $commissionHeaders = ['NO', 'NAMA TERAPIS'];
+        foreach ($dates as $date) {
+            $day = CarbonImmutable::parse($date)->format('d');
+            $commissionHeaders[] = $day.' KOMISI';
+            $commissionHeaders[] = $day.' LEMBUR';
+        }
+        $commissionHeaders = [...$commissionHeaders, 'JUMLAH KOMISI', 'JUMLAH LEMBUR', 'JUMLAH ALL'];
+        $commissionRows = collect($report['employees'])->values()->map(function (array $employee, int $index) use ($dates, $commissionByEmployeeAndDate, $overtimeByEmployeeAndDate): array {
+            $dailyValues = [];
+            $commission = 0;
+            foreach ($dates as $date) {
+                $dailyCommission = (int) $commissionByEmployeeAndDate
+                    ->get($employee['employee_id'].'|'.$date, collect())
+                    ->sum('commission');
+                $dailyValues[] = $dailyCommission;
+                $dailyValues[] = (int) $overtimeByEmployeeAndDate
+                    ->get($employee['employee_id'].'|'.$date, collect())
+                    ->sum('overtime_amount');
+                $commission += $dailyCommission;
+            }
+            $overtime = (int) $employee['overtime'];
+
+            return [
+                $index + 1,
+                $employee['employee_name'],
+                ...$dailyValues,
+                $commission,
+                $overtime,
+                $commission + $overtime,
+            ];
+        })->all();
+
+        $incomeHeaders = [
+            'NO', 'NAMA', 'POSISI', 'JHK', 'GP', 'PENDAPATAN',
+            'LEMBUR/U.MAKAN HARI', 'LEMBUR/U.MAKAN JML', 'KOMISI',
+            'BONUS TARGET', 'BONUS SERVICE/KEHADIRAN',
+            'TUNJANGAN KEHADIRAN', 'TUNJANGAN LAIN2', 'PENDAPATAN KOTOR',
+            'MANGKIR HARI', 'JML MANGKIR',
+            'KETERLAMBATAN MENIT', 'JML MENIT',
+            'KASBON', 'POT. LAIN2', 'JML POTONGAN', 'PENDAPATAN BERSIH',
+        ];
+        $incomeRows = collect($report['employees'])->values()->map(fn (array $employee, int $index): array => [
+            $index + 1,
+            $employee['employee_name'],
+            $employee['position'] ?: '-',
+            $employee['paid_work_days'],
+            $employee['daily_rate'],
+            $employee['base_salary'],
+            $employee['overtime_days'],
+            $employee['overtime'] + $employee['meal_allowance'],
+            $employee['commission'],
+            $employee['target_bonus'],
+            $employee['service_bonus'] + $employee['attendance_bonus'] + $employee['bonus'],
+            $employee['attendance_allowance'],
+            $employee['other_allowance'] + $employee['tip_deposit'],
+            $employee['gross_income'],
+            $employee['absence_days'],
+            $employee['absence_deduction'],
+            $employee['late_minutes'],
+            $employee['late_deduction'],
+            $employee['cash_advance'],
+            $employee['other_deduction'],
+            $employee['total_deduction'],
+            $employee['net_salary'],
+        ])->all();
+
+        $stockHeaders = [
+            'NO', 'PRODUK', 'TGL STOK MASUK', 'JML PROD. MASUK', 'SATUAN',
+            'BERAT GROSS PROD. MASUK', 'SATUAN', 'DOSIS PER CUST', 'SATUAN',
+            'JML STOK DOSIS PER CUST', 'PAX', 'TGL STOK KELUAR', 'JAM STOK KELUAR',
+            'STOK PROD. KELUAR PER CUST', 'PAX', 'JML KELUAR', 'SATUAN',
+            'SISA STOK DOSIS', 'PAX', 'SISA STOK PROD', 'SATUAN', 'CUSTOMER', 'TERAPIS',
+        ];
+        $stockRows = collect($report['stock_table_rows'])->map(fn (array $row): array => [
+            $row['number'],
+            $row['product'],
+            $row['incoming_date'],
+            $row['incoming_quantity'],
+            $row['purchase_unit'],
+            $row['gross_quantity'],
+            $row['gross_unit'],
+            $row['dose'],
+            $row['dose_unit'],
+            $row['capacity'],
+            $row['capacity'] !== null ? 'PAX' : null,
+            $row['outgoing_date'],
+            $row['outgoing_time'],
+            $row['customers_served'],
+            $row['customers_served'] !== null ? 'PAX' : null,
+            $row['outgoing_quantity'],
+            $row['outgoing_unit'],
+            $row['remaining_capacity'],
+            $row['remaining_capacity'] !== null ? 'PAX' : null,
+            $row['stock_after'],
+            $row['stock_unit'],
+            $row['customer'],
+            $row['therapists'],
+        ])->all();
+
+        // Slip is intentionally produced once for all saved remuneration data.
+        // One workbook contains one worksheet per employee, so the owner does
+        // not need to open a separate PDF or download one file per therapist.
+        $exportedBy = $request->user()?->name ?: 'Manajer / Pemilik';
+        $slipRows = collect($report['employees'])
+            ->filter(fn (array $employee): bool => (bool) ($employee['has_payroll_input'] ?? false))
+            ->values()
+            ->map(fn (array $employee): array => [
+                'employee_name' => $employee['employee_name'],
+                'position' => $employee['position'] ?: 'Karyawan',
+                'period_label' => $calendarStart->translatedFormat('F Y'),
+                'period_code' => $calendarStart->translatedFormat('M y'),
+                'printed_date' => now(config('app.timezone'))->translatedFormat('d F Y'),
+                'approved_by' => $exportedBy,
+                'paid_work_days' => $employee['paid_work_days'],
+                'absence_days' => $employee['absence_days'],
+                'late_minutes' => $employee['late_minutes'],
+                'daily_rate' => $employee['daily_rate'],
+                'base_salary' => $employee['base_salary'],
+                'commission' => $employee['commission'],
+                'overtime_days' => $employee['overtime_days'],
+                'overtime' => $employee['overtime'],
+                'meal_allowance' => $employee['meal_allowance'],
+                'total_allowance' => $employee['total_allowance'],
+                'total_bonus' => $employee['target_bonus'] + $employee['service_bonus'] + $employee['attendance_bonus'] + $employee['bonus'],
+                'tip_deposit' => $employee['tip_deposit'],
+                'gross_income' => $employee['gross_income'],
+                'absence_deduction' => $employee['absence_deduction'],
+                'late_rate_per_minute' => $employee['late_rate_per_minute'],
+                'late_deduction' => $employee['late_deduction'],
+                'cash_advance' => $employee['cash_advance'],
+                'other_deduction' => $employee['other_deduction'],
+                'total_deduction' => $employee['total_deduction'],
+                'net_salary' => $employee['net_salary'],
+            ])->all();
+
+        $sheets = [
+            [
+                'name' => 'REKAP KOM-LEM',
+                'headers' => $commissionHeaders,
+                'rows' => $commissionRows,
+                'currency_columns' => range(2, count($commissionHeaders) - 1),
+                'table_only' => true,
+            ],
+            [
+                'name' => 'REKAP PENDAPATAN',
+                'headers' => $incomeHeaders,
+                'rows' => $incomeRows,
+                'currency_columns' => [4, 5, 7, 8, 9, 10, 11, 12, 13, 15, 17, 18, 19, 20, 21],
+                'table_only' => true,
+            ],
+            [
+                'name' => 'REKAP STOK IN-OUT',
+                'headers' => $stockHeaders,
+                'rows' => $stockRows,
+                'table_only' => true,
+            ],
+            [
+                'name' => 'SLIP GAJI',
+                'rows' => $slipRows,
+            ],
+        ];
+
+        return response()->streamDownload(function () use ($sheets): void {
+            echo $this->spreadsheets->makeRemunerationTemplateWorkbook($sheets);
+        }, 'rekap-remunerasi-'.$from->format('Ymd').'-'.$to->format('Ymd').'.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function legacyTableExportRemuneration(Request $request): StreamedResponse
+    {
+        [$from, $to] = $this->remunerationRange($request);
+        $report = $this->remuneration->report($request->user(), $from, $to);
+        $periodLabel = $from->translatedFormat('d M Y').' - '.$to->translatedFormat('d M Y');
+        $dates = [];
+        for ($date = $from; $date->lessThanOrEqualTo($to); $date = $date->addDay()) {
+            $dates[] = $date->toDateString();
+        }
+        $commissionByEmployeeAndDate = collect($report['commission_details'])
+            ->groupBy(fn (array $item): string => $item['employee_id'].'|'.$item['date']);
+        $commissionHeaders = ['NO', 'NAMA TERAPIS'];
+        foreach ($dates as $date) {
+            $commissionHeaders[] = CarbonImmutable::parse($date)->format('d').' KOMISI';
+        }
+        $commissionHeaders = [...$commissionHeaders, 'JUMLAH KOMISI', 'LEMBUR INPUT', 'JUMLAH KOM-LEM'];
+        $commissionRows = collect($report['employees'])->values()->map(function (array $employee, int $index) use ($dates, $commissionByEmployeeAndDate): array {
+            $daily = collect($dates)->map(fn (string $date): int => (int) $commissionByEmployeeAndDate
+                ->get($employee['employee_id'].'|'.$date, collect())
+                ->sum('commission'))
+                ->all();
+            $commission = array_sum($daily);
+            $overtime = (int) $employee['overtime'];
+
+            return [$index + 1, $employee['employee_name'], ...$daily, $commission, $overtime, $commission + $overtime];
+        })->all();
+        $incomeHeaders = [
+            'NO', 'NAMA', 'POSISI', 'JHK', 'GP / HARI', 'PENDAPATAN GP',
+            'LEMBUR / U. MAKAN', 'KOMISI', 'BONUS TARGET', 'BONUS SERVICE', 'BONUS KEHADIRAN',
+            'BONUS LAIN', 'TUNJANGAN KEHADIRAN', 'TUNJANGAN LAIN', 'TITIPAN TIP',
+            'PENDAPATAN KOTOR', 'MANGKIR (HARI)', 'POT. MANGKIR', 'TELAT (MENIT)',
+            'POT. TELAT', 'KASBON', 'POT. LAIN', 'JML POTONGAN', 'PENDAPATAN BERSIH',
+        ];
+        $incomeRows = collect($report['employees'])->values()->map(fn (array $employee, int $index): array => [
+            $index + 1,
+            $employee['employee_name'],
+            $employee['position'] ?: '-',
+            $employee['paid_work_days'],
+            $employee['daily_rate'],
+            $employee['base_salary'],
+            $employee['overtime'] + $employee['meal_allowance'],
+            $employee['commission'],
+            $employee['target_bonus'],
+            $employee['service_bonus'],
+            $employee['attendance_bonus'],
+            $employee['bonus'],
+            $employee['attendance_allowance'],
+            $employee['other_allowance'],
+            $employee['tip_deposit'],
+            $employee['gross_income'],
+            $employee['absence_days'],
+            $employee['absence_deduction'],
+            $employee['late_minutes'],
+            $employee['late_deduction'],
+            $employee['cash_advance'],
+            $employee['other_deduction'],
+            $employee['total_deduction'],
+            $employee['net_salary'],
+        ])->all();
+        $stockRows = collect($report['stock_movements'])->values()->map(fn (array $movement, int $index): array => [
+            $index + 1,
+            $movement['product_name'],
+            in_array($movement['type'], ['in', 'adjustment'], true) ? $movement['date'] : '',
+            in_array($movement['type'], ['in', 'adjustment'], true) ? $movement['quantity'] : '',
+            $movement['unit'],
+            $movement['date'],
+            $movement['time'],
+            $movement['type'] === 'out' ? $movement['quantity'] : '',
+            $movement['unit'],
+            $movement['stock_after'],
+            $movement['unit'],
+            $movement['customer_name'] ?: '-',
+            $movement['therapists'] ?: '-',
+            $movement['reference'] ?: '-',
+            $movement['notes'] ?: '-',
+        ])->all();
+        $sheets = [
+            [
+                'name' => 'REKAP KOM-LEM',
+                'title' => 'KOMISI & LEMBUR - '.$periodLabel,
+                'headers' => $commissionHeaders,
+                'rows' => $commissionRows,
+                'currency_columns' => range(2, count($commissionHeaders) - 1),
+            ],
+            [
+                'name' => 'REKAP PENDAPATAN',
+                'title' => 'REKAP PENDAPATAN - '.$periodLabel,
+                'headers' => $incomeHeaders,
+                'rows' => $incomeRows,
+                'currency_columns' => [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23],
+            ],
+            [
+                'name' => 'REKAP STOK IN-OUT',
+                'title' => 'REKAP STOK IN-OUT - '.$periodLabel,
+                'headers' => ['NO', 'PRODUK', 'TGL STOK MASUK', 'JML MASUK', 'SATUAN', 'TGL STOK KELUAR', 'JAM KELUAR', 'STOK KELUAR', 'SATUAN', 'SISA STOK', 'SATUAN', 'CUSTOMER', 'TERAPIS', 'REFERENSI', 'CATATAN'],
+                'rows' => $stockRows,
+            ],
+        ];
+        foreach ($report['employees'] as $employee) {
+            if (! $employee['has_payroll_input']) {
+                continue;
+            }
+            $sheets[] = [
+                'name' => 'SLIP '.mb_strtoupper(mb_substr($employee['employee_name'], 0, 24)),
+                'title' => 'SLIP PENDAPATAN - '.$employee['employee_name'].' - '.$periodLabel,
+                'headers' => ['KOMPONEN', 'NILAI'],
+                'rows' => [
+                    ['Gaji pokok', $employee['base_salary']],
+                    ['Komisi', $employee['commission']],
+                    ['Lembur + uang makan', $employee['overtime'] + $employee['meal_allowance']],
+                    ['Tunjangan', $employee['total_allowance']],
+                    ['Bonus', $employee['total_bonus']],
+                    ['Titipan TIP', $employee['tip_deposit']],
+                    ['Pendapatan kotor', $employee['gross_income']],
+                    ['Potongan mangkir', -$employee['absence_deduction']],
+                    ['Potongan keterlambatan', -$employee['late_deduction']],
+                    ['Kasbon', -$employee['cash_advance']],
+                    ['Potongan lain', -$employee['other_deduction']],
+                    ['TOTAL GAJI DITERIMA', $employee['net_salary']],
+                ],
+                'currency_columns' => [1],
+            ];
+        }
+
+        return response()->streamDownload(function () use ($sheets): void {
+            echo $this->spreadsheets->makeWorkbook($sheets);
+        }, 'rekap-remunerasi-'.$from->format('Ymd').'-'.$to->format('Ymd').'.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function legacyExportRemuneration(Request $request): StreamedResponse
+    {
+        [$from, $to] = $this->remunerationRange($request);
+        $report = $this->remuneration->report($request->user(), $from, $to);
+        $periodLabel = $from->translatedFormat('d M Y').' - '.$to->translatedFormat('d M Y');
+
+        return response()->streamDownload(function () use ($report, $periodLabel): void {
+            echo $this->spreadsheets->makeWorkbook([
+                [
+                    'name' => 'REKAP KARYAWAN',
+                    'title' => 'REKAP REMUNERASI · '.$periodLabel,
+                    'headers' => ['KARYAWAN', 'JABATAN', 'TREATMENT', 'KOMISI OTOMATIS', 'GAJI POKOK INPUT', 'BONUS INPUT', 'LEMBUR INPUT', 'TERLAMBAT (MENIT)', 'POTONGAN TERLAMBAT', 'POTONGAN LAIN', 'GAJI INPUT', 'STATUS'],
+                    'rows' => collect($report['employees'])->map(fn (array $employee): array => [
+                        $employee['employee_name'],
+                        $employee['position'] ?: '-',
+                        $employee['treatment_count'],
+                        $employee['commission'],
+                        $employee['base_salary'],
+                        $employee['bonus'],
+                        $employee['overtime'],
+                        $employee['late_minutes'],
+                        $employee['late_deduction'],
+                        $employee['other_deduction'],
+                        $employee['net_salary'],
+                        match ($employee['status']) {
+                            'ready' => 'Siap Excel',
+                            'completed' => 'Selesai',
+                            default => 'Belum dicek',
+                        },
+                    ])->all(),
+                    'currency_columns' => [3, 4, 5, 6, 8, 9, 10],
+                ],
+                [
+                    'name' => 'KOMISI',
+                    'title' => 'RINCIAN KOMISI · '.$periodLabel,
+                    'headers' => ['TANGGAL', 'KARYAWAN', 'INVOICE', 'PELANGGAN', 'TREATMENT', 'QTY', 'KOMISI'],
+                    'rows' => collect($report['commission_details'])->map(fn (array $item): array => [
+                        $item['date'], $item['employee_name'], $item['transaction_number'], $item['customer_name'], $item['treatment_name'], $item['quantity'], $item['commission'],
+                    ])->all(),
+                    'currency_columns' => [6],
+                ],
+                [
+                    'name' => 'KEHADIRAN',
+                    'title' => 'CATATAN KEHADIRAN · '.$periodLabel,
+                    'headers' => ['TANGGAL', 'KARYAWAN', 'STATUS', 'CATATAN'],
+                    'rows' => collect($report['attendance'])->map(fn (array $item): array => [
+                        $item['date'], $item['employee_name'], $item['status'] === 'off' ? 'Libur' : 'Masuk', $item['notes'] ?: '-',
+                    ])->all(),
+                ],
+                [
+                    'name' => 'STOK IN OUT',
+                    'title' => 'REKAP STOK MASUK-KELUAR · '.$periodLabel,
+                    'headers' => ['TANGGAL', 'ARUS', 'PRODUK', 'JUMLAH', 'SATUAN', 'REFERENSI', 'CATATAN'],
+                    'rows' => collect($report['stock_movements'])->map(fn (array $item): array => [
+                        $item['date'], $item['type'] === 'in' ? 'Masuk' : 'Keluar', $item['product_name'], $item['quantity'], $item['unit'], $item['reference'] ?: '-', $item['notes'] ?: '-',
+                    ])->all(),
+                ],
+                [
+                    'name' => 'PENDAPATAN',
+                    'title' => 'REKAP PENDAPATAN · '.$periodLabel,
+                    'headers' => ['TANGGAL', 'JENIS', 'NOMOR', 'PELANGGAN', 'NOMINAL'],
+                    'rows' => collect($report['sales'])->map(fn (array $item): array => [
+                        $item['date'], $item['type'], $item['number'], $item['customer_name'], $item['amount'],
+                    ])->all(),
+                    'currency_columns' => [4],
+                ],
+            ]);
+        }, 'rekap-remunerasi-'.$from->format('Ymd').'-'.$to->format('Ymd').'.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function legacyUpdateRemunerationStatus(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'from' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'to' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'status' => ['required', Rule::in(['pending', 'ready', 'completed'])],
+        ]);
+        [$from, $to] = $this->remunerationRange($request);
+        $report = $this->remuneration->report($request->user(), $from, $to);
+        $employee = collect($report['employees'])->firstWhere('employee_id', (int) $data['employee_id']);
+        abort_unless($employee, 422, 'Karyawan tidak aktif atau tidak ditemukan.');
+
+        $now = now();
+        DB::table('remuneration_period_checks')->updateOrInsert(
+            [
+                'employee_id' => (int) $data['employee_id'],
+                'period_start' => $from->toDateString(),
+                'period_end' => $to->toDateString(),
+            ],
+            [
+                'status' => $data['status'],
+                'snapshot' => $data['status'] === 'completed'
+                    ? json_encode(['period' => $report['period'], 'employee' => $employee], JSON_THROW_ON_ERROR)
+                    : null,
+                'status_updated_by' => $request->user()->id,
+                'status_updated_at' => $now,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ],
+        );
+        $this->logger->log(
+            $request,
+            'remuneration.status_updated',
+            'employee',
+            (int) $data['employee_id'],
+            'Memperbarui status rekap remunerasi '.$employee['employee_name'],
+            ['from' => $from->toDateString(), 'to' => $to->toDateString(), 'status' => $data['status']],
+        );
+
+        return response()->json(['message' => 'Status rekap remunerasi diperbarui.']);
+    }
+
+    public function updateRemunerationSchedule(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'payday_day' => ['required', 'integer', 'min:1', 'max:31'],
+            'cutoff_day' => ['required', 'integer', 'min:1', 'max:31'],
+        ]);
+        $now = now();
+        foreach (['remuneration_payday_day' => $data['payday_day'], 'remuneration_cutoff_day' => $data['cutoff_day']] as $key => $value) {
+            DB::table('sale_settings')->updateOrInsert(
+                ['key' => $key],
+                ['value' => (string) $value, 'updated_at' => $now, 'created_at' => $now],
+            );
+        }
+        $this->logger->log($request, 'remuneration.schedule_updated', 'sale_setting', null, 'Memperbarui penanda tanggal remunerasi', $data);
+
+        return response()->json(['message' => 'Tanggal gajian dan cutoff disimpan.']);
     }
 
     public function salesPage(Request $request): JsonResponse
@@ -520,6 +983,7 @@ class SalonController extends Controller
                 'employee.name',
                 'employee.specialty',
                 'attendance.status',
+                'attendance.overtime_amount',
                 'attendance.notes',
             ])
             ->map(fn (object $employee): array => [
@@ -529,6 +993,7 @@ class SalonController extends Controller
                 // Belum diatur berarti dianggap masuk, sehingga tidak mengubah
                 // alur reservasi yang sudah berjalan.
                 'status' => $employee->status ?: 'present',
+                'overtime_amount' => (int) ($employee->overtime_amount ?? 0),
                 'notes' => $employee->notes,
             ])
             ->values();
@@ -557,7 +1022,7 @@ class SalonController extends Controller
             'date' => $data['date'],
             'month' => $month,
             'therapists' => $attendance,
-            'present' => $attendance->where('status', 'present')->values(),
+            'present' => $attendance->whereIn('status', ['present', 'overtime'])->values(),
             'off' => $attendance->where('status', 'off')->values(),
             'off_by_date' => $offByDate,
         ]);
@@ -567,7 +1032,8 @@ class SalonController extends Controller
     {
         $data = $request->validate([
             'date' => ['required', 'date_format:Y-m-d'],
-            'status' => ['required', Rule::in(['present', 'off'])],
+            'status' => ['required', Rule::in(['present', 'off', 'overtime'])],
+            'overtime_amount' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
         $therapist = DB::table('employees')
@@ -594,6 +1060,7 @@ class SalonController extends Controller
             ['employee_id' => $employee, 'attendance_date' => $data['date']],
             [
                 'status' => $data['status'],
+                'overtime_amount' => $data['status'] === 'overtime' ? (int) ($data['overtime_amount'] ?? 0) : 0,
                 'notes' => ($data['notes'] ?? null) ? trim($data['notes']) : null,
                 'updated_by' => $request->user()?->id,
                 'updated_at' => $now,
@@ -605,8 +1072,12 @@ class SalonController extends Controller
             'therapist.attendance_updated',
             'employee',
             $employee,
-            "Menandai {$therapist->name} sebagai ".($data['status'] === 'off' ? 'libur' : 'masuk'),
-            ['date' => $data['date'], 'status' => $data['status']],
+            "Menandai {$therapist->name} sebagai ".match ($data['status']) {
+                'off' => 'libur',
+                'overtime' => 'lembur',
+                default => 'masuk',
+            },
+            ['date' => $data['date'], 'status' => $data['status'], 'overtime_amount' => (int) ($data['overtime_amount'] ?? 0)],
         );
 
         return response()->json(['message' => 'Status kehadiran therapist diperbarui.']);
@@ -1547,6 +2018,156 @@ class SalonController extends Controller
 
     public function storePayroll(Request $request): JsonResponse
     {
+        $data = $this->validatedPayrollInputs($request, true);
+
+        $id = DB::transaction(function () use ($data, $request): int {
+            $employee = DB::table('employees')
+                ->where('id', $data['employee_id'])
+                ->where('active', true)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($employee, 422, 'Karyawan tidak aktif atau tidak ditemukan.');
+
+            if (DB::table('payrolls')
+                ->where('employee_id', $employee->id)
+                ->where('period', $data['period'])
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'employee_id' => ['Penggajian karyawan ini untuk periode tersebut sudah dibuat.'],
+                ]);
+            }
+
+            $amounts = $this->resolvedPayrollAmounts(
+                $data,
+                null,
+                $this->payrollCommission((int) $employee->id, $data['period']),
+            );
+            $now = now();
+            $id = DB::table('payrolls')->insertGetId([
+                'employee_id' => $employee->id,
+                'period' => $data['period'],
+                'employee_name' => $employee->name,
+                'position' => $employee->position,
+                ...$amounts,
+                'status' => 'draft',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $this->logger->log(
+                $request,
+                'payroll.created',
+                'payroll',
+                $id,
+                "Membuat data remunerasi {$employee->name} periode {$data['period']}",
+                ['employee_id' => (int) $employee->id, 'period' => $data['period']],
+            );
+
+            return $id;
+        }, 3);
+
+        return response()->json([
+            'message' => 'Data remunerasi berhasil ditambahkan.',
+            'id' => $id,
+        ], 201);
+    }
+
+    public function updatePayroll(Request $request, int $id): JsonResponse
+    {
+        $data = $this->validatedPayrollInputs($request, false);
+
+        DB::transaction(function () use ($id, $data, $request): void {
+            $payroll = DB::table('payrolls')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($payroll, 404, 'Data penggajian tidak ditemukan.');
+            abort_if($payroll->status !== 'draft', 422, 'Penggajian yang sudah difinalisasi tidak dapat diubah.');
+
+            $amounts = $this->resolvedPayrollAmounts(
+                $data,
+                $payroll,
+                $this->payrollCommission((int) $payroll->employee_id, $payroll->period),
+            );
+            DB::table('payrolls')->where('id', $id)->update([
+                ...$amounts,
+                'updated_at' => now(),
+            ]);
+            $this->logger->log($request, 'payroll.updated', 'payroll', $id, 'Memperbarui komponen remunerasi pegawai');
+        }, 3);
+
+        return response()->json(['message' => 'Data remunerasi berhasil diperbarui.']);
+    }
+
+    public function payrollSlipPdf(Request $request, int $id): Response
+    {
+        $payroll = DB::table('payrolls as payroll')
+            ->join('employees as employee', 'employee.id', '=', 'payroll.employee_id')
+            ->where('payroll.id', $id)
+            ->first(['payroll.*', 'employee.name as current_employee_name', 'employee.position as current_position']);
+        abort_unless($payroll, 404, 'Data penggajian tidak ditemukan.');
+        $start = CarbonImmutable::createFromFormat('!Y-m', $payroll->period)->startOfMonth();
+        $end = $start->endOfMonth();
+        $treatmentCount = (float) DB::table('reservation_item_staff as assignment')
+            ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
+            ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
+            ->join('transactions as transaction', 'transaction.reservation_id', '=', 'reservation.id')
+            ->join('transaction_items as transactionItem', function ($join): void {
+                $join->on('transactionItem.transaction_id', '=', 'transaction.id')
+                    ->on('transactionItem.reservation_item_id', '=', 'item.id');
+            })
+            ->where('assignment.employee_id', $payroll->employee_id)
+            ->where('transaction.status', 'paid')
+            ->whereBetween('transaction.transacted_at', [$start->startOfDay(), $end->endOfDay()])
+            ->sum('transactionItem.quantity');
+        $amount = fn (string $field): int => (int) ($payroll->{$field} ?? 0);
+        $decimal = fn (string $field): float => (float) ($payroll->{$field} ?? 0);
+        $totalBonus = $amount('bonus') + $amount('target_bonus') + $amount('service_bonus') + $amount('attendance_bonus');
+        $totalAllowance = $amount('meal_allowance') + $amount('attendance_allowance') + $amount('other_allowance');
+        $grossIncome = $amount('base_salary') + $amount('commission') + $amount('overtime') + $totalBonus + $totalAllowance + $amount('tip_deposit');
+        $totalDeduction = $amount('absence_deduction') + $amount('late_deduction') + $amount('cash_advance') + $amount('other_deduction');
+        $employee = [
+            'employee_name' => $payroll->employee_name ?: $payroll->current_employee_name,
+            'position' => $payroll->position ?: $payroll->current_position,
+            'paid_work_days' => $decimal('paid_work_days'),
+            'absence_days' => $decimal('absence_days'),
+            'late_minutes' => $amount('late_duration_minutes'),
+            'treatment_count' => $treatmentCount,
+            'base_salary' => $amount('base_salary'),
+            'commission' => $amount('commission'),
+            'overtime_days' => $decimal('overtime_days'),
+            'overtime' => $amount('overtime'),
+            'meal_allowance' => $amount('meal_allowance'),
+            'total_allowance' => $totalAllowance,
+            'total_bonus' => $totalBonus,
+            'tip_deposit' => $amount('tip_deposit'),
+            'absence_deduction' => $amount('absence_deduction'),
+            'late_deduction' => $amount('late_deduction'),
+            'cash_advance' => $amount('cash_advance'),
+            'other_deduction' => $amount('other_deduction'),
+            'gross_income' => $grossIncome,
+            'total_deduction' => $totalDeduction,
+            'net_salary' => $grossIncome - $totalDeduction,
+            'notes' => $payroll->notes,
+        ];
+
+        $settings = DB::table('sale_settings')
+            ->whereIn('key', ['salon_address', 'salon_whatsapp'])
+            ->pluck('value', 'key');
+        $salon = [
+            'address' => $settings->get('salon_address') ?: 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang',
+            'whatsapp' => $settings->get('salon_whatsapp') ?: '081128702019',
+        ];
+        $logoPath = public_path('images/selesa-logo.png');
+        $logoDataUri = is_file($logoPath)
+            ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
+            : null;
+        $periodLabel = $start->translatedFormat('F Y');
+        $printedBy = $request->user()?->name ?: 'Owner Selesa';
+
+        return Pdf::loadView('pdf.payroll-slip', compact('employee', 'salon', 'logoDataUri', 'periodLabel', 'printedBy'))
+            ->setPaper('a4')
+            ->stream('slip-gaji-'.Str::slug($employee['employee_name']).'-'.$payroll->period.'.pdf');
+    }
+
+    private function legacyStorePayroll(Request $request): JsonResponse
+    {
         $data = $request->validate([
             'employee_id' => ['required', 'integer', 'exists:employees,id'],
             'period' => ['required', 'date_format:Y-m'],
@@ -1621,7 +2242,7 @@ class SalonController extends Controller
         ], 201);
     }
 
-    public function updatePayroll(Request $request, int $id): JsonResponse
+    private function legacyUpdatePayroll(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
             'base_salary' => ['required', 'integer', 'min:0', 'max:999999999999'],
@@ -1662,6 +2283,139 @@ class SalonController extends Controller
         return response()->json(['message' => 'Data gaji berhasil diperbarui.']);
     }
 
+    /** @return array<string, mixed> */
+    private function validatedPayrollInputs(Request $request, bool $creating): array
+    {
+        $currencyFields = [
+            'base_salary',
+            'daily_rate',
+            'bonus',
+            'target_bonus',
+            'service_bonus',
+            'attendance_bonus',
+            'overtime',
+            'meal_allowance',
+            'attendance_allowance',
+            'other_allowance',
+            'tip_deposit',
+            'absence_deduction',
+            'late_rate_per_minute',
+            'late_deduction',
+            'cash_advance',
+            'other_deduction',
+        ];
+        $rules = [
+            'paid_work_days' => ['nullable', 'numeric', 'min:0', 'max:366'],
+            'overtime_days' => ['nullable', 'numeric', 'min:0', 'max:366'],
+            'absence_days' => ['nullable', 'numeric', 'min:0', 'max:366'],
+            'late_duration_minutes' => ['nullable', 'integer', 'min:0', 'max:999999'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+        ];
+        foreach ($currencyFields as $field) {
+            $rules[$field] = ['nullable', 'integer', 'min:0', 'max:999999999999'];
+        }
+        if ($creating) {
+            $rules = [
+                'employee_id' => ['required', 'integer', 'exists:employees,id'],
+                'period' => ['required', 'date_format:Y-m'],
+                ...$rules,
+            ];
+        }
+
+        return $request->validate($rules);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, int|float|string|null>
+     */
+    private function resolvedPayrollAmounts(array $input, ?object $existing, int $commission): array
+    {
+        $number = function (string $field) use ($input, $existing): int {
+            if (array_key_exists($field, $input) && $input[$field] !== null && $input[$field] !== '') {
+                return (int) $input[$field];
+            }
+
+            return (int) ($existing->{$field} ?? 0);
+        };
+        $decimal = function (string $field) use ($input, $existing): float {
+            if (array_key_exists($field, $input) && $input[$field] !== null && $input[$field] !== '') {
+                return round((float) $input[$field], 2);
+            }
+
+            return round((float) ($existing->{$field} ?? 0), 2);
+        };
+        $paidWorkDays = $decimal('paid_work_days');
+        $dailyRate = $number('daily_rate');
+        $enteredBaseSalary = $number('base_salary');
+        if ($paidWorkDays > 0 && $dailyRate === 0 && $enteredBaseSalary === 0) {
+            throw ValidationException::withMessages([
+                'base_salary' => ['Isi gaji pokok agar GP per hari dapat dihitung.'],
+            ]);
+        }
+
+        $baseSalary = $enteredBaseSalary > 0
+            ? $enteredBaseSalary
+            : (int) round($paidWorkDays * $dailyRate);
+        if ($dailyRate === 0 && $paidWorkDays > 0 && $baseSalary > 0) {
+            $dailyRate = (int) round($baseSalary / $paidWorkDays);
+        }
+        $absenceDays = $decimal('absence_days');
+        $absenceDeduction = $dailyRate > 0 && $absenceDays > 0
+            ? (int) round($absenceDays * $dailyRate)
+            : $number('absence_deduction');
+        $lateMinutes = $number('late_duration_minutes');
+        $lateRate = $number('late_rate_per_minute');
+        $lateDeduction = $lateMinutes > 0 && $lateRate > 0
+            ? $lateMinutes * $lateRate
+            : $number('late_deduction');
+        $bonus = $number('bonus');
+        $targetBonus = $number('target_bonus');
+        $serviceBonus = $number('service_bonus');
+        $attendanceBonus = $number('attendance_bonus');
+        $overtime = $number('overtime');
+        $mealAllowance = $number('meal_allowance');
+        $attendanceAllowance = $number('attendance_allowance');
+        $otherAllowance = $number('other_allowance');
+        $tipDeposit = $number('tip_deposit');
+        $cashAdvance = $number('cash_advance');
+        $otherDeduction = $number('other_deduction');
+        $gross = $baseSalary + $commission + $bonus + $targetBonus + $serviceBonus + $attendanceBonus
+            + $overtime + $mealAllowance + $attendanceAllowance + $otherAllowance + $tipDeposit;
+        $deductions = $absenceDeduction + $lateDeduction + $cashAdvance + $otherDeduction;
+        if ($deductions > $gross) {
+            throw ValidationException::withMessages([
+                'other_deduction' => ['Total potongan tidak boleh melebihi pendapatan kotor.'],
+            ]);
+        }
+
+        return [
+            'base_salary' => $baseSalary,
+            'paid_work_days' => $paidWorkDays,
+            'daily_rate' => $dailyRate,
+            'bonus' => $bonus,
+            'target_bonus' => $targetBonus,
+            'service_bonus' => $serviceBonus,
+            'attendance_bonus' => $attendanceBonus,
+            'overtime' => $overtime,
+            'overtime_days' => $decimal('overtime_days'),
+            'meal_allowance' => $mealAllowance,
+            'attendance_allowance' => $attendanceAllowance,
+            'other_allowance' => $otherAllowance,
+            'tip_deposit' => $tipDeposit,
+            'commission' => $commission,
+            'absence_days' => $absenceDays,
+            'absence_deduction' => $absenceDeduction,
+            'late_duration_minutes' => $lateMinutes,
+            'late_rate_per_minute' => $lateRate,
+            'late_deduction' => $lateDeduction,
+            'cash_advance' => $cashAdvance,
+            'other_deduction' => $otherDeduction,
+            'net_salary' => $gross - $deductions,
+            'notes' => array_key_exists('notes', $input) ? ($input['notes'] ?: null) : ($existing->notes ?? null),
+        ];
+    }
+
     /**
      * @param  array<int, string>  $headers
      * @param  array<int, array<int, mixed>>  $rows
@@ -1680,6 +2434,31 @@ class SalonController extends Controller
         }, $filename, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    /** @return array{0: CarbonImmutable, 1: CarbonImmutable} */
+    private function remunerationRange(Request $request): array
+    {
+        $data = $request->validate([
+            'from' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'to' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+        ]);
+        $timezone = config('app.timezone');
+        $today = CarbonImmutable::today($timezone);
+        $from = isset($data['from'])
+            ? CarbonImmutable::createFromFormat('!Y-m-d', $data['from'], $timezone)
+            : $today->startOfMonth();
+        $to = isset($data['to'])
+            ? CarbonImmutable::createFromFormat('!Y-m-d', $data['to'], $timezone)
+            : $today;
+
+        if ($from->greaterThan($to)) {
+            throw ValidationException::withMessages([
+                'to' => ['Tanggal akhir tidak boleh sebelum tanggal awal.'],
+            ]);
+        }
+
+        return [$from, $to];
     }
 
     private function stockSourceLabel(?string $source): string

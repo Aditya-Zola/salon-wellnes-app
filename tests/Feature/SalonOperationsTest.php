@@ -176,7 +176,7 @@ class SalonOperationsTest extends TestCase
                 'other_deduction' => 0,
             ])
             ->assertCreated()
-            ->assertJsonPath('message', 'Data penggajian berhasil ditambahkan.');
+            ->assertJsonPath('message', 'Data remunerasi berhasil ditambahkan.');
 
         $this->assertDatabaseHas('payrolls', [
             'employee_id' => $employee->id,
@@ -248,6 +248,152 @@ class SalonOperationsTest extends TestCase
             'net_salary' => 3508000,
             'status' => 'draft',
         ]);
+    }
+
+    public function test_remuneration_keeps_manual_components_and_calculates_salary_from_jhk(): void
+    {
+        $employee = $this->employee('EMP-SARI');
+
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian', [
+                'employee_id' => $employee->id,
+                'period' => today()->format('Y-m'),
+                'daily_rate' => 70000,
+                'paid_work_days' => 25,
+                'absence_days' => 2,
+                'late_duration_minutes' => 10,
+                'late_rate_per_minute' => 1000,
+                'overtime_days' => 1,
+                'overtime' => 50000,
+                'meal_allowance' => 10000,
+                'target_bonus' => 100000,
+                'service_bonus' => 200000,
+                'attendance_bonus' => 300000,
+                'bonus' => 50000,
+                'attendance_allowance' => 25000,
+                'other_allowance' => 75000,
+                'tip_deposit' => 5000,
+                'cash_advance' => 12000,
+                'other_deduction' => 8000,
+                'notes' => 'Data manual pengujian',
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('payrolls', [
+            'employee_id' => $employee->id,
+            'base_salary' => 1750000,
+            'absence_deduction' => 140000,
+            'late_deduction' => 10000,
+            'cash_advance' => 12000,
+            'net_salary' => 2395000,
+        ]);
+
+        $from = today()->startOfMonth()->toDateString();
+        $to = today()->toDateString();
+        $report = $this->actingAs($this->admin)
+            ->getJson("/operasional/penggajian/rekap?from={$from}&to={$to}")
+            ->assertOk();
+        $sari = collect($report->json('employees'))->firstWhere('employee_id', $employee->id);
+        $this->assertSame(25, (int) $sari['paid_work_days']);
+        $this->assertSame(70000, $sari['daily_rate']);
+        $this->assertSame(650000, $sari['total_bonus']);
+        $this->assertSame(110000, $sari['total_allowance']);
+        $this->assertSame(2565000, $sari['gross_income']);
+        $this->assertSame(170000, $sari['total_deduction']);
+        $this->assertSame(2395000, $sari['net_salary']);
+
+        $payrollId = (int) DB::table('payrolls')->where('employee_id', $employee->id)->value('id');
+        $this->actingAs($this->admin)
+            ->get("/operasional/penggajian/{$payrollId}/slip.pdf")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_remuneration_recap_uses_transaction_sources_and_can_be_exported_for_excel(): void
+    {
+        $employee = $this->employee('EMP-SARI');
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000096');
+        $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'payments' => [[
+                'payment_method_id' => $this->paymentMethod('CASH')->id,
+                'amount' => $total,
+            ]],
+        ])->assertCreated();
+        $this->actingAs($this->admin)->postJson('/operasional/penggajian', [
+            'employee_id' => $employee->id,
+            'period' => today()->format('Y-m'),
+            'base_salary' => 3500000,
+            'bonus' => 150000,
+            'overtime' => 50000,
+            'late_duration_minutes' => 15,
+            'late_deduction' => 25000,
+            'other_deduction' => 0,
+        ])->assertCreated();
+        DB::table('employee_attendances')->insert([
+            'employee_id' => $employee->id,
+            'attendance_date' => today()->toDateString(),
+            'status' => 'off',
+            'notes' => 'Libur pengujian remunerasi',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $from = today()->startOfMonth()->toDateString();
+        $to = today()->toDateString();
+
+        $report = $this->actingAs($this->admin)
+            ->getJson("/operasional/penggajian/rekap?from={$from}&to={$to}")
+            ->assertOk()
+            ->assertJsonPath('period.from', $from)
+            ->assertJsonPath('period.to', $to)
+            ->assertJsonCount((int) DB::table('employees')->where('active', true)->where('code', 'not like', 'USR-%')->count(), 'employees')
+            ->assertJsonPath('summary.revenue', $total)
+            ->assertJsonPath('period.payday_day', 1)
+            ->assertJsonPath('period.cutoff_day', 31);
+        $this->assertSame((int) DB::table('employees')->where('active', true)->where('code', 'not like', 'USR-%')->count(), $report->json('summary.employee_count'));
+        $sari = collect($report->json('employees'))->firstWhere('employee_id', $employee->id);
+        $this->assertSame(3500000, $sari['base_salary']);
+        $this->assertSame(150000, $sari['bonus']);
+        $this->assertSame(50000, $sari['overtime']);
+        $this->assertSame(15, $sari['late_minutes']);
+        $this->assertSame(1, $sari['recorded_off_days']);
+        $this->assertGreaterThan(0, $sari['commission']);
+
+        $this->actingAs($this->admin)
+            ->patchJson('/operasional/penggajian/rekap/pengaturan', ['payday_day' => 5, 'cutoff_day' => 25])
+            ->assertOk();
+        $this->assertDatabaseHas('sale_settings', ['key' => 'remuneration_payday_day', 'value' => '5']);
+        $this->assertDatabaseHas('sale_settings', ['key' => 'remuneration_cutoff_day', 'value' => '25']);
+
+        $export = $this->actingAs($this->admin)
+            ->get("/operasional/penggajian/rekap/ekspor?from={$from}&to={$to}")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $exportContent = $export->streamedContent();
+        $this->assertStringStartsWith("PK\x03\x04", $exportContent);
+        $tempExport = tempnam(sys_get_temp_dir(), 'selesa-remuneration-test-');
+        $this->assertNotFalse($tempExport);
+        file_put_contents($tempExport, $exportContent);
+        $workbook = new ZipArchive;
+        $this->assertTrue($workbook->open($tempExport));
+        try {
+            $this->assertNotFalse($workbook->getFromName('xl/worksheets/sheet1.xml'));
+            $this->assertNotFalse($workbook->getFromName('xl/worksheets/sheet4.xml'));
+            $this->assertStringContainsString('REKAP KOM-LEM', (string) $workbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('REKAP PENDAPATAN', (string) $workbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('REKAP STOK IN-OUT', (string) $workbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('SLIP 01', (string) $workbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('Sari', (string) $workbook->getFromName('xl/workbook.xml'));
+            $this->assertStringContainsString('Dita', (string) $workbook->getFromName('xl/worksheets/sheet1.xml'));
+            $this->assertStringContainsString('Dita', (string) $workbook->getFromName('xl/worksheets/sheet3.xml'));
+            $this->assertStringNotContainsString('Diekspor dari Selesa Salon', (string) $workbook->getFromName('xl/worksheets/sheet1.xml'));
+            $this->assertStringNotContainsString('<autoFilter', (string) $workbook->getFromName('xl/worksheets/sheet1.xml'));
+            $this->assertStringContainsString('FFFFFF00', (string) $workbook->getFromName('xl/styles.xml'));
+            $this->assertNotFalse(simplexml_load_string((string) $workbook->getFromName('xl/worksheets/sheet1.xml')));
+        } finally {
+            $workbook->close();
+            @unlink($tempExport);
+        }
     }
 
     public function test_sales_history_includes_paid_invoice_details_for_reprinting(): void
@@ -2179,6 +2325,34 @@ class SalonOperationsTest extends TestCase
             ->assertJsonCount(2, "off_by_date.{$multipleOffDate}");
 
         $this->assertSame(['Rani', 'Sari'], collect($response->json("off_by_date.{$multipleOffDate}"))->pluck('name')->all());
+    }
+
+    public function test_therapist_overtime_is_saved_per_date_and_becomes_remuneration_source(): void
+    {
+        $therapist = $this->employee('EMP-DITA');
+        $date = today()->toDateString();
+
+        $this->actingAs($this->admin)
+            ->putJson("/operasional/therapist-kehadiran/{$therapist->id}", [
+                'date' => $date,
+                'status' => 'overtime',
+                'overtime_amount' => 15000,
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('employee_attendances', [
+            'employee_id' => $therapist->id,
+            'attendance_date' => $date,
+            'status' => 'overtime',
+            'overtime_amount' => 15000,
+        ]);
+
+        $report = $this->actingAs($this->admin)
+            ->getJson('/operasional/penggajian/rekap?from='.$date.'&to='.$date)
+            ->assertOk();
+        $row = collect($report->json('employees'))->firstWhere('employee_id', $therapist->id);
+
+        $this->assertSame(15000, $row['overtime']);
     }
 
     public function test_dashboard_summarizes_present_and_off_therapists_for_today(): void

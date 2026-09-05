@@ -739,11 +739,21 @@ class CheckoutService
 
         foreach ($draftPayrolls as $payroll) {
             $commission = $this->payrollCommission((int) $payroll->employee_id, $period);
-            $netSalary = (int) $payroll->base_salary
+            $grossIncome = (int) $payroll->base_salary
                 + (int) $payroll->bonus
+                + (int) $payroll->target_bonus
+                + (int) $payroll->service_bonus
+                + (int) $payroll->attendance_bonus
                 + (int) $payroll->overtime
-                + $commission
+                + (int) $payroll->meal_allowance
+                + (int) $payroll->attendance_allowance
+                + (int) $payroll->other_allowance
+                + (int) $payroll->tip_deposit
+                + $commission;
+            $netSalary = $grossIncome
+                - (int) $payroll->absence_deduction
                 - (int) $payroll->late_deduction
+                - (int) $payroll->cash_advance
                 - (int) $payroll->other_deduction;
 
             DB::table('payrolls')->where('id', $payroll->id)->update([

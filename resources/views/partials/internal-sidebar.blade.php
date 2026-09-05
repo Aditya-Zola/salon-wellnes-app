@@ -39,7 +39,16 @@
                 ['page' => 'keuangan-neraca', 'label' => 'Neraca'],
             ],
         ],
-        ['page' => 'penggajian', 'label' => 'Penggajian', 'icon' => 'account_balance_wallet', 'permission' => 'payroll.view'],
+        [
+            'page' => 'penggajian',
+            'label' => 'Remunerasi',
+            'icon' => 'account_balance_wallet',
+            'permission' => 'payroll.view',
+            'children' => [
+                ['page' => 'penggajian', 'label' => 'Input & Edit Remunerasi'],
+                ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
+            ],
+        ],
     ];
 @endphp
 
