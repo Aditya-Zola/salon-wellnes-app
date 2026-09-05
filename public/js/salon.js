@@ -26,6 +26,7 @@ const capabilities = window.SALON_CAPABILITIES || {};
 const canCreateReservations = Boolean(capabilities.create_reservation);
 const canUpdateReservations = Boolean(capabilities.update_reservation);
 const canManageFinance = Boolean(capabilities.manage_finance);
+const canManagePayroll = Boolean(capabilities.manage_payroll);
 const canManageMemberships = Boolean(capabilities.manage_memberships);
 const canViewProducts = Boolean(capabilities.view_products);
 const canViewSales = Boolean(capabilities.view_sales);
@@ -91,6 +92,8 @@ let therapistAttendanceOffByDate = {};
 let stocktakeDraft = new Map();
 let financeReports = {};
 let financeFiltersNeedReset = false;
+let remunerationReport = null;
+let remunerationFiltersInitialized = false;
 
 const copy = {
     dashboard: ['Dashboard', 'Ringkasan operasional salon hari ini'],
@@ -108,7 +111,8 @@ const copy = {
     'keuangan-arus-kas': ['Arus Kas', 'Dana masuk, pengeluaran, dan catatan kas salon'],
     'keuangan-laba-rugi': ['Laba-Rugi', 'Pendapatan, HPP, biaya operasional, dan laba bersih'],
     'keuangan-neraca': ['Neraca', 'Posisi aset, kewajiban, dan ekuitas salon'],
-    penggajian: ['Penggajian', 'Gaji, bonus, keterlambatan, dan komisi'],
+    penggajian: ['Remunerasi', 'Input dan edit komponen remunerasi per periode'],
+    remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
@@ -205,6 +209,7 @@ async function api(url, options = {}) {
 async function refresh() {
     financeReports = {};
     financeFiltersNeedReset = true;
+    remunerationReport = null;
     state = await api('/operasional/data');
     populateSelects();
     renderAll();
@@ -213,6 +218,7 @@ async function refresh() {
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadStockHistoryPage(stockHistoryPageState?.meta?.current_page || 1);
+    if (document.getElementById('remunerasi')?.classList.contains('active')) await loadRemunerationReport();
 }
 
 function upsertReservation(reservation) {
@@ -632,6 +638,7 @@ function openPage(id) {
         if (date) date.value = localDate();
         renderReservations();
     }
+    if (pageId === 'remunerasi') loadRemunerationReport().catch((error) => toast(error.message, true));
     scrollTo(0, 0);
 }
 
@@ -2839,7 +2846,7 @@ function openCashEntryForm() {
     };
 }
 
-function renderPayroll() {
+function legacyRenderPayroll() {
     const box = document.getElementById('payroll-table');
     if (!box) return;
     const payrolls = array(state.payrolls);
@@ -2866,7 +2873,7 @@ function renderPayroll() {
     });
 }
 
-function openPayrollForm() {
+function legacyOpenPayrollForm() {
     const initialPeriod = localDate().slice(0, 7);
     const activeEmployees = employees().filter((employee) => Number(employee.active ?? employee.is_active ?? 1) === 1);
     const availableEmployees = (period) => {
@@ -2911,6 +2918,470 @@ function openPayrollForm() {
     periodInput.addEventListener('change', refreshEmployeeOptions);
 }
 
+function payrollNumber(value) {
+    return Math.max(0, Number(value || 0));
+}
+
+function payrollEstimatedValues(form, commission = 0) {
+    const value = (name) => payrollNumber(form.querySelector(`[name="${name}"]`)?.value);
+    const workDays = value('paid_work_days');
+    const dailyRate = value('daily_rate');
+    const baseSalary = value('base_salary') || (workDays > 0 && dailyRate > 0 ? Math.round(workDays * dailyRate) : 0);
+    const absenceDeduction = workDays >= 0 && dailyRate > 0 && value('absence_days') > 0
+        ? Math.round(value('absence_days') * dailyRate)
+        : value('absence_deduction');
+    const lateDeduction = value('late_duration_minutes') > 0 && value('late_rate_per_minute') > 0
+        ? value('late_duration_minutes') * value('late_rate_per_minute')
+        : value('late_deduction');
+    const bonus = value('bonus') + value('target_bonus') + value('service_bonus') + value('attendance_bonus');
+    const allowance = value('meal_allowance') + value('attendance_allowance') + value('other_allowance');
+    const gross = baseSalary + commission + value('overtime') + bonus + allowance + value('tip_deposit');
+    const deductions = absenceDeduction + lateDeduction + value('cash_advance') + value('other_deduction');
+    return { baseSalary, absenceDeduction, lateDeduction, gross, deductions, net: gross - deductions };
+}
+
+function payrollField(name, label, value = 0, options = {}) {
+    const { type = 'number', hint = '', step = '1', required = false } = options;
+    return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${type === 'number' ? `min="0" step="${escapeHtml(step)}"` : ''} ${required ? 'required' : ''}>${hint ? `<small>${escapeHtml(hint)}</small>` : ''}</label>`;
+}
+
+function openPayrollForm(existing = null, preset = {}) {
+    const isEdit = Boolean(existing?.id);
+    const initialPeriod = existing?.period || preset.period || localDate().slice(0, 7);
+    const activeEmployees = employees().filter((employee) => Number(employee.active ?? employee.is_active ?? 1) === 1);
+    const recordedEmployeeIds = new Set(array(state.payrolls)
+        .filter((payroll) => String(payroll.period) === initialPeriod && Number(payroll.id) !== Number(existing?.id))
+        .map((payroll) => Number(payroll.employee_id)));
+    const availableEmployees = activeEmployees.filter((employee) => !recordedEmployeeIds.has(Number(employee.id)));
+    if (!isEdit && !availableEmployees.length) {
+        toast('Semua karyawan aktif sudah memiliki data remunerasi untuk periode ini.', true);
+        return;
+    }
+    const selectedEmployeeId = existing?.employee_id || preset.employee_id || availableEmployees[0]?.id;
+    const latestPayrollFor = (employeeId) => array(state.payrolls)
+        .filter((payroll) => Number(payroll.employee_id) === Number(employeeId))
+        .sort((left, right) => String(right.period || '').localeCompare(String(left.period || '')))[0];
+    const employeeDefaults = latestPayrollFor(selectedEmployeeId);
+    const fieldValue = (field, fallback = 0) => existing?.[field] ?? employeeDefaults?.[field] ?? fallback;
+    const monthDays = (period) => {
+        const [year, month] = String(period || '').split('-').map(Number);
+        return year && month ? new Date(year, month, 0).getDate() : 30;
+    };
+    const initialMonthDays = monthDays(initialPeriod);
+    const savedPaidDays = payrollNumber(existing?.paid_work_days);
+    const initialOffDays = savedPaidDays > 0
+        ? Math.max(0, initialMonthDays - savedPaidDays)
+        : 0;
+    const initialPaidDays = Math.max(0, initialMonthDays - initialOffDays);
+    const initialDailyRate = payrollNumber(existing?.daily_rate ?? employeeDefaults?.daily_rate)
+        || (initialPaidDays > 0 ? Math.round(payrollNumber(existing?.base_salary ?? employeeDefaults?.base_salary) / initialPaidDays) : 0);
+    const employeeOptions = (isEdit ? activeEmployees : availableEmployees)
+        .map((employee) => `<option value="${Number(employee.id)}" ${Number(employee.id) === Number(selectedEmployeeId) ? 'selected' : ''}>${escapeHtml(employee.name)}${employee.position ? ` · ${escapeHtml(employee.position)}` : ''}</option>`)
+        .join('');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open payroll-editor-overlay';
+    wrapper.innerHTML = `<section class="modal-box payroll-editor-modal" role="dialog" aria-modal="true" aria-labelledby="payroll-editor-title">
+        <div class="modal-head"><div><h2 id="payroll-editor-title">${isEdit ? 'Edit remunerasi' : 'Input remunerasi'}</h2><p>Komisi layanan dihitung dari transaksi lunas. Isi hanya komponen manual sesuai rekap.</p></div><button type="button" class="payroll-editor-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <form class="payroll-editor-form">
+            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>1</span><div><h3>Periode & karyawan</h3><p>Satu data untuk satu karyawan dalam satu periode gaji.</p></div></div><div class="form-grid">
+                <label>Karyawan<select name="employee_id" ${isEdit ? 'disabled' : ''}>${employeeOptions}</select>${isEdit ? `<input type="hidden" name="employee_id" value="${Number(existing.employee_id)}">` : ''}</label>
+                ${isEdit ? `<label>Periode gaji<input type="month" value="${escapeHtml(initialPeriod)}" disabled><small>Periode terkunci agar riwayat tetap konsisten.</small></label>` : payrollField('period', 'Periode gaji', initialPeriod, { type: 'month', required: true })}
+            </div></section>
+            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>2</span><div><h3>Hari kerja & gaji</h3><p>Isi dua angka ini saja: hari libur dan bayaran per hari.</p></div></div>
+                <div class="payroll-day-summary"><span><small>Hari dalam periode</small><b data-payroll-calendar-days>${initialMonthDays} hari</b></span><span><small>Hari dibayar</small><b data-payroll-paid-days>${initialPaidDays} hari</b></span><span><small>Gaji pokok periode</small><b data-payroll-base-salary>Rp0</b></span></div>
+                <div class="form-grid">
+                    ${payrollField('scheduled_off_days', 'Libur terjadwal (hari)', initialOffDays, { step: '0.01', hint: 'Contoh: September 30 hari, libur 4 hari -> JHK 26 hari.' })}
+                    ${payrollField('daily_rate', 'Bayaran per hari', initialDailyRate, { hint: 'Ubah nominal ini jika gaji pokok karyawan berubah.' })}
+                    ${payrollField('absence_days', 'Tidak masuk di luar libur (hari)', existing?.absence_days ?? 0, { step: '0.01', hint: 'Hanya untuk mangkir/izin tanpa gaji, bukan hari libur terjadwal.' })}
+                    ${payrollField('late_duration_minutes', 'Total keterlambatan (menit)', existing?.late_duration_minutes ?? 0, { hint: 'Akumulasi dari rekap absensi periode ini.' })}
+                    ${payrollField('late_rate_per_minute', 'Tarif potongan telat / menit', existing?.late_rate_per_minute ?? 0, { hint: 'Contoh: Rp1.000 per menit.' })}
+                </div>
+                <p class="payroll-auto-note">Potongan tidak masuk dan keterlambatan dihitung otomatis, lalu terlihat di ringkasan pendapatan bersih.</p>
+                <input name="paid_work_days" type="hidden" value="${initialPaidDays}"><input name="base_salary" type="hidden" value="0"><input name="absence_deduction" type="hidden" value="${escapeHtml(existing?.absence_deduction ?? 0)}"><input name="late_deduction" type="hidden" value="${escapeHtml(existing?.late_deduction ?? 0)}">
+            </section>
+            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>3</span><div><h3>Tambahan pendapatan</h3><p>Isi hanya bila ada. Komisi treatment diambil otomatis dari transaksi lunas.</p></div></div><div class="form-grid">
+                ${payrollField('overtime_days', 'Hari lembur', existing?.overtime_days ?? 0, { step: '0.01', hint: 'Jumlah hari lembur pada rekap.' })}
+                ${payrollField('overtime', 'Total uang lembur & makan', existing?.overtime ?? 0, { hint: 'Nominal total yang diterima untuk lembur.' })}
+                ${payrollField('bonus', 'Bonus', existing?.bonus ?? 0, { hint: 'Total bonus untuk periode ini.' })}
+                ${payrollField('other_allowance', 'Tunjangan', existing?.other_allowance ?? 0, { hint: 'Total tunjangan untuk periode ini.' })}
+                ${payrollField('tip_deposit', 'Titipan TIP', existing?.tip_deposit ?? 0)}
+            </div>
+            <details class="payroll-detail-inputs"><summary>Rincian tambahan untuk kolom Excel (opsional)</summary><p>Isi bila bonus atau tunjangan perlu dipisahkan dalam rekap Excel. Nilainya ditambahkan ke total.</p><div class="form-grid">
+                ${payrollField('meal_allowance', 'Uang makan terpisah', existing?.meal_allowance ?? 0)}
+                ${payrollField('target_bonus', 'Bonus target', existing?.target_bonus ?? 0)}
+                ${payrollField('service_bonus', 'Bonus layanan / no complaint', existing?.service_bonus ?? 0)}
+                ${payrollField('attendance_bonus', 'Bonus kehadiran', existing?.attendance_bonus ?? 0)}
+                ${payrollField('attendance_allowance', 'Tunjangan kehadiran', existing?.attendance_allowance ?? 0)}
+            </div></details></section>
+            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>4</span><div><h3>Potongan & catatan</h3><p>Kasbon dan potongan lain langsung masuk ke total potongan.</p></div></div><div class="form-grid">
+                ${payrollField('cash_advance', 'Kasbon', fieldValue('cash_advance'))}
+                ${payrollField('other_deduction', 'Potongan lain', fieldValue('other_deduction'))}
+                <label class="full-width">Catatan<textarea name="notes" maxlength="2000" placeholder="Contoh: alasan potongan atau bonus">${escapeHtml(fieldValue('notes', ''))}</textarea></label>
+            </div></section>
+            <aside class="payroll-preview"><span><small>Gaji pokok periode</small><b data-payroll-preview="base">Rp0</b></span><span><small>Komisi otomatis</small><b data-payroll-preview="commission">${isEdit ? money(existing.commission) : 'Dihitung saat simpan'}</b></span><span><small>Pendapatan kotor</small><b data-payroll-preview="gross">Rp0</b></span><span><small>Total potongan</small><b data-payroll-preview="deductions">Rp0</b></span><span class="payroll-preview-net"><small>Estimasi pendapatan bersih</small><b data-payroll-preview="net">Rp0</b></span></aside>
+            <p class="payroll-form-error" data-payroll-form-error hidden></p>
+            <footer><button type="button" class="secondary payroll-editor-close">Batal</button><button type="submit" class="primary">${isEdit ? 'Simpan perubahan' : 'Simpan remunerasi'}</button></footer>
+        </form>
+    </section>`;
+    const close = () => wrapper.remove();
+    wrapper.querySelectorAll('.payroll-editor-close').forEach((button) => { button.onclick = close; });
+    const form = wrapper.querySelector('form');
+    const refreshAttendanceCalculation = () => {
+        const period = form.querySelector('[name="period"]')?.value || initialPeriod;
+        const totalDays = monthDays(period);
+        const offDays = Math.min(totalDays, payrollNumber(form.querySelector('[name="scheduled_off_days"]')?.value));
+        const paidDays = Math.max(0, totalDays - offDays);
+        const dailyRate = payrollNumber(form.querySelector('[name="daily_rate"]')?.value);
+        const baseSalary = Math.round(paidDays * dailyRate);
+        const absenceDays = payrollNumber(form.querySelector('[name="absence_days"]')?.value);
+        const lateMinutes = payrollNumber(form.querySelector('[name="late_duration_minutes"]')?.value);
+        const lateRate = payrollNumber(form.querySelector('[name="late_rate_per_minute"]')?.value);
+        form.querySelector('[name="paid_work_days"]').value = paidDays;
+        form.querySelector('[name="base_salary"]').value = baseSalary;
+        form.querySelector('[name="absence_deduction"]').value = Math.round(absenceDays * dailyRate);
+        form.querySelector('[name="late_deduction"]').value = Math.round(lateMinutes * lateRate);
+        form.querySelector('[data-payroll-calendar-days]').textContent = `${totalDays} hari`;
+        form.querySelector('[data-payroll-paid-days]').textContent = `${paidDays} hari`;
+        form.querySelector('[data-payroll-base-salary]').textContent = money(baseSalary);
+    };
+    const updatePreview = () => {
+        refreshAttendanceCalculation();
+        const estimated = payrollEstimatedValues(form, payrollNumber(existing?.commission));
+        form.querySelector('[data-payroll-preview="base"]').textContent = money(estimated.baseSalary);
+        form.querySelector('[data-payroll-preview="gross"]').textContent = money(estimated.gross);
+        form.querySelector('[data-payroll-preview="deductions"]').textContent = `-${money(estimated.deductions)}`;
+        form.querySelector('[data-payroll-preview="net"]').textContent = money(estimated.net);
+    };
+    if (!isEdit) {
+        form.querySelector('[name="employee_id"]')?.addEventListener('change', (event) => {
+            const previous = latestPayrollFor(event.target.value);
+            const dailyRate = form.querySelector('[name="daily_rate"]');
+            const previousDays = payrollNumber(previous?.paid_work_days) || monthDays(previous?.period);
+            if (dailyRate && previous?.base_salary) dailyRate.value = payrollNumber(previous.daily_rate) || Math.round(payrollNumber(previous.base_salary) / previousDays);
+            updatePreview();
+        });
+    }
+    form.addEventListener('input', updatePreview);
+    updatePreview();
+    form.onsubmit = async (event) => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        const errorBox = form.querySelector('[data-payroll-form-error]');
+        errorBox.hidden = true;
+        errorBox.textContent = '';
+        button.disabled = true;
+        const data = Object.fromEntries(new FormData(form));
+        if (!isEdit) delete data.employee_id; // disabled select is replaced by hidden input only while editing.
+        if (!isEdit) data.employee_id = form.querySelector('[name="employee_id"]')?.value;
+        try {
+            const result = await api(isEdit ? `/operasional/penggajian/${Number(existing.id)}` : '/operasional/penggajian', {
+                method: isEdit ? 'PATCH' : 'POST',
+                body: JSON.stringify(data),
+            });
+            close();
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            button.disabled = false;
+            errorBox.textContent = error.message;
+            errorBox.hidden = false;
+            toast(error.message, true);
+        }
+    };
+    wrapper.addEventListener('click', (event) => { if (event.target === wrapper) close(); });
+    document.body.appendChild(wrapper);
+}
+
+function renderPayroll() {
+    const box = document.getElementById('payroll-table');
+    if (!box) return;
+    const page = document.getElementById('penggajian');
+    page?.querySelector('.toolbar h3')?.replaceChildren('Data remunerasi');
+    const toolbarCopy = page?.querySelector('.toolbar > div > p');
+    if (toolbarCopy) toolbarCopy.textContent = 'Masukkan atau ubah data per karyawan dan periode gaji.';
+    const toolbarHint = page?.querySelector('.payroll-toolbar-actions > p');
+    if (toolbarHint) toolbarHint.textContent = 'Komisi treatment tetap diambil otomatis dari transaksi lunas.';
+    const openButton = document.getElementById('open-payroll');
+    if (openButton) openButton.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data';
+    const payrolls = array(state.payrolls);
+    box.innerHTML = `<div class="tr th"><span>KARYAWAN / PERIODE</span><span>GP & JHK</span><span>KOMISI</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${payrolls.map((payroll) => {
+        const totalBonus = payrollNumber(payroll.bonus) + payrollNumber(payroll.target_bonus) + payrollNumber(payroll.service_bonus) + payrollNumber(payroll.attendance_bonus);
+        const totalAllowance = payrollNumber(payroll.meal_allowance) + payrollNumber(payroll.attendance_allowance) + payrollNumber(payroll.other_allowance);
+        const gross = payrollNumber(payroll.base_salary) + payrollNumber(payroll.commission) + payrollNumber(payroll.overtime) + totalBonus + totalAllowance + payrollNumber(payroll.tip_deposit);
+        const deductions = payrollNumber(payroll.absence_deduction) + payrollNumber(payroll.late_deduction) + payrollNumber(payroll.cash_advance) + payrollNumber(payroll.other_deduction);
+        return `<div class="tr"><span><b>${escapeHtml(payroll.employee_name || payroll.employee?.name || '-')}</b><small>${escapeHtml(payroll.position || payroll.employee?.position || '-')} · ${escapeHtml(String(payroll.period || '-'))}</small></span>
+            <span><b>${money(payroll.base_salary)}</b><small>${Number(payroll.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(payroll.daily_rate)}/hari</small></span>
+            <span><b>${money(payroll.commission)}</b><small>${money(payroll.overtime)} lembur</small></span>
+            <span><b>${money(gross)}</b><small>Bonus + tunjangan ${money(totalBonus + totalAllowance)}</small></span>
+            <span><b>-${money(deductions)}</b><small>${Number(payroll.late_duration_minutes || 0)} menit telat · Kasbon ${money(payroll.cash_advance)}</small></span>
+            <b>${money(payroll.net_salary ?? (gross - deductions))}</b>
+            <span class="payroll-row-actions"><button type="button" class="remuneration-action edit payroll-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button></span>
+        </div>`;
+    }).join('') || '<p class="empty-state">Belum ada data remunerasi. Tambahkan per karyawan dan periode.</p>'}`;
+    box.querySelectorAll('.payroll-edit').forEach((button) => {
+        button.onclick = () => openPayrollForm(payrolls.find((item) => Number(item.id) === Number(button.dataset.id)));
+    });
+}
+
+function remunerationDateLabel(value, options = { day: '2-digit', month: 'short', year: 'numeric' }) {
+    if (!value) return '-';
+    const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('id-ID', options).format(date);
+}
+
+function legacyRemunerationStatusMeta(status) {
+    return {
+        pending: ['Belum dicek', 'pending'],
+        ready: ['Siap Excel', 'ready'],
+        completed: ['Selesai', 'completed'],
+    }[status] || ['Belum dicek', 'pending'];
+}
+
+function initializeRemunerationFilters() {
+    const from = document.getElementById('remuneration-from');
+    const to = document.getElementById('remuneration-to');
+    if (!from || !to || remunerationFiltersInitialized) return;
+    const today = localDate();
+    from.value = `${today.slice(0, 8)}01`;
+    to.value = today;
+    from.max = today;
+    to.max = today;
+    remunerationFiltersInitialized = true;
+}
+
+async function loadRemunerationReport() {
+    initializeRemunerationFilters();
+    const from = document.getElementById('remuneration-from')?.value;
+    const to = document.getElementById('remuneration-to')?.value;
+    if (!from || !to) return;
+    if (from > to) {
+        toast('Tanggal akhir tidak boleh sebelum tanggal awal.', true);
+        return;
+    }
+
+    remunerationReport = await api(`/operasional/penggajian/rekap?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    renderRemuneration();
+}
+
+function legacyRenderRemuneration() {
+    const summaryBox = document.getElementById('remuneration-summary');
+    const table = document.getElementById('remuneration-table');
+    const note = document.getElementById('remuneration-period-note');
+    if (!summaryBox || !table || !note) return;
+
+    initializeRemunerationFilters();
+    if (!remunerationReport) {
+        summaryBox.innerHTML = '';
+        table.innerHTML = '<p class="empty-state">Pilih rentang periode untuk melihat rekap.</p>';
+        note.textContent = '';
+        return;
+    }
+
+    const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
+    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)} · Input gaji ${escapeHtml(String(period.payroll_period || '-'))}</small></span>`;
+    const summaries = [
+        ['groups', 'Karyawan', Number(summary.employee_count || 0).toLocaleString('id-ID'), 'Aktif'],
+        ['paid', 'Komisi layanan', money(summary.commission), 'Otomatis'],
+        ['more_time', 'Bonus & lembur', money(Number(summary.bonus || 0) + Number(summary.overtime || 0)), 'Input gaji'],
+        ['schedule', 'Keterlambatan', `${Number(summary.late_minutes || 0).toLocaleString('id-ID')} mnt`, `Potongan ${money(summary.late_deduction)}`],
+        ['payments', 'Pendapatan', money(summary.revenue), 'Penjualan - retur'],
+        ['inventory_2', 'Stok in / out', `+${Number(summary.stock_in || 0).toLocaleString('id-ID')} / -${Number(summary.stock_out || 0).toLocaleString('id-ID')}`, `${Number(summary.stock_movement_count || 0)} mutasi`],
+    ];
+    summaryBox.innerHTML = summaries.map(([icon, label, value, meta]) => `<article><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${meta}</em></div></article>`).join('');
+
+    table.innerHTML = `<div class="tr th"><span>KARYAWAN</span><span>LAYANAN</span><span>KOMISI</span><span>INPUT GAJI</span><span>KETERLAMBATAN</span><span>STATUS</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
+        const [statusLabel, statusClass] = remunerationStatusMeta(employee.status);
+        const statusControl = canManagePayroll
+            ? `<select class="remuneration-status status-${statusClass}" data-remuneration-employee="${Number(employee.employee_id)}" aria-label="Status rekap ${escapeHtml(employee.employee_name)}"><option value="pending" ${employee.status === 'pending' ? 'selected' : ''}>Belum dicek</option><option value="ready" ${employee.status === 'ready' ? 'selected' : ''}>Siap Excel</option><option value="completed" ${employee.status === 'completed' ? 'selected' : ''}>Selesai</option></select>`
+            : `<em class="remuneration-status-label status-${statusClass}">${statusLabel}</em>`;
+        return `<div class="tr">
+            <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')}</small></span>
+            <span><b>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</b><small>${Number(employee.off_days || 0)} libur tercatat</small></span>
+            <b>${money(employee.commission)}</b>
+            <span><b>${money(employee.base_salary)}</b><small>Bonus ${money(employee.bonus)} · Lembur ${money(employee.overtime)}</small></span>
+            <span><b>${Number(employee.late_minutes || 0)} menit</b><small>-${money(employee.late_deduction)}</small></span>
+            <span>${statusControl}${employee.archived ? '<small class="remuneration-archived">Arsip tersimpan</small>' : ''}</span>
+            <button type="button" class="link remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}">Detail</button>
+        </div>`;
+    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
+
+    table.querySelectorAll('.remuneration-status').forEach((select) => {
+        select.addEventListener('change', async () => {
+            select.disabled = true;
+            try {
+                const result = await api('/operasional/penggajian/rekap/status', {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        employee_id: Number(select.dataset.remunerationEmployee),
+                        from: period.from,
+                        to: period.to,
+                        status: select.value,
+                    }),
+                });
+                toast(result.message);
+                await loadRemunerationReport();
+            } catch (error) {
+                select.disabled = false;
+                toast(error.message, true);
+            }
+        });
+    });
+    table.querySelectorAll('.remuneration-detail').forEach((button) => {
+        button.addEventListener('click', () => {
+            const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationDetail));
+            if (employee) openRemunerationDetail(employee);
+        });
+    });
+}
+
+function legacyOpenRemunerationDetail(employee) {
+    if (!remunerationReport) return;
+    const commissions = array(remunerationReport.commission_details)
+        .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
+    const attendance = array(remunerationReport.attendance)
+        .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open remuneration-detail-overlay';
+    const attendanceRows = attendance.length
+        ? attendance.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><b>${item.status === 'off' ? 'Libur' : 'Masuk'}</b><span>${escapeHtml(item.notes || '-')}</span></li>`).join('')
+        : '<li class="empty-state">Tidak ada catatan kehadiran pada periode ini.</li>';
+    const commissionRows = commissions.length
+        ? commissions.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><span><b>${escapeHtml(item.treatment_name)}</b><small>${escapeHtml(item.customer_name)} · ${escapeHtml(item.transaction_number)}</small></span><strong>${money(item.commission)}</strong></li>`).join('')
+        : '<li class="empty-state">Belum ada komisi dari transaksi lunas.</li>';
+    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
+        <div class="modal-head"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="remuneration-detail-body">
+            <div class="remuneration-detail-totals"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Gaji pokok input</small><b>${money(employee.base_salary)}</b></span><span><small>Bonus + lembur</small><b>${money(Number(employee.bonus || 0) + Number(employee.overtime || 0))}</b></span><span><small>Potongan</small><b>-${money(Number(employee.late_deduction || 0) + Number(employee.other_deduction || 0))}</b></span></div>
+            <section><div class="remuneration-detail-section-head"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission">${commissionRows}</ul></section>
+            <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.off_days || 0)} libur</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
+        </div>
+    </section>`;
+    const close = () => wrapper.remove();
+    wrapper.querySelector('.remuneration-close').addEventListener('click', close);
+    wrapper.addEventListener('click', (event) => {
+        if (event.target === wrapper) close();
+    });
+    document.body.appendChild(wrapper);
+}
+
+function openRemunerationSchedule() {
+    if (!canManagePayroll || !remunerationReport) return;
+    quickForm('Penanda periode remunerasi', [
+        ['payday_day', 'Tanggal gajian (1–31)', 'number', null, remunerationReport.period?.payday_day || 1],
+        ['cutoff_day', 'Tanggal cutoff (1–31)', 'number', null, remunerationReport.period?.cutoff_day || 31],
+    ], (data) => api('/operasional/penggajian/rekap/pengaturan', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+    }));
+}
+
+function renderRemuneration() {
+    const summaryBox = document.getElementById('remuneration-summary');
+    const table = document.getElementById('remuneration-table');
+    const note = document.getElementById('remuneration-period-note');
+    if (!summaryBox || !table || !note) return;
+
+    initializeRemunerationFilters();
+    if (!remunerationReport) {
+        summaryBox.innerHTML = '';
+        table.innerHTML = '<p class="empty-state">Pilih rentang periode untuk melihat rekap.</p>';
+        note.textContent = '';
+        return;
+    }
+
+    const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
+    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Data manual menggunakan periode ${escapeHtml(String(period.payroll_period || '-'))} · Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)}</small></span>`;
+    const summaries = [
+        ['groups', 'Data karyawan', `${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)}`, 'Sudah diinput'],
+        ['paid', 'Komisi layanan', money(summary.commission), 'Otomatis dari kasir'],
+        ['account_balance_wallet', 'Pendapatan kotor', money(summary.gross_income), 'Gaji + komisi + tambahan'],
+        ['remove_circle', 'Total potongan', `-${money(summary.deductions)}`, 'Mangkir, telat, kasbon'],
+        ['payments', 'Pendapatan bersih', money(summary.net_income), 'Hasil perhitungan sistem'],
+        ['inventory_2', 'Stok in / out', `+${Number(summary.stock_in || 0).toLocaleString('id-ID')} / -${Number(summary.stock_out || 0).toLocaleString('id-ID')}`, `${Number(summary.stock_movement_count || 0)} mutasi`],
+    ];
+    summaryBox.innerHTML = summaries.map(([icon, label, value, meta]) => `<article><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${meta}</em></div></article>`).join('');
+
+    table.innerHTML = `<div class="tr th"><span>KARYAWAN</span><span>JHK / GP</span><span>KOMISI & LEMBUR</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
+        const payrollState = employee.has_payroll_input
+            ? '<em class="remuneration-input-state ready">Data terisi</em>'
+            : '<em class="remuneration-input-state">Belum diinput</em>';
+        const action = employee.has_payroll_input
+            ? `<button type="button" class="remuneration-action detail remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>${canManagePayroll ? `<button type="button" class="remuneration-action edit remuneration-edit" data-remuneration-edit="${Number(employee.payroll_id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit</button>` : ''}`
+            : canManagePayroll
+                ? `<button type="button" class="remuneration-action input remuneration-create" data-remuneration-employee="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`
+                : '<small>-</small>';
+        return `<div class="tr">
+            <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${payrollState}</small></span>
+            <span><b>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari</b><small>${money(employee.daily_rate)}/hari · GP ${money(employee.base_salary)}</small></span>
+            <span><b>${money(employee.commission)}</b><small>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment · Lembur ${money(employee.overtime)}</small></span>
+            <b>${money(employee.gross_income)}</b>
+            <span><b>-${money(employee.total_deduction)}</b><small>Mangkir ${Number(employee.absence_days || 0)} hr · Telat ${Number(employee.late_minutes || 0)} mnt</small></span>
+            <b>${money(employee.net_salary)}</b>
+            <span class="remuneration-row-actions">${action}</span>
+        </div>`;
+    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
+    table.querySelectorAll('.remuneration-detail').forEach((button) => {
+        button.addEventListener('click', () => {
+            const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationDetail));
+            if (employee) openRemunerationDetail(employee);
+        });
+    });
+    table.querySelectorAll('.remuneration-edit').forEach((button) => {
+        button.addEventListener('click', () => openPayrollForm(array(state.payrolls).find((payroll) => Number(payroll.id) === Number(button.dataset.remunerationEdit))));
+    });
+    table.querySelectorAll('.remuneration-create').forEach((button) => {
+        button.addEventListener('click', () => {
+            const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationEmployee));
+            openPayrollForm(null, employee ? { employee_id: employee.employee_id, period: period.payroll_period } : {});
+        });
+    });
+}
+
+function openRemunerationDetail(employee) {
+    if (!remunerationReport) return;
+    const commissions = array(remunerationReport.commission_details)
+        .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
+    const attendance = array(remunerationReport.attendance)
+        .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open remuneration-detail-overlay';
+    const attendanceRows = attendance.length
+        ? attendance.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><b>${item.status === 'off' ? 'Libur' : 'Masuk'}</b><span>${escapeHtml(item.notes || '-')}</span></li>`).join('')
+        : '<li class="empty-state">Tidak ada catatan kehadiran pada periode ini.</li>';
+    const commissionRows = commissions.length
+        ? commissions.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><span><b>${escapeHtml(item.treatment_name)}</b><small>${escapeHtml(item.customer_name)} · ${escapeHtml(item.transaction_number)}</small></span><strong>${money(item.commission)}</strong></li>`).join('')
+        : '<li class="empty-state">Belum ada komisi dari transaksi lunas.</li>';
+    const manualRows = [
+        ['GP / JHK', `${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari × ${money(employee.daily_rate)} = ${money(employee.base_salary)}`],
+        ['Lembur / uang makan', `${money(employee.overtime)} + ${money(employee.meal_allowance)}`],
+        ['Bonus', `Target ${money(employee.target_bonus)} · Service ${money(employee.service_bonus)} · Kehadiran ${money(employee.attendance_bonus)} · Lain ${money(employee.bonus)}`],
+        ['Tunjangan / TIP', `${money(employee.total_allowance)} / ${money(employee.tip_deposit)}`],
+        ['Mangkir', `${Number(employee.absence_days || 0).toLocaleString('id-ID')} hari · -${money(employee.absence_deduction)}`],
+        ['Keterlambatan', `${Number(employee.late_minutes || 0).toLocaleString('id-ID')} menit × ${money(employee.late_rate_per_minute)} · -${money(employee.late_deduction)}`],
+        ['Kasbon / pot. lain', `-${money(employee.cash_advance)} / -${money(employee.other_deduction)}`],
+    ].map(([label, value]) => `<li><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></li>`).join('');
+    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
+        <div class="modal-head"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="remuneration-detail-body">
+            <div class="remuneration-detail-totals"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Pendapatan kotor</small><b>${money(employee.gross_income)}</b></span><span><small>Total potongan</small><b>-${money(employee.total_deduction)}</b></span><span><small>Pendapatan bersih</small><b>${money(employee.net_salary)}</b></span></div>
+            <section><div class="remuneration-detail-section-head"><h3>Input remunerasi</h3><strong>${employee.has_payroll_input ? 'Tersimpan' : 'Belum diinput'}</strong></div><ul class="remuneration-detail-list remuneration-input-list">${manualRows}</ul></section>
+            <section><div class="remuneration-detail-section-head"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission">${commissionRows}</ul></section>
+            <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.recorded_off_days || 0)} libur tercatat</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
+        </div>
+        <footer>${canManagePayroll ? `<button type="button" class="primary remuneration-edit-detail">${employee.has_payroll_input ? 'Edit data' : 'Input data'}</button>` : ''}</footer>
+    </section>`;
+    const close = () => wrapper.remove();
+    wrapper.querySelector('.remuneration-close').addEventListener('click', close);
+    wrapper.querySelector('.remuneration-edit-detail')?.addEventListener('click', () => {
+        close();
+        openPayrollForm(employee.has_payroll_input
+            ? array(state.payrolls).find((payroll) => Number(payroll.id) === Number(employee.payroll_id))
+            : null, employee.has_payroll_input ? {} : { employee_id: employee.employee_id, period: remunerationReport.period?.payroll_period });
+    });
+    wrapper.addEventListener('click', (event) => { if (event.target === wrapper) close(); });
+    document.body.appendChild(wrapper);
+}
+
 function activityCategory(action) {
     const value = String(action || '').toLowerCase();
     if (value.startsWith('reservation')) return 'Reservasi';
@@ -2919,7 +3390,7 @@ function activityCategory(action) {
     if (value.startsWith('treatment')) return 'Treatment';
     if (value.startsWith('transaction')) return value.includes('refund') ? 'Retur' : 'Penjualan';
     if (value.startsWith('finance')) return 'Arus kas';
-    if (value.startsWith('payroll')) return 'Penggajian';
+    if (value.startsWith('payroll')) return 'Remunerasi';
     if (value.startsWith('membership')) return 'Membership';
     if (value.startsWith('promotion')) return 'Promo membership';
     if (value.startsWith('employee')) return 'Pegawai';
@@ -2939,7 +3410,7 @@ function activityIcon(action) {
         Penjualan: 'payments',
         Retur: 'assignment_return',
         'Arus kas': 'account_balance_wallet',
-        Penggajian: 'payments',
+        Remunerasi: 'payments',
         Membership: 'workspace_premium',
         'Promo membership': 'campaign',
         Pegawai: 'badge',
@@ -3304,6 +3775,7 @@ function renderAll() {
     renderSales();
     renderFinance();
     renderPayroll();
+    renderRemuneration();
     renderActivity();
 }
 
@@ -4254,9 +4726,15 @@ function renderTherapistAttendance() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const editable = canManageTherapistAttendance;
-    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS</span></div>${therapistAttendance.map((therapist) => `<label class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option></select></label>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS</span><span>NOMINAL LEMBUR</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option><option value="overtime" ${therapist.status === 'overtime' ? 'selected' : ''}>Lembur</option></select><label class="therapist-overtime-field${therapist.status === 'overtime' ? '' : ' is-hidden'}"><span>Rp</span><input type="number" min="0" step="1" placeholder="Isi nominal" data-overtime-employee-id="${Number(therapist.employee_id)}" value="${escapeHtml(therapist.overtime_amount || '')}" ${editable ? '' : 'disabled'}></label></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
     box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
         loadTherapistAttendance(event.currentTarget.value);
+    });
+    box.querySelectorAll('select[data-employee-id]').forEach((select) => {
+        select.addEventListener('change', () => {
+            const field = box.querySelector(`[data-overtime-employee-id="${select.dataset.employeeId}"]`)?.closest('.therapist-overtime-field');
+            field?.classList.toggle('is-hidden', select.value !== 'overtime');
+        });
     });
     box.querySelector('#therapist-attendance-form')?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -4264,19 +4742,25 @@ function renderTherapistAttendance() {
         const statuses = [...box.querySelectorAll('select[data-employee-id]')].map((select) => ({
             employeeId: Number(select.dataset.employeeId),
             status: select.value,
+            overtimeAmount: Number(box.querySelector(`[data-overtime-employee-id="${select.dataset.employeeId}"]`)?.value || 0),
         }));
         const changes = statuses.filter((item) => therapistAttendance.some((therapist) => (
-            Number(therapist.employee_id) === item.employeeId && therapist.status !== item.status
+            Number(therapist.employee_id) === item.employeeId && (therapist.status !== item.status || Number(therapist.overtime_amount || 0) !== item.overtimeAmount)
         )));
         if (!changes.length) {
             toast('Tidak ada perubahan kehadiran.');
+            return;
+        }
+        const overtimeWithoutAmount = changes.find((item) => item.status === 'overtime' && item.overtimeAmount <= 0);
+        if (overtimeWithoutAmount) {
+            toast('Isi nominal lembur terlebih dahulu.', true);
             return;
         }
         submit.disabled = true;
         try {
             await Promise.all(changes.map((item) => api(`/operasional/therapist-kehadiran/${item.employeeId}`, {
                 method: 'PUT',
-                body: JSON.stringify({ date: therapistAttendanceDate, status: item.status }),
+                body: JSON.stringify({ date: therapistAttendanceDate, status: item.status, overtime_amount: item.overtimeAmount }),
             })));
             toast('Kehadiran terapis diperbarui.');
             await loadTherapistAttendance(therapistAttendanceDate);
@@ -4465,6 +4949,19 @@ document.getElementById('product-import-file')?.addEventListener('change', (even
 });
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
+document.getElementById('remuneration-from')?.addEventListener('change', () => loadRemunerationReport().catch((error) => toast(error.message, true)));
+document.getElementById('remuneration-to')?.addEventListener('change', () => loadRemunerationReport().catch((error) => toast(error.message, true)));
+document.getElementById('export-remuneration')?.addEventListener('click', () => {
+    initializeRemunerationFilters();
+    const from = document.getElementById('remuneration-from')?.value;
+    const to = document.getElementById('remuneration-to')?.value;
+    if (!from || !to || from > to) {
+        toast('Rentang tanggal remunerasi belum valid.', true);
+        return;
+    }
+    window.location.assign(`/operasional/penggajian/rekap/ekspor?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+});
+document.getElementById('remuneration-schedule')?.addEventListener('click', openRemunerationSchedule);
 document.querySelectorAll('[data-sales-view]').forEach((button) => {
     button.addEventListener('click', () => setSalesView(button.dataset.salesView));
 });

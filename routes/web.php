@@ -24,6 +24,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/produk', [SalonController::class, 'productsPage'])->middleware('permission:products.view')->name('products.page');
         Route::get('/produk/riwayat', [SalonController::class, 'stockHistoryPage'])->middleware('permission:products.view')->name('stock.history.page');
         Route::get('/keuangan/laporan', [SalonController::class, 'financeReport'])->middleware('permission:finance.view')->name('finance.report');
+        Route::get('/penggajian/rekap', [SalonController::class, 'remunerationReport'])->middleware('permission:payroll.view')->name('remuneration.report');
+        Route::get('/penggajian/rekap/ekspor', [SalonController::class, 'exportRemuneration'])->middleware('permission:payroll.view')->name('remuneration.export');
         Route::post('/produk/import', [SalonController::class, 'importProducts'])->middleware('permission:products.create')->name('products.import');
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
@@ -60,7 +62,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/retur/{salesReturn}/struk.pdf', [SalonController::class, 'salesReturnPdf'])->middleware('permission:cashier.refund|sales.view')->name('sales.returns.receipt.pdf');
         Route::post('/keuangan/arus-kas', [SalonController::class, 'storeCashEntry'])->middleware('permission:finance.manage')->name('finance.cash-entries.store');
         Route::post('/penggajian', [SalonController::class, 'storePayroll'])->middleware('permission:payroll.manage')->name('payroll.store');
+        Route::get('/penggajian/{id}/slip.pdf', [SalonController::class, 'payrollSlipPdf'])->middleware('permission:payroll.view')->name('payroll.slip.pdf');
         Route::patch('/penggajian/{id}', [SalonController::class, 'updatePayroll'])->middleware('permission:payroll.manage')->name('payroll.update');
+        Route::patch('/penggajian/rekap/pengaturan', [SalonController::class, 'updateRemunerationSchedule'])->middleware('permission:payroll.manage')->name('remuneration.schedule.update');
     });
 
     Route::redirect('/super-admin', '/');

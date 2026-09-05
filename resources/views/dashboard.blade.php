@@ -24,7 +24,7 @@
         @cannot('memberships.view') #membership{display:none!important} @endcannot
         @cannot('products.view') #stok,#stok-riwayat,#stok-opname,.stock-mini .link{display:none!important} @endcannot
         @cannot('finance.view') #keuangan-arus-kas,#keuangan-laba-rugi,#keuangan-neraca{display:none!important} @endcannot
-        @cannot('payroll.view') #penggajian{display:none!important} @endcannot
+        @cannot('payroll.view') #penggajian,#remunerasi{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
         @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
         @cannot('cashier.process') #open-payment,#add-extra,.cashier-create-transaction{display:none!important} @endcannot
@@ -32,7 +32,7 @@
         @cannot('memberships.manage') #membership .membership-manage{display:none!important} @endcannot
         @cannot('products.create') #open-product,#open-product-import{display:none!important} @endcannot
         @cannot('products.stocktake') #open-stocktake,#stok-opname{display:none!important} @endcannot
-        @cannot('payroll.manage') #open-payroll{display:none!important} @endcannot
+        @cannot('payroll.manage') #open-payroll,#remuneration-schedule,.remuneration-status{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
         @cannot('treatments.update') .recipe-button,.commission-edit{display:none!important} @endcannot
         @cannot('products.update') .product-price-edit,.product-edit{display:none!important} @endcannot
@@ -221,7 +221,23 @@
 
         <section class="page finance-page" id="keuangan-neraca"><article class="card finance-report-card"><div class="card-head"><div><h3>Neraca dasar</h3><p>Posisi kas, setiap rekening pembayaran, dan nilai stok berdasarkan HPP.</p></div></div><div class="finance-statement" id="balance-sheet-report"></div></article></section>
 
-        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Periode Agustus 2026</h3><p>Data dapat diubah sebelum ditutup</p></div><div class="payroll-toolbar-actions"><p>Komisi diambil otomatis dari layanan yang sudah dibayar.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input penggajian</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Gaji pokok, bonus, lembur, serta potongan dicatat manual. Komisi dihitung otomatis dari layanan yang sudah dibayar pada periode tersebut.</div></section>
+        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Data remunerasi</h3><p>Masukkan atau ubah data per karyawan dan periode gaji.</p></div><div class="payroll-toolbar-actions"><p>Komisi treatment diambil otomatis dari transaksi lunas.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Setelah data tersimpan, unduh rekap dan seluruh slip melalui submenu Rekap &amp; Export Excel.</div></section>
+
+        <section class="page remuneration-page" id="remunerasi">
+            <div class="remuneration-toolbar">
+                <div><h3>Rekap & Export Remunerasi</h3><p>Periksa data sumber dan unduh rekap Excel.</p></div>
+                <div class="remuneration-actions">
+                    <label>Dari<input id="remuneration-from" type="date" aria-label="Tanggal awal rekap remunerasi"></label>
+                    <label>Sampai<input id="remuneration-to" type="date" aria-label="Tanggal akhir rekap remunerasi"></label>
+                    <button type="button" class="secondary" id="export-remuneration" title="Satu file berisi rekap dan slip tiap karyawan yang sudah diinput"><span class="material-symbols-outlined" aria-hidden="true">download</span>Ekspor rekap &amp; slip</button>
+                    <button type="button" class="secondary" id="remuneration-schedule" title="Atur penanda tanggal gajian dan cutoff"><span class="material-symbols-outlined" aria-hidden="true">settings</span></button>
+                </div>
+            </div>
+            <div class="remuneration-period-note" id="remuneration-period-note"></div>
+            <div class="remuneration-summary" id="remuneration-summary"></div>
+            <article class="card remuneration-table-card"><div class="card-head"><div><h3>Per karyawan</h3><p>Komisi terambil dari transaksi lunas; komponen gaji berasal dari input manual.</p></div></div><div class="table remuneration-table" id="remuneration-table"></div></article>
+            <div class="notice">ⓘ Tanggal gajian dan cutoff hanya penanda periode. Sistem tidak menghapus atau mereset gaji, komisi, bonus, maupun keterlambatan.</div>
+        </section>
 
         <section class="page" id="log"><div class="card activity-card"><div class="card-head"><div><h3>Aktivitas perubahan data</h3><p>Jejak reservasi, stok opname, penjualan, dan perubahan data penting.</p></div></div><div class="filters activity-filters"><label class="activity-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="activity-search" type="search" placeholder="Cari customer, aktivitas, atau pengguna..." aria-label="Cari log aktivitas"></label><input id="activity-filter-date" type="date" aria-label="Filter tanggal aktivitas"><select id="activity-filter-user" aria-label="Filter pengguna aktivitas"><option value="">Semua pengguna</option></select><select id="activity-filter-action" aria-label="Filter kategori aktivitas"><option value="">Semua kategori aktivitas</option></select></div><div id="activity-list"></div></div></section>
     </main>
@@ -272,6 +288,7 @@
         'refund_sales' => auth()->user()->can('cashier.refund'),
         'view_memberships' => auth()->user()->can('memberships.view') || auth()->user()->can('memberships.manage'),
         'manage_therapist_attendance' => auth()->user()->can('therapist_attendance.manage'),
+        'manage_payroll' => auth()->user()->can('payroll.manage'),
     ];
 @endphp
 <div id="toast"></div>
