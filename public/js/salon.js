@@ -89,6 +89,7 @@ let therapistAttendanceDate = null;
 let therapistAttendance = [];
 let therapistAttendanceMonth = null;
 let therapistAttendanceOffByDate = {};
+let therapistAttendanceOvertimeByDate = {};
 let stocktakeDraft = new Map();
 let financeReports = {};
 let financeFiltersNeedReset = false;
@@ -111,6 +112,7 @@ const copy = {
     'keuangan-arus-kas': ['Arus Kas', 'Dana masuk, pengeluaran, dan catatan kas salon'],
     'keuangan-laba-rugi': ['Laba-Rugi', 'Pendapatan, HPP, biaya operasional, dan laba bersih'],
     'keuangan-neraca': ['Neraca', 'Posisi aset, kewajiban, dan ekuitas salon'],
+    'panduan-remunerasi': ['Remunerasi', 'Panduan sumber data manual dan perhitungan otomatis'],
     penggajian: ['Remunerasi', 'Input dan edit komponen remunerasi per periode'],
     remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
@@ -218,7 +220,7 @@ async function refresh() {
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadStockHistoryPage(stockHistoryPageState?.meta?.current_page || 1);
-    if (document.getElementById('remunerasi')?.classList.contains('active')) await loadRemunerationReport();
+    if (document.getElementById('remunerasi')?.classList.contains('active') || document.getElementById('penggajian')?.classList.contains('active')) await loadRemunerationReport();
 }
 
 function upsertReservation(reservation) {
@@ -638,7 +640,7 @@ function openPage(id) {
         if (date) date.value = localDate();
         renderReservations();
     }
-    if (pageId === 'remunerasi') loadRemunerationReport().catch((error) => toast(error.message, true));
+    if (pageId === 'remunerasi' || pageId === 'penggajian') loadRemunerationReport().catch((error) => toast(error.message, true));
     scrollTo(0, 0);
 }
 
@@ -2803,6 +2805,22 @@ function renderCashEntryHistory(cashEntries = state.cash_entries) {
     box.innerHTML = `<div class="tr th"><span>TANGGAL</span><span>ARUS</span><span>KATEGORI & CATATAN</span><span>SUMBER</span><span>DICATAT OLEH</span><span class="align-right">NOMINAL</span></div>${rows || '<p class="empty-state">Tidak ada riwayat arus kas yang sesuai.</p>'}`;
 }
 
+function reloadCashFlowFromHistoryRange() {
+    const from = document.getElementById('cash-entry-from')?.value || '';
+    const to = document.getElementById('cash-entry-to')?.value || '';
+    if (!from || !to || from > to) {
+        renderCashEntryHistory();
+        return;
+    }
+
+    // Filter pada Data Kas adalah bagian dari laporan arus kas yang sama.
+    // Sinkronkan keduanya sebelum meminta ulang data agar rentang lama tidak
+    // menyisakan cache bulan sebelumnya.
+    setFinanceDateValue('cash-flow-from', from, true);
+    setFinanceDateValue('cash-flow-to', to, true);
+    loadFinanceReport('cash').catch((error) => toast(error.message, true));
+}
+
 function openCashEntryForm() {
     if (!canManageFinance) return;
 
@@ -2947,7 +2965,7 @@ function payrollField(name, label, value = 0, options = {}) {
 
 function openPayrollForm(existing = null, preset = {}) {
     const isEdit = Boolean(existing?.id);
-    const initialPeriod = existing?.period || preset.period || localDate().slice(0, 7);
+    const initialPeriod = existing?.period || preset.period || remunerationReport?.period?.payroll_period || localDate().slice(0, 7);
     const activeEmployees = employees().filter((employee) => Number(employee.active ?? employee.is_active ?? 1) === 1);
     const recordedEmployeeIds = new Set(array(state.payrolls)
         .filter((payroll) => String(payroll.period) === initialPeriod && Number(payroll.id) !== Number(existing?.id))
@@ -3103,23 +3121,39 @@ function renderPayroll() {
     if (toolbarHint) toolbarHint.textContent = 'Komisi treatment tetap diambil otomatis dari transaksi lunas.';
     const openButton = document.getElementById('open-payroll');
     if (openButton) openButton.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data';
+    if (!remunerationReport) {
+        box.innerHTML = '<p class="empty-state">Memuat data remunerasi pada periode berjalan…</p>';
+        return;
+    }
     const payrolls = array(state.payrolls);
-    box.innerHTML = `<div class="tr th"><span>KARYAWAN / PERIODE</span><span>GP & JHK</span><span>KOMISI</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${payrolls.map((payroll) => {
-        const totalBonus = payrollNumber(payroll.bonus) + payrollNumber(payroll.target_bonus) + payrollNumber(payroll.service_bonus) + payrollNumber(payroll.attendance_bonus);
-        const totalAllowance = payrollNumber(payroll.meal_allowance) + payrollNumber(payroll.attendance_allowance) + payrollNumber(payroll.other_allowance);
-        const gross = payrollNumber(payroll.base_salary) + payrollNumber(payroll.commission) + payrollNumber(payroll.overtime) + totalBonus + totalAllowance + payrollNumber(payroll.tip_deposit);
-        const deductions = payrollNumber(payroll.absence_deduction) + payrollNumber(payroll.late_deduction) + payrollNumber(payroll.cash_advance) + payrollNumber(payroll.other_deduction);
-        return `<div class="tr"><span><b>${escapeHtml(payroll.employee_name || payroll.employee?.name || '-')}</b><small>${escapeHtml(payroll.position || payroll.employee?.position || '-')} · ${escapeHtml(String(payroll.period || '-'))}</small></span>
-            <span><b>${money(payroll.base_salary)}</b><small>${Number(payroll.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(payroll.daily_rate)}/hari</small></span>
-            <span><b>${money(payroll.commission)}</b><small>${money(payroll.overtime)} lembur</small></span>
-            <span><b>${money(gross)}</b><small>Bonus + tunjangan ${money(totalBonus + totalAllowance)}</small></span>
-            <span><b>-${money(deductions)}</b><small>${Number(payroll.late_duration_minutes || 0)} menit telat · Kasbon ${money(payroll.cash_advance)}</small></span>
-            <b>${money(payroll.net_salary ?? (gross - deductions))}</b>
-            <span class="payroll-row-actions"><button type="button" class="remuneration-action edit payroll-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button></span>
+    const { period = {}, employees: employeeRows = [] } = remunerationReport;
+    const payrollPeriod = String(period.payroll_period || localDate().slice(0, 7));
+    box.innerHTML = `<div class="tr th"><span>KARYAWAN / PERIODE</span><span>GP & JHK</span><span>KOMISI</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
+        const payroll = payrolls.find((item) => Number(item.id) === Number(employee.payroll_id)) || null;
+        const hasPayrollInput = Boolean(employee.has_payroll_input && payroll);
+        const payrollState = hasPayrollInput
+            ? '<em class="remuneration-input-state ready">Data terisi</em>'
+            : '<em class="remuneration-input-state">Belum diinput</em>';
+        const action = hasPayrollInput
+            ? `<button type="button" class="remuneration-action edit payroll-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
+            : `<button type="button" class="remuneration-action edit payroll-input" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
+        return `<div class="tr"><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${escapeHtml(payrollPeriod)}</small>${payrollState}</span>
+            <span><b>${money(employee.base_salary)}</b><small>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(employee.daily_rate)}/hari</small></span>
+            <span><b>${money(employee.commission)}</b><small>${money(employee.overtime)} lembur</small></span>
+            <span><b>${money(employee.gross_income)}</b><small>Bonus + tunjangan ${money(Number(employee.bonus || 0) + Number(employee.target_bonus || 0) + Number(employee.service_bonus || 0) + Number(employee.attendance_bonus || 0) + Number(employee.meal_allowance || 0) + Number(employee.attendance_allowance || 0) + Number(employee.other_allowance || 0))}</small></span>
+            <span><b>-${money(employee.total_deduction)}</b><small>${Number(employee.late_minutes || 0)} menit telat · Kasbon ${money(employee.cash_advance)}</small></span>
+            <b>${money(employee.net_salary)}</b>
+            <span class="payroll-row-actions">${action}</span>
         </div>`;
-    }).join('') || '<p class="empty-state">Belum ada data remunerasi. Tambahkan per karyawan dan periode.</p>'}`;
+    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
     box.querySelectorAll('.payroll-edit').forEach((button) => {
         button.onclick = () => openPayrollForm(payrolls.find((item) => Number(item.id) === Number(button.dataset.id)));
+    });
+    box.querySelectorAll('.payroll-input').forEach((button) => {
+        button.onclick = () => openPayrollForm(null, {
+            employee_id: Number(button.dataset.employeeId),
+            period: button.dataset.period,
+        });
     });
 }
 
@@ -3161,6 +3195,7 @@ async function loadRemunerationReport() {
 
     remunerationReport = await api(`/operasional/penggajian/rekap?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
     renderRemuneration();
+    renderPayroll();
 }
 
 function legacyRenderRemuneration() {
@@ -3305,11 +3340,10 @@ function renderRemuneration() {
         const payrollState = employee.has_payroll_input
             ? '<em class="remuneration-input-state ready">Data terisi</em>'
             : '<em class="remuneration-input-state">Belum diinput</em>';
-        const action = employee.has_payroll_input
-            ? `<button type="button" class="remuneration-action detail remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>${canManagePayroll ? `<button type="button" class="remuneration-action edit remuneration-edit" data-remuneration-edit="${Number(employee.payroll_id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit</button>` : ''}`
-            : canManagePayroll
-                ? `<button type="button" class="remuneration-action input remuneration-create" data-remuneration-employee="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`
-                : '<small>-</small>';
+        // Rekap is read-only: all manual changes belong in Input & Edit
+        // Remunerasi. Keeping one Detail action here avoids two competing
+        // routes for JHK, GP, bonus, and deductions.
+        const action = `<button type="button" class="remuneration-action detail remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>`;
         return `<div class="tr">
             <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${payrollState}</small></span>
             <span><b>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari</b><small>${money(employee.daily_rate)}/hari · GP ${money(employee.base_salary)}</small></span>
@@ -3324,15 +3358,6 @@ function renderRemuneration() {
         button.addEventListener('click', () => {
             const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationDetail));
             if (employee) openRemunerationDetail(employee);
-        });
-    });
-    table.querySelectorAll('.remuneration-edit').forEach((button) => {
-        button.addEventListener('click', () => openPayrollForm(array(state.payrolls).find((payroll) => Number(payroll.id) === Number(button.dataset.remunerationEdit))));
-    });
-    table.querySelectorAll('.remuneration-create').forEach((button) => {
-        button.addEventListener('click', () => {
-            const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationEmployee));
-            openPayrollForm(null, employee ? { employee_id: employee.employee_id, period: period.payroll_period } : {});
         });
     });
 }
@@ -3368,16 +3393,9 @@ function openRemunerationDetail(employee) {
             <section><div class="remuneration-detail-section-head"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission">${commissionRows}</ul></section>
             <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.recorded_off_days || 0)} libur tercatat</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
         </div>
-        <footer>${canManagePayroll ? `<button type="button" class="primary remuneration-edit-detail">${employee.has_payroll_input ? 'Edit data' : 'Input data'}</button>` : ''}</footer>
     </section>`;
     const close = () => wrapper.remove();
     wrapper.querySelector('.remuneration-close').addEventListener('click', close);
-    wrapper.querySelector('.remuneration-edit-detail')?.addEventListener('click', () => {
-        close();
-        openPayrollForm(employee.has_payroll_input
-            ? array(state.payrolls).find((payroll) => Number(payroll.id) === Number(employee.payroll_id))
-            : null, employee.has_payroll_input ? {} : { employee_id: employee.employee_id, period: remunerationReport.period?.payroll_period });
-    });
     wrapper.addEventListener('click', (event) => { if (event.target === wrapper) close(); });
     document.body.appendChild(wrapper);
 }
@@ -4719,6 +4737,61 @@ function renderTherapistAttendanceCalendar() {
     });
 }
 
+function renderTherapistOvertimeCalendar() {
+    const box = document.getElementById('therapist-overtime-calendar');
+    if (!box || !therapistAttendanceDate) return;
+
+    const month = therapistAttendanceMonth || therapistAttendanceDate.slice(0, 7);
+    const [year, monthNumber] = month.split('-').map(Number);
+    if (!year || !monthNumber) return;
+
+    const monthStart = new Date(year, monthNumber - 1, 1, 12);
+    const daysInMonth = new Date(year, monthNumber, 0, 12).getDate();
+    const firstWeekday = (monthStart.getDay() + 6) % 7;
+    const monthLabel = new Intl.DateTimeFormat('id-ID', {
+        month: 'long', year: 'numeric',
+    }).format(monthStart);
+    const weekdayLabels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+    const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => {
+        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty" aria-hidden="true"></span>';
+
+        const day = index - firstWeekday + 1;
+        const date = attendanceDateFromMonth(month, day);
+        const overtimeTherapists = array(therapistAttendanceOvertimeByDate[date]);
+        const names = overtimeTherapists.map((therapist) => therapist.name).filter(Boolean);
+        const isSelected = date === therapistAttendanceDate;
+        const isToday = date === localDate();
+        const marker = overtimeTherapists.length === 1
+            ? therapistInitial(overtimeTherapists[0].name)
+            : `+${overtimeTherapists.length}`;
+        const label = names.length
+            ? `${day} ${monthLabel}: ${names.join(', ')} lembur`
+            : `${day} ${monthLabel}`;
+        const tooltip = names.length
+            ? `<span class="therapist-attendance-calendar-tooltip" role="tooltip"><b>Terapis lembur</b>${overtimeTherapists.map((therapist) => `<span>${escapeHtml(therapist.name)} · ${money(therapist.overtime_amount)}</span>`).join('')}</span>`
+            : '';
+
+        return `<button type="button" class="therapist-attendance-calendar-day${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${names.length ? ' has-overtime' : ''}" data-attendance-date="${date}" aria-label="${escapeHtml(label)}"><span class="therapist-attendance-calendar-day-value">${names.length ? escapeHtml(marker) : day}</span>${tooltip}</button>`;
+    }).join('');
+
+    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender lembur</h3><p>Penanda tanggal dan nominal lembur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis lembur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
+
+    box.querySelectorAll('[data-attendance-date]').forEach((button) => {
+        button.addEventListener('click', () => loadTherapistAttendance(button.dataset.attendanceDate));
+    });
+    box.querySelectorAll('[data-attendance-calendar-month]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const nextMonth = new Date(year, monthNumber - 1 + (button.dataset.attendanceCalendarMonth === 'next' ? 1 : -1), 1, 12);
+            const nextYear = nextMonth.getFullYear();
+            const nextMonthNumber = nextMonth.getMonth() + 1;
+            const nextMonthKey = `${nextYear}-${String(nextMonthNumber).padStart(2, '0')}`;
+            const selectedDay = Number(therapistAttendanceDate.slice(-2));
+            const nextDay = Math.min(selectedDay, new Date(nextYear, nextMonthNumber, 0, 12).getDate());
+            loadTherapistAttendance(attendanceDateFromMonth(nextMonthKey, nextDay));
+        });
+    });
+}
+
 function renderTherapistAttendance() {
     const box = document.getElementById('therapist-attendance');
     if (!box || !therapistAttendanceDate) return;
@@ -4726,24 +4799,29 @@ function renderTherapistAttendance() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const editable = canManageTherapistAttendance;
-    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS</span><span>NOMINAL LEMBUR</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><select data-employee-id="${Number(therapist.employee_id)}" ${editable ? '' : 'disabled'}><option value="present" ${therapist.status === 'present' ? 'selected' : ''}>Masuk</option><option value="off" ${therapist.status === 'off' ? 'selected' : ''}>Libur</option><option value="overtime" ${therapist.status === 'overtime' ? 'selected' : ''}>Lembur</option></select><label class="therapist-overtime-field${therapist.status === 'overtime' ? '' : ' is-hidden'}"><span>Rp</span><input type="number" min="0" step="1" placeholder="Isi nominal" data-overtime-employee-id="${Number(therapist.employee_id)}" value="${escapeHtml(therapist.overtime_amount || '')}" ${editable ? '' : 'disabled'}></label></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS KEHADIRAN</span><span>NOMINAL LEMBUR</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><fieldset class="therapist-status-options" data-status-options="${Number(therapist.employee_id)}"><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="present" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'present' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Hadir</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="off" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Libur</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="overtime" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'overtime' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Lembur</label></fieldset><label class="therapist-overtime-field${therapist.status === 'overtime' ? '' : ' is-hidden'}"><span>Rp</span><input type="number" min="0" step="1" placeholder="Isi nominal" data-overtime-employee-id="${Number(therapist.employee_id)}" value="${escapeHtml(therapist.overtime_amount || '')}" ${editable ? '' : 'disabled'}></label></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
     box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
         loadTherapistAttendance(event.currentTarget.value);
     });
-    box.querySelectorAll('select[data-employee-id]').forEach((select) => {
-        select.addEventListener('change', () => {
-            const field = box.querySelector(`[data-overtime-employee-id="${select.dataset.employeeId}"]`)?.closest('.therapist-overtime-field');
-            field?.classList.toggle('is-hidden', select.value !== 'overtime');
+    box.querySelectorAll('[data-attendance-status]').forEach((input) => {
+        input.addEventListener('change', () => {
+            const field = box.querySelector(`[data-overtime-employee-id="${input.dataset.attendanceStatus}"]`)?.closest('.therapist-overtime-field');
+            field?.classList.toggle('is-hidden', input.value !== 'overtime');
         });
     });
     box.querySelector('#therapist-attendance-form')?.addEventListener('submit', async (event) => {
         event.preventDefault();
         const submit = event.currentTarget.querySelector('[type="submit"]');
-        const statuses = [...box.querySelectorAll('select[data-employee-id]')].map((select) => ({
-            employeeId: Number(select.dataset.employeeId),
-            status: select.value,
-            overtimeAmount: Number(box.querySelector(`[data-overtime-employee-id="${select.dataset.employeeId}"]`)?.value || 0),
-        }));
+        const statuses = therapistAttendance.map((therapist) => {
+            const employeeId = Number(therapist.employee_id);
+            const selected = box.querySelector(`[name="attendance-status-${employeeId}"]:checked`);
+
+            return {
+                employeeId,
+                status: selected?.value || 'present',
+                overtimeAmount: Number(box.querySelector(`[data-overtime-employee-id="${employeeId}"]`)?.value || 0),
+            };
+        });
         const changes = statuses.filter((item) => therapistAttendance.some((therapist) => (
             Number(therapist.employee_id) === item.employeeId && (therapist.status !== item.status || Number(therapist.overtime_amount || 0) !== item.overtimeAmount)
         )));
@@ -4771,6 +4849,7 @@ function renderTherapistAttendance() {
         }
     });
     renderTherapistAttendanceCalendar();
+    renderTherapistOvertimeCalendar();
 }
 
 function openTherapistAttendanceManager() {
@@ -4827,6 +4906,9 @@ async function loadTherapistAttendance(date) {
         therapistAttendanceMonth = data.month || month;
         therapistAttendanceOffByDate = data.off_by_date && typeof data.off_by_date === 'object'
             ? data.off_by_date
+            : {};
+        therapistAttendanceOvertimeByDate = data.overtime_by_date && typeof data.overtime_by_date === 'object'
+            ? data.overtime_by_date
             : {};
         renderTherapistAttendance();
         if (calendarMode === 'day') renderReservations();
@@ -4898,6 +4980,9 @@ document.querySelectorAll('.go-therapist-attendance').forEach((button) => {
 });
 document.querySelectorAll('.go-stock').forEach((button) => {
     button.onclick = () => openPage('stok');
+});
+document.querySelectorAll('.remuneration-guide-go').forEach((button) => {
+    button.onclick = () => openPage(button.dataset.remunerationPage);
 });
 if (location.hash) openPage(location.hash.slice(1));
 
@@ -4978,8 +5063,8 @@ document.getElementById('stock-history-from')?.addEventListener('change', () => 
 document.getElementById('stock-history-to')?.addEventListener('change', () => loadStockHistoryPage(1).catch((error) => toast(error.message, true)));
 document.getElementById('cash-entry-type-filter')?.addEventListener('change', renderCashEntryHistory);
 document.getElementById('cash-entry-search')?.addEventListener('input', renderCashEntryHistory);
-document.getElementById('cash-entry-from')?.addEventListener('change', renderCashEntryHistory);
-document.getElementById('cash-entry-to')?.addEventListener('change', renderCashEntryHistory);
+document.getElementById('cash-entry-from')?.addEventListener('change', reloadCashFlowFromHistoryRange);
+document.getElementById('cash-entry-to')?.addEventListener('change', reloadCashFlowFromHistoryRange);
 document.getElementById('open-payment')?.addEventListener('click', () => {
     if (!selectedReservation) {
         toast('Pilih antrean terlebih dahulu.', true);

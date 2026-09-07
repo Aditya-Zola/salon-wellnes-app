@@ -45,6 +45,7 @@
             'icon' => 'account_balance_wallet',
             'permission' => 'payroll.view',
             'children' => [
+                ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
                 ['page' => 'penggajian', 'label' => 'Input & Edit Remunerasi'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
             ],
