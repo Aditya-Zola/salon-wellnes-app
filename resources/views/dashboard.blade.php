@@ -24,7 +24,7 @@
         @cannot('memberships.view') #membership{display:none!important} @endcannot
         @cannot('products.view') #stok,#stok-riwayat,#stok-opname,.stock-mini .link{display:none!important} @endcannot
         @cannot('finance.view') #keuangan-arus-kas,#keuangan-laba-rugi,#keuangan-neraca{display:none!important} @endcannot
-        @cannot('payroll.view') #penggajian,#remunerasi{display:none!important} @endcannot
+        @cannot('payroll.view') #panduan-remunerasi,#penggajian,#remunerasi{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
         @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
         @cannot('cashier.process') #open-payment,#add-extra,.cashier-create-transaction{display:none!important} @endcannot
@@ -109,9 +109,14 @@
         <section class="page" id="kehadiran-terapis">
             <div class="therapist-attendance-layout">
                 <div class="card therapist-attendance-page"><div id="therapist-attendance" aria-live="polite"></div></div>
-                <aside class="card therapist-attendance-calendar-card" aria-label="Kalender kehadiran terapis">
-                    <div id="therapist-attendance-calendar" aria-live="polite"></div>
-                </aside>
+                <div class="therapist-attendance-calendars">
+                    <aside class="card therapist-attendance-calendar-card" aria-label="Kalender kehadiran terapis">
+                        <div id="therapist-attendance-calendar" aria-live="polite"></div>
+                    </aside>
+                    <aside class="card therapist-attendance-calendar-card therapist-overtime-calendar-card" aria-label="Kalender lembur terapis">
+                        <div id="therapist-overtime-calendar" aria-live="polite"></div>
+                    </aside>
+                </div>
             </div>
         </section>
 
@@ -220,6 +225,19 @@
         <section class="page finance-page" id="keuangan-laba-rugi"><article class="card finance-report-card"><div class="card-head"><div><h3>Laba-rugi sistem</h3><p>Pendapatan transaksi dikurangi HPP tersimpan dan biaya operasional.</p></div></div><div class="finance-statement" id="profit-loss-report"></div></article></section>
 
         <section class="page finance-page" id="keuangan-neraca"><article class="card finance-report-card"><div class="card-head"><div><h3>Neraca dasar</h3><p>Posisi kas, setiap rekening pembayaran, dan nilai stok berdasarkan HPP.</p></div></div><div class="finance-statement" id="balance-sheet-report"></div></article></section>
+
+        <section class="page remuneration-guide-page" id="panduan-remunerasi">
+            <div class="remuneration-guide-copy">
+                <div class="remuneration-guide-title"><span class="material-symbols-outlined" aria-hidden="true">info</span><h3>Panduan remunerasi</h3></div>
+                <p class="remuneration-guide-lead">Gunakan halaman ini untuk mengetahui sumber setiap angka pada rekap remunerasi.</p>
+                <ol>
+                    <li><strong>JHK, GP, bonus, tunjangan, mangkir, telat, kasbon, dan potongan lain diisi manual per periode.</strong><p>Data ini merupakan kebijakan penggajian salon, sehingga petugas perlu mengisinya untuk setiap karyawan pada periode gaji yang sesuai. Jumlah hari kerja dibayar dan bayaran per hari digunakan sistem untuk menghitung gaji pokok periode. Bonus, tunjangan, mangkir, keterlambatan, kasbon, serta potongan lain juga dicatat pada halaman yang sama. Isi atau ubah datanya di <button type="button" class="remuneration-guide-go" data-remuneration-page="penggajian">Input &amp; Edit Remunerasi</button>.</p></li>
+                    <li><strong>Status masuk, libur, dan lembur diisi manual per tanggal.</strong><p>Catatan kehadiran digunakan untuk mencatat kondisi kerja karyawan pada setiap tanggal. Pilih status masuk, libur, atau lembur pada halaman Kehadiran Terapis. Jika memilih lembur, nominal lembur wajib diisi pada tanggal yang sama agar masuk ke kalender lembur dan rekap KOM-LEM. Status libur adalah catatan kehadiran; keputusan hari tersebut dibayar atau tidak tetap ditentukan melalui JHK atau mangkir pada data remunerasi. Buka <button type="button" class="remuneration-guide-go" data-remuneration-page="kehadiran-terapis">Kehadiran Terapis</button>.</p></li>
+                    <li><strong>Komisi treatment dihitung otomatis dari transaksi yang sudah lunas.</strong><p>Sistem mengambil treatment yang telah dibayar di kasir, lalu memasukkan komisi kepada therapist yang tercatat mengerjakan treatment tersebut. Jika satu treatment dikerjakan lebih dari satu therapist, pembagian mengikuti profil komisi yang diatur pada menu Treatment. Komisi tidak perlu diinput ulang pada remunerasi dan akan tercatat pada tanggal transaksi dinyatakan lunas.</p></li>
+                    <li><strong>Pendapatan kotor, total potongan, pendapatan bersih, rekap KOM-LEM, dan slip Excel dihitung otomatis.</strong><p>Sistem menjumlahkan gaji pokok, komisi, lembur, bonus, tunjangan, dan TIP sebagai pendapatan kotor. Setelah itu sistem mengurangi mangkir, keterlambatan, kasbon, serta potongan lain untuk memperoleh pendapatan bersih. Gunakan halaman <button type="button" class="remuneration-guide-go" data-remuneration-page="remunerasi">Rekap &amp; Export Excel</button> untuk memeriksa hasil per karyawan, melihat detail sumber angka, dan mengunduh rekap beserta slip gaji.</p></li>
+                </ol>
+            </div>
+        </section>
 
         <section class="page" id="penggajian"><div class="toolbar"><div><h3>Data remunerasi</h3><p>Masukkan atau ubah data per karyawan dan periode gaji.</p></div><div class="payroll-toolbar-actions"><p>Komisi treatment diambil otomatis dari transaksi lunas.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Setelah data tersimpan, unduh rekap dan seluruh slip melalui submenu Rekap &amp; Export Excel.</div></section>
 

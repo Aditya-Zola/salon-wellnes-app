@@ -2347,6 +2347,12 @@ class SalonOperationsTest extends TestCase
             'overtime_amount' => 15000,
         ]);
 
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/therapist-kehadiran?date='.$date.'&month='.substr($date, 0, 7))
+            ->assertOk()
+            ->assertJsonPath("overtime_by_date.{$date}.0.name", 'Dita')
+            ->assertJsonPath("overtime_by_date.{$date}.0.overtime_amount", 15000);
+
         $report = $this->actingAs($this->admin)
             ->getJson('/operasional/penggajian/rekap?from='.$date.'&to='.$date)
             ->assertOk();
