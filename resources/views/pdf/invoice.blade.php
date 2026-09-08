@@ -87,9 +87,6 @@
         @foreach ($payments as $payment)
             <p>
                 {{ $payment->method_name }}
-                @if ($payment->charge_amount > 0)
-                    · Charge {{ rtrim(rtrim(number_format((float) $payment->charge_percent, 4, '.', ''), '0'), '.') }}%
-                @endif
                 @if ($payment->reference_number)
                     · {{ $payment->reference_number }}
                 @endif
