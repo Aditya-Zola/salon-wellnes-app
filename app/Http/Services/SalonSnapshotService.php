@@ -120,13 +120,13 @@ class SalonSnapshotService
                     $join->on('reservation.id', '=', 'activity.subject_id')
                         ->where('activity.subject_type', '=', 'reservation');
                 })
-                ->leftJoin('reservation_items as reservationItem', function ($join): void {
-                    $join->on('reservationItem.id', '=', 'activity.subject_id')
+                ->leftJoin('reservation_items as reservation_item', function ($join): void {
+                    $join->on('reservation_item.id', '=', 'activity.subject_id')
                         ->where('activity.subject_type', '=', 'reservation_item');
                 })
-                ->leftJoin('reservations as itemReservation', 'itemReservation.id', '=', 'reservationItem.reservation_id')
-                ->leftJoin('customers as reservationCustomer', 'reservationCustomer.id', '=', 'reservation.customer_id')
-                ->leftJoin('customers as itemCustomer', 'itemCustomer.id', '=', 'itemReservation.customer_id')
+                ->leftJoin('reservations as item_reservation', 'item_reservation.id', '=', 'reservation_item.reservation_id')
+                ->leftJoin('customers as reservation_customer', 'reservation_customer.id', '=', 'reservation.customer_id')
+                ->leftJoin('customers as item_customer', 'item_customer.id', '=', 'item_reservation.customer_id')
                 ->latest('activity.created_at')
                 ->limit(50)
                 ->get([
@@ -138,8 +138,8 @@ class SalonSnapshotService
                     'activity.metadata',
                     'activity.created_at',
                     'user.name as user_name',
-                    DB::raw('COALESCE(reservationCustomer.name, itemCustomer.name) as reservation_customer_name'),
-                    DB::raw('COALESCE(reservation.queue_number, itemReservation.queue_number) as reservation_queue_number'),
+                    DB::raw('COALESCE(reservation_customer.name, item_customer.name) as reservation_customer_name'),
+                    DB::raw('COALESCE(reservation.queue_number, item_reservation.queue_number) as reservation_queue_number'),
                 ])
                 ->map(function (object $activity): object {
                     $activity->metadata = $activity->metadata ? json_decode($activity->metadata, true) : null;

@@ -13,21 +13,27 @@ return new class extends Migration
         $now = now();
 
         $sortOrder = 35;
+        $permissionRows = [];
         foreach ([
             'therapist_attendance.view' => 'Lihat kehadiran terapis',
             'therapist_attendance.manage' => 'Kelola kehadiran terapis',
         ] as $name => $label) {
-            DB::table($permissions)->updateOrInsert(
-                ['name' => $name, 'guard_name' => 'web'],
-                [
-                    'group' => 'Kehadiran Terapis',
-                    'label' => $label,
-                    'sort_order' => $sortOrder++,
-                    'updated_at' => $now,
-                    'created_at' => $now,
-                ],
-            );
+            $permissionRows[] = [
+                'name' => $name,
+                'guard_name' => 'web',
+                'group' => 'Kehadiran Terapis',
+                'label' => $label,
+                'sort_order' => $sortOrder++,
+                'updated_at' => $now,
+                'created_at' => $now,
+            ];
         }
+
+        DB::table($permissions)->upsert(
+            $permissionRows,
+            ['name', 'guard_name'],
+            ['group', 'label', 'sort_order', 'updated_at'],
+        );
 
         $permissionIds = DB::table($permissions)
             ->where('guard_name', 'web')

@@ -12,7 +12,7 @@ return new class extends Migration
             // operating masuk laba-rugi; tiga kelompok lain hanya memengaruhi
             // posisi neraca agar modal/prive/pembelian persediaan tidak terbaca
             // sebagai laba atau biaya operasional.
-            $table->string('report_group', 30)->default('operating')->after('type');
+            $table->string('report_group', 30)->default('operating');
             $table->index(['report_group', 'entry_date']);
         });
     }

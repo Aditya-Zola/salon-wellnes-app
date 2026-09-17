@@ -10,7 +10,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('therapist_ratings', function (Blueprint $table): void {
-            $table->unsignedTinyInteger('stars')->default(3)->after('rating');
+            $table->unsignedTinyInteger('stars')->default(3);
         });
 
         // Riwayat versi awal tetap dibawa ke skala bintang. Nilai tengah

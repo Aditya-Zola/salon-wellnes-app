@@ -9,14 +9,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('permissions', function (Blueprint $table) {
-            $table->string('group')->default('general')->after('guard_name');
-            $table->string('label')->nullable()->after('group');
-            $table->unsignedSmallInteger('sort_order')->default(0)->after('label');
+            $table->string('group')->default('general');
+            $table->string('label')->nullable();
+            $table->unsignedSmallInteger('sort_order')->default(0);
         });
 
         Schema::table('roles', function (Blueprint $table) {
-            $table->string('display_name')->nullable()->after('guard_name');
-            $table->boolean('is_system')->default(false)->after('display_name');
+            $table->string('display_name')->nullable();
+            $table->boolean('is_system')->default(false);
         });
     }
 

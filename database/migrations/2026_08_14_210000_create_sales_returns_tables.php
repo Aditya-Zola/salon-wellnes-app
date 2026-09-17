@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('transactions', function (Blueprint $table): void {
-            $table->unsignedBigInteger('refunded_amount')->default(0)->after('change_amount');
+            $table->unsignedBigInteger('refunded_amount')->default(0);
         });
 
         Schema::create('sales_return_sequences', function (Blueprint $table): void {

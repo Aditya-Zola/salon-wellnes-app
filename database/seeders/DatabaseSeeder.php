@@ -32,7 +32,7 @@ class DatabaseSeeder extends Seeder
         );
 
         $accounts = [
-            ['name' => 'Owner Selesa', 'username' => 'owner.selesa', 'email' => 'superadmin@gmail.com', 'role' => 'super_admin'],
+            ['name' => 'Owner Selesa', 'username' => 'superadmin', 'email' => 'superadmin@gmail.com', 'role' => 'super_admin'],
             ['name' => 'Admin Selesa', 'username' => 'admin.selesa', 'email' => 'admin@gmail.com', 'role' => 'admin'],
             ['name' => 'Marketing Selesa', 'username' => 'marketing.selesa', 'email' => 'marketing@gmail.com', 'role' => 'marketing'],
             ['name' => 'Kasir Selesa', 'username' => 'kasir.selesa', 'email' => 'kasir@gmail.com', 'role' => 'kasir'],
