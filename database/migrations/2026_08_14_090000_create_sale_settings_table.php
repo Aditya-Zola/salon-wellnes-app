@@ -15,8 +15,8 @@ return new class extends Migration
         });
 
         Schema::table('payment_methods', function (Blueprint $table): void {
-            $table->string('account_name', 150)->nullable()->after('name');
-            $table->string('account_number', 100)->nullable()->after('account_name');
+            $table->string('account_name', 150)->nullable();
+            $table->string('account_number', 100)->nullable();
         });
     }
 

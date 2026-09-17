@@ -12,21 +12,21 @@ return new class extends Migration
             // Source fields following the salon's manual remuneration workbook.
             // They stay editable per employee and period; totals are calculated
             // by the application, never typed as a final salary.
-            $table->decimal('paid_work_days', 6, 2)->default(0)->after('base_salary');
-            $table->unsignedBigInteger('daily_rate')->default(0)->after('paid_work_days');
-            $table->decimal('overtime_days', 6, 2)->default(0)->after('overtime');
-            $table->unsignedBigInteger('meal_allowance')->default(0)->after('overtime_days');
-            $table->unsignedBigInteger('target_bonus')->default(0)->after('bonus');
-            $table->unsignedBigInteger('service_bonus')->default(0)->after('target_bonus');
-            $table->unsignedBigInteger('attendance_bonus')->default(0)->after('service_bonus');
-            $table->unsignedBigInteger('attendance_allowance')->default(0)->after('meal_allowance');
-            $table->unsignedBigInteger('other_allowance')->default(0)->after('attendance_allowance');
-            $table->unsignedBigInteger('tip_deposit')->default(0)->after('other_allowance');
-            $table->decimal('absence_days', 6, 2)->default(0)->after('late_duration_minutes');
-            $table->unsignedBigInteger('absence_deduction')->default(0)->after('absence_days');
-            $table->unsignedBigInteger('late_rate_per_minute')->default(0)->after('late_deduction');
-            $table->unsignedBigInteger('cash_advance')->default(0)->after('other_deduction');
-            $table->text('notes')->nullable()->after('cash_advance');
+            $table->decimal('paid_work_days', 6, 2)->default(0);
+            $table->unsignedBigInteger('daily_rate')->default(0);
+            $table->decimal('overtime_days', 6, 2)->default(0);
+            $table->unsignedBigInteger('meal_allowance')->default(0);
+            $table->unsignedBigInteger('target_bonus')->default(0);
+            $table->unsignedBigInteger('service_bonus')->default(0);
+            $table->unsignedBigInteger('attendance_bonus')->default(0);
+            $table->unsignedBigInteger('attendance_allowance')->default(0);
+            $table->unsignedBigInteger('other_allowance')->default(0);
+            $table->unsignedBigInteger('tip_deposit')->default(0);
+            $table->decimal('absence_days', 6, 2)->default(0);
+            $table->unsignedBigInteger('absence_deduction')->default(0);
+            $table->unsignedBigInteger('late_rate_per_minute')->default(0);
+            $table->unsignedBigInteger('cash_advance')->default(0);
+            $table->text('notes')->nullable();
         });
     }
 
