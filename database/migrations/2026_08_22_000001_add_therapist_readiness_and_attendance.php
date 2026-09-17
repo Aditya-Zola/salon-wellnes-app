@@ -11,7 +11,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('reservation_items', function (Blueprint $table) {
-            $table->dateTime('scheduled_ready_at')->nullable()->after('scheduled_end_at');
+            $table->dateTime('scheduled_ready_at')->nullable();
             $table->index('scheduled_ready_at', 'reservation_items_ready_index');
         });
 

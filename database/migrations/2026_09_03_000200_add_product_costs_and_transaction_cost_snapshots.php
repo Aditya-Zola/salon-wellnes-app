@@ -11,14 +11,14 @@ return new class extends Migration
         Schema::table('products', function (Blueprint $table): void {
             // HPP untuk satu satuan pakai. Contoh: bila stok dihitung dalam ml,
             // maka nominal ini adalah HPP untuk setiap ml, bukan per botol beli.
-            $table->unsignedBigInteger('cost_price')->default(0)->after('selling_price');
+            $table->unsignedBigInteger('cost_price')->default(0);
         });
 
         Schema::table('transaction_items', function (Blueprint $table): void {
             // Nilai ini disalin ketika transaksi dibayar agar laporan lama tidak
             // ikut berubah saat HPP pada master produk diperbarui.
-            $table->unsignedBigInteger('unit_cost')->default(0)->after('unit_price');
-            $table->unsignedBigInteger('cost_amount')->default(0)->after('total_amount');
+            $table->unsignedBigInteger('unit_cost')->default(0);
+            $table->unsignedBigInteger('cost_amount')->default(0);
         });
     }
 

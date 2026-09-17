@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employee_attendances', function (Blueprint $table) {
-            $table->unsignedBigInteger('overtime_amount')->default(0)->after('status');
+            $table->unsignedBigInteger('overtime_amount')->default(0);
         });
     }
 

@@ -57,7 +57,7 @@ return new class extends Migration
         }
 
         Schema::table('users', function (Blueprint $table) {
-            $table->string('role')->nullable()->after('password');
+            $table->string('role')->nullable();
         });
 
         $roleNames = DB::table('model_has_roles')
