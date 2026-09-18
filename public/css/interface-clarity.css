@@ -1,0 +1,795 @@
+/* Shared visual rhythm for the operational dashboard and internal pages. */
+:root {
+    --surface-line: #ded5cd;
+    --surface-muted: #f8f5f2;
+    --focus-ring: rgb(107 74 56 / .18);
+}
+
+.page > .card,
+.page .card,
+.page .toolbar,
+.page .analytics-card,
+.page .payment-revenue-card,
+.page .treatment-card,
+.page .metrics article,
+.access-main .access-card {
+    border: 1px solid var(--surface-line);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 2px 9px rgb(52 36 27 / .045);
+}
+
+.page .card-head,
+.page .toolbar,
+.page .analytics-head {
+    gap: 16px;
+}
+
+.page .card-head h3,
+.page .toolbar h3,
+.page .analytics-head h3 {
+    color: #302721;
+    font-size: clamp(16px, 1.1vw, 19px);
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.page .card-head p,
+.page .toolbar p,
+.page .analytics-head p {
+    color: #706860;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.page .primary,
+.page .secondary,
+.modal .primary,
+.modal .secondary,
+.access-main .access-button {
+    min-height: 42px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    white-space: normal;
+}
+
+.page .secondary,
+.modal .secondary {
+    border: 1px solid #cfc1b6;
+    color: #594132;
+    background: #fff;
+}
+
+.page button:focus-visible,
+.modal button:focus-visible,
+.access-main button:focus-visible,
+.access-main a:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.page input:not([type="radio"]):not([type="checkbox"]),
+.page select,
+.page textarea,
+.modal input:not([type="radio"]):not([type="checkbox"]),
+.modal select,
+.modal textarea,
+.access-main input:not([type="radio"]):not([type="checkbox"]),
+.access-main select,
+.access-main textarea {
+    border-color: var(--surface-line);
+    color: #302721;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.page input:focus,
+.page select:focus,
+.page textarea:focus,
+.modal input:focus,
+.modal select:focus,
+.modal textarea:focus,
+.access-main input:focus,
+.access-main select:focus,
+.access-main textarea:focus {
+    border-color: #86634e;
+    outline: none;
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.modal input::placeholder,
+.page input::placeholder,
+.access-main input::placeholder {
+    color: #8d837c;
+    opacity: 1;
+}
+
+.page .tr:not(.th) {
+    min-height: 54px;
+}
+
+.page .tr.th {
+    color: #635c56;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* Payment rows keep form fields together; charge is a separate optional setting. */
+#kasir .payment-row,
+#kasir .payment-row.fixed-method,
+#kasir .payment-row.fixed-method.is-cash {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 12px;
+    padding: 14px;
+    border-color: var(--surface-line);
+    background: #fff;
+}
+
+#kasir .payment-row:not(.fixed-method).is-cash {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#kasir .payment-row.fixed-method:not(.is-cash) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#kasir .payment-row.fixed-method.has-card-details {
+    grid-template-columns: 1fr;
+}
+
+#kasir .payment-row-head {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid #eee8e2;
+}
+
+#kasir .payment-row-head strong {
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+#kasir .payment-row .remove-payment {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 30px;
+    padding: 5px 8px;
+    border: 1px solid #ead0c9;
+    border-radius: 7px;
+    background: #fff;
+    color: #a0473b;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+#kasir .payment-row .remove-payment[hidden],
+#kasir .payment-row .payment-charge-control[hidden] {
+    display: none;
+}
+
+#kasir .payment-row .remove-payment .material-symbols-outlined {
+    font-size: 16px;
+}
+
+#kasir .payment-row.fixed-method > label:has(.payment-method) {
+    display: none;
+}
+
+#kasir .payment-row > label {
+    min-width: 0;
+    margin: 0;
+    color: #403630;
+    font-size: 12px;
+}
+
+#kasir .payment-row input,
+#kasir .payment-row select {
+    min-height: 42px;
+    margin-top: 6px;
+}
+
+#kasir .payment-row .payment-charge-control {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 11px 12px;
+    border: 1px solid #e8ddd3;
+    border-radius: 8px;
+    background: #faf7f4;
+}
+
+#kasir .payment-charge-label {
+    color: #473a30;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#kasir .payment-row .payment-charge-toggle {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    justify-content: center;
+    width: 64px;
+    min-width: 64px;
+    height: 38px;
+    min-height: 38px;
+    padding: 4px;
+    border: 1px solid #bba99d;
+    border-radius: 999px;
+    background: #ded6d0;
+    transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+#kasir .payment-row .payment-charge-toggle:hover {
+    border-color: #684936;
+    box-shadow: 0 2px 8px rgb(67 43 28 / 10%);
+}
+
+#kasir .payment-row .payment-charge-toggle.active {
+    border-color: #684936;
+    background: #684936;
+}
+
+#kasir .payment-row .payment-charge-toggle.active:hover {
+    background: #553a2b;
+}
+
+#kasir .payment-row .payment-charge-knob {
+    display: block;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+    transform: translateX(-13px);
+    transition: transform .15s ease;
+}
+
+#kasir .payment-row .payment-charge-toggle.active .payment-charge-knob {
+    transform: translateX(13px);
+}
+
+#kasir .payment-row .payment-charge-summary {
+    grid-column: 1;
+    color: #6f655d;
+    font-size: 11px;
+    white-space: normal;
+}
+
+@media (max-width: 760px) {
+    #kasir .payment-row,
+    #kasir .payment-row.fixed-method,
+    #kasir .payment-row.fixed-method.is-cash,
+    #kasir .payment-row:not(.fixed-method).is-cash,
+    #kasir .payment-row.fixed-method:not(.is-cash),
+    #kasir .payment-row.fixed-method.has-card-details {
+        grid-template-columns: 1fr;
+    }
+
+    #kasir .payment-row .payment-charge-control {
+        grid-template-columns: 1fr;
+    }
+
+    #kasir .payment-row .payment-charge-toggle,
+    #kasir .payment-row .payment-charge-summary {
+        grid-column: 1;
+        grid-row: auto;
+    }
+
+    #kasir .payment-row .payment-charge-toggle { justify-self: start; }
+}
+
+/* Reservation form: one reading order, with actions visible while scrolling. */
+#reservation-modal .reservation-modal-box {
+    display: flex;
+    flex-direction: column;
+    width: min(960px, calc(100vw - 32px));
+    max-height: min(900px, calc(100dvh - 32px));
+    overflow: hidden;
+}
+
+#reservation-modal .reservation-modal-head {
+    flex: none;
+    align-items: flex-start;
+    padding: 22px 28px;
+    background: #fff;
+}
+
+#reservation-modal .reservation-modal-head h2 {
+    font-size: 22px;
+    line-height: 1.25;
+}
+
+#reservation-modal .reservation-modal-head p {
+    margin: 6px 0 0;
+    color: #706860;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+#reservation-modal .reservation-form {
+    min-height: 0;
+    padding: 22px 28px 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+#reservation-modal .reservation-form label {
+    color: #403630;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.4;
+}
+
+#reservation-modal .reservation-form input:not([type="radio"]),
+#reservation-modal .reservation-form select,
+#reservation-modal .reservation-form textarea {
+    min-height: 44px;
+    margin-top: 7px;
+    padding: 10px 12px;
+    border-radius: 8px;
+}
+
+#reservation-modal .reservation-form textarea {
+    min-height: 72px;
+}
+
+#reservation-modal .reservation-form .form-grid {
+    gap: 8px 18px;
+}
+
+#reservation-modal .reservation-customer-type,
+#reservation-modal #reservation-deposit-choice {
+    margin: 0 0 20px;
+    padding: 0;
+    border: 0;
+}
+
+#reservation-modal .reservation-customer-type legend,
+#reservation-modal #reservation-deposit-choice legend {
+    margin-bottom: 9px;
+    color: #302721;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+#reservation-modal .reservation-customer-type > label,
+#reservation-modal #reservation-deposit-choice > label {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 40px;
+    margin: 0 8px 7px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--surface-line);
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+}
+
+#reservation-modal .reservation-customer-type > label:has(input:checked),
+#reservation-modal #reservation-deposit-choice > label:has(input:checked) {
+    border-color: #94745f;
+    background: #f8f2ed;
+}
+
+#reservation-modal .reservation-customer-type input[type="radio"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: #765039;
+}
+
+#reservation-modal .reservation-items-head {
+    margin: 20px 0 12px;
+    padding-top: 20px;
+    border-top: 1px solid #e9e1db;
+}
+
+#reservation-modal .reservation-items-head h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+#reservation-modal .reservation-items-head p {
+    margin: 4px 0 0;
+    font-size: 12px;
+}
+
+#reservation-modal #reservation-items {
+    gap: 14px;
+}
+
+#reservation-modal .reservation-item-card {
+    padding: 18px;
+    border: 1px solid #ddd3cb;
+    border-left: 4px solid #a98771;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: none;
+}
+
+#reservation-modal .reservation-item-title {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee8e2;
+}
+
+#reservation-modal .reservation-item-title strong {
+    font-size: 14px;
+}
+
+#reservation-modal .remove-reservation-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 34px;
+    padding: 5px 9px;
+    border-color: #ead0c9;
+    color: #a0473b;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+#reservation-modal .remove-reservation-item .material-symbols-outlined {
+    font-size: 16px;
+}
+
+#reservation-modal .reservation-item-grid {
+    grid-template-columns: minmax(0, 1.4fr) minmax(145px, .65fr) minmax(145px, .7fr);
+    gap: 14px;
+}
+
+#reservation-modal .reservation-item-card label,
+#reservation-modal .staff-row label {
+    font-size: 12px;
+}
+
+#reservation-modal .staff-block {
+    margin-top: 16px;
+    padding-top: 15px;
+    border-top: 1px solid #eee8e2;
+}
+
+#reservation-modal .staff-block-head span {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+#reservation-modal #reservation-deposit-choice {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #e9e1db;
+}
+
+#reservation-modal #reservation-deposit-fields {
+    margin-top: 10px;
+    padding: 16px;
+    border: 1px solid #e8ddd3;
+    border-radius: 9px;
+    background: #faf7f4;
+}
+
+#reservation-modal #reservation-deposit-fields[hidden] {
+    display: none;
+}
+
+#reservation-modal .reservation-notes {
+    display: block;
+    margin: 19px 0 23px;
+}
+
+#reservation-modal .reservation-footer {
+    position: sticky;
+    z-index: 5;
+    bottom: 0;
+    margin: 0 -28px;
+    padding: 14px 28px;
+    border-top: 1px solid #e9e1db;
+    background: #fff;
+    box-shadow: 0 -8px 18px rgb(48 32 23 / .04);
+}
+
+@media (max-width: 760px) {
+    #reservation-modal .reservation-modal-box {
+        width: calc(100vw - 16px);
+        max-height: calc(100dvh - 16px);
+    }
+
+    #reservation-modal .reservation-modal-head {
+        padding: 18px;
+    }
+
+    #reservation-modal .reservation-form {
+        padding: 18px 18px 0;
+    }
+
+    #reservation-modal .reservation-item-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #reservation-modal .reservation-footer {
+        margin: 0 -18px;
+        padding: 12px 18px;
+    }
+}
+/* Payroll: make each amount belong visibly to its column. */
+#penggajian .payroll-card {
+    padding: 0;
+    overflow: hidden;
+}
+
+#penggajian .payroll-table {
+    margin: 0;
+    overflow-x: auto;
+}
+
+#penggajian .payroll-table .tr {
+    gap: 0;
+    min-width: 1120px;
+    padding: 0;
+}
+
+#penggajian .payroll-table .tr:first-child {
+    border-top: 0;
+}
+
+#penggajian .payroll-table .tr > * {
+    min-width: 0;
+    align-self: stretch;
+    padding: 18px 14px;
+    border-right: 1px solid #e9e1db;
+}
+
+#penggajian .payroll-table .tr.th > * {
+    padding-top: 16px;
+    padding-bottom: 16px;
+}
+
+#penggajian .payroll-table .tr > :first-child {
+    padding-left: 18px;
+}
+
+#penggajian .payroll-table .tr > :last-child {
+    padding-right: 18px;
+    border-right: 0;
+}
+
+/* Remuneration recap and its year-based archive. */
+#remunerasi .remuneration-toolbar {
+    gap: 18px;
+    border-color: #e6d9d0;
+    box-shadow: 0 5px 18px rgb(67 43 28 / 5%);
+}
+
+#remunerasi .remuneration-actions {
+    flex-wrap: wrap;
+    gap: 9px;
+}
+
+#remunerasi .remuneration-summary {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+#remunerasi .remuneration-actions button {
+    min-height: 44px;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+#remunerasi #finalize-remuneration {
+    background: #684936;
+    color: #fff;
+}
+
+#remunerasi #finalize-remuneration:hover {
+    background: #553a2b;
+}
+
+#remunerasi #finalize-remuneration:disabled {
+    border-color: #d8cdc5;
+    background: #ddd5cf;
+    color: #8b7d74;
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+#remunerasi .remuneration-table-card {
+    padding-bottom: 0;
+    overflow: hidden;
+}
+
+#remunerasi .remuneration-table .tr {
+    gap: 0;
+    padding: 0;
+}
+
+#remunerasi .remuneration-table .tr > * {
+    min-width: 0;
+    align-self: stretch;
+    padding: 17px 12px;
+    border-right: 1px solid #eee5df;
+}
+
+#remunerasi .remuneration-table .tr > :last-child {
+    border-right: 0;
+}
+
+.remuneration-archive-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 16px;
+    padding: 20px 22px;
+}
+
+.remuneration-archive-toolbar h3,
+.remuneration-archive-detail h3 {
+    margin: 0;
+    font-size: 19px;
+}
+
+.remuneration-archive-toolbar p,
+.remuneration-archive-detail p {
+    margin: 5px 0 0;
+    color: #75675e;
+    font-size: 12px;
+}
+
+.remuneration-archive-actions {
+    display: flex;
+    align-items: end;
+    gap: 10px;
+}
+
+.remuneration-archive-actions label {
+    color: #65554b;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.remuneration-archive-actions input {
+    display: block;
+    width: 105px;
+    min-height: 42px;
+    margin-top: 5px;
+    padding: 8px 10px;
+    border: 1px solid #decfc4;
+    border-radius: 8px;
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+}
+
+.remuneration-archive-actions button,
+.remuneration-archive-card button,
+.remuneration-archive-detail a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 42px;
+    text-decoration: none;
+}
+
+.remuneration-archive-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 13px;
+}
+
+.remuneration-archive-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 178px;
+    padding: 17px;
+    border: 1px solid #e5dcd5;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.remuneration-archive-card.is-saved {
+    border-color: #c9ddce;
+    background: #fbfffc;
+}
+
+.remuneration-archive-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #806251;
+}
+
+.remuneration-archive-card-top em {
+    color: #897a70;
+    font-size: 10px;
+    font-style: normal;
+}
+
+.remuneration-archive-card.is-saved .remuneration-archive-card-top em {
+    color: #287a4c;
+    font-weight: 700;
+}
+
+.remuneration-archive-card h3 {
+    margin: 15px 0 0;
+    font-size: 15px;
+}
+
+.remuneration-archive-card p {
+    margin: 5px 0 14px;
+    color: #786b63;
+    font-size: 11px;
+}
+
+.remuneration-archive-card button {
+    margin-top: auto;
+}
+
+.remuneration-archive-detail {
+    margin-top: 16px;
+    padding: 20px;
+}
+
+.remuneration-archive-detail[hidden] { display: none; }
+
+.remuneration-archive-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 17px;
+    border-bottom: 1px solid #e9e0d9;
+}
+
+.remuneration-archive-detail-head small { color: #806251; font-weight: 700; }
+
+.remuneration-archive-employee-list > div {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr;
+    gap: 15px;
+    padding: 13px 0;
+    border-bottom: 1px solid #eee7e1;
+}
+
+.remuneration-archive-employee-list > div:last-child { border-bottom: 0; }
+.remuneration-archive-employee-list small { display: block; margin-top: 3px; color: #786b63; }
+
+.remuneration-archive-confirm .modal-box { width: min(480px, calc(100vw - 32px)); }
+.remuneration-archive-confirm-body { padding: 18px 20px; }
+.remuneration-archive-confirm-body p { display: flex; justify-content: space-between; gap: 16px; margin: 0; padding: 10px 0; border-bottom: 1px solid #eee7e1; }
+.remuneration-archive-confirm-body small { display: block; margin-top: 14px; color: #776b63; line-height: 1.55; }
+
+@media (max-width: 1100px) {
+    #remunerasi .remuneration-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .remuneration-archive-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+    #remunerasi .remuneration-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .remuneration-archive-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .remuneration-archive-toolbar,
+    .remuneration-archive-detail-head { align-items: stretch; flex-direction: column; }
+    .remuneration-archive-employee-list > div { grid-template-columns: 1fr; gap: 5px; }
+}
+
+@media (max-width: 500px) {
+    #remunerasi .remuneration-summary { grid-template-columns: 1fr; }
+    .remuneration-archive-grid { grid-template-columns: 1fr; }
+    .remuneration-archive-actions { flex-wrap: wrap; }
+}

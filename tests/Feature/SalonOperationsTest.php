@@ -148,6 +148,60 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_reservation_deposit_is_recorded_and_reduces_the_cashier_balance(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $depositMethod = $this->paymentMethod('QRIS-001');
+        $cash = $this->paymentMethod('CASH');
+        $deposit = 50000;
+
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [
+                ['employee_id' => $therapist->id, 'role' => 'primary'],
+            ]),
+        ], [
+            'phone' => '081290000012',
+            'deposit' => [
+                'payment_method_id' => $depositMethod->id,
+                'amount' => $deposit,
+                'reference_number' => 'QRIS-DP-001',
+            ],
+        ])->assertCreated()
+            ->assertJsonPath('reservation.deposit_amount', $deposit)
+            ->assertJsonPath('reservation.deposit.payment_method_name', $depositMethod->name);
+
+        $reservationId = (int) $reservation->json('id');
+        $this->assertDatabaseHas('reservation_deposits', [
+            'reservation_id' => $reservationId,
+            'payment_method_id' => $depositMethod->id,
+            'amount' => $deposit,
+            'status' => 'confirmed',
+        ]);
+
+        $snapshot = $this->actingAs($this->cashier)->getJson('/operasional/data')->assertOk()->json();
+        $snapshotReservation = collect($snapshot['reservations'])->firstWhere('id', $reservationId);
+        $this->assertSame($deposit, $snapshotReservation['deposit_amount']);
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [[
+                    'payment_method_id' => $cash->id,
+                    'amount' => (int) $treatment->normal_price - $deposit,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('base_total', (int) $treatment->normal_price)
+            ->assertJsonPath('deposit_amount', $deposit)
+            ->assertJsonPath('remaining_base_total', (int) $treatment->normal_price - $deposit);
+
+        $this->assertDatabaseHas('transaction_payments', [
+            'payment_method_id' => $cash->id,
+            'base_amount' => (int) $treatment->normal_price - $deposit,
+        ]);
+    }
+
     public function test_payroll_can_be_created_for_a_registered_employee(): void
     {
         $employee = $this->employee('EMP-SARI');
@@ -307,6 +361,64 @@ class SalonOperationsTest extends TestCase
             ->get("/operasional/penggajian/{$payrollId}/slip.pdf")
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_finalized_remuneration_archive_keeps_its_snapshot_when_source_changes(): void
+    {
+        $employee = $this->employee('EMP-SARI');
+        $from = today()->startOfMonth()->toDateString();
+        $to = today()->toDateString();
+        $this->actingAs($this->admin)->postJson('/operasional/penggajian', [
+            'employee_id' => $employee->id,
+            'period' => today()->format('Y-m'),
+            'base_salary' => 3000000,
+            'bonus' => 0,
+            'overtime' => 0,
+            'late_duration_minutes' => 0,
+            'late_deduction' => 0,
+            'other_deduction' => 0,
+        ])->assertCreated();
+
+        $missingEmployeeId = DB::table('employees')->insertGetId([
+            'code' => 'EMP-ARCHIVE-MISSING',
+            'name' => 'Belum Diinput',
+            'position' => 'Terapis',
+            'is_service_provider' => true,
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian/arsip', ['from' => $from, 'to' => $to])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Lengkapi data penggajian seluruh karyawan sebelum finalisasi (5/6 terisi).');
+
+        DB::table('employees')->where('id', $missingEmployeeId)->update(['active' => false]);
+        $created = $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian/arsip', ['from' => $from, 'to' => $to])
+            ->assertCreated();
+        $id = $created->json('id');
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/penggajian/arsip?year='.today()->format('Y'))
+            ->assertOk()
+            ->assertJsonCount(1);
+
+        $original = $this->actingAs($this->admin)
+            ->getJson("/operasional/penggajian/arsip/{$id}")
+            ->assertOk()
+            ->json('snapshot.summary.net_income');
+        DB::table('payrolls')->where('employee_id', $employee->id)->update(['base_salary' => 9000000]);
+        $this->actingAs($this->admin)
+            ->getJson("/operasional/penggajian/arsip/{$id}")
+            ->assertOk()
+            ->assertJsonPath('snapshot.summary.net_income', $original);
+        $this->actingAs($this->admin)
+            ->postJson('/operasional/penggajian/arsip', ['from' => $from, 'to' => $to])
+            ->assertUnprocessable();
+        $this->actingAs($this->admin)
+            ->get("/operasional/penggajian/rekap/ekspor?archive_id={$id}")
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     public function test_remuneration_recap_uses_transaction_sources_and_can_be_exported_for_excel(): void

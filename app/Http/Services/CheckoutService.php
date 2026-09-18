@@ -58,11 +58,24 @@ class CheckoutService
 
             abort_if($baseTotal <= 0, 422, 'Transaksi tanpa nilai pembayaran belum didukung.');
 
-            [$payments, $paymentChargeAmount] = $this->resolvePayments($data, $baseTotal);
+            $deposits = DB::table('reservation_deposits')
+                ->where('reservation_id', $reservationId)
+                ->where('status', 'confirmed')
+                ->lockForUpdate()
+                ->get(['amount']);
+            $depositAmount = $this->sumMoney($deposits->map(fn (object $deposit): int => (int) $deposit->amount));
+            if ($depositAmount >= $baseTotal) {
+                throw ValidationException::withMessages([
+                    'reservation_id' => ['Total DP sama dengan atau melebihi total akhir. Periksa diskon atau harga reservasi sebelum pelunasan.'],
+                ]);
+            }
+            $remainingBaseTotal = $baseTotal - $depositAmount;
+
+            [$payments, $paymentChargeAmount] = $this->resolvePayments($data, $remainingBaseTotal);
             $total = $this->safeAdd($baseTotal, $paymentChargeAmount);
             $changeAmount = $this->sumMoney(collect($payments)->map(
                 fn (array $payment): int => $payment['tendered_amount'],
-            )) - $total;
+            )) - $this->safeAdd($remainingBaseTotal, $paymentChargeAmount);
             $idempotencyKey = trim((string) ($data['idempotency_key'] ?? '')) ?: "checkout:reservation:{$reservationId}";
             $reusedKey = DB::table('transactions')->where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
 
@@ -210,6 +223,7 @@ class CheckoutService
                     'discount_amount' => $discountAmount,
                     'payment_charge_amount' => $paymentChargeAmount,
                     'total' => $total,
+                    'deposit_amount' => $depositAmount,
                     'payment_method_ids' => collect($payments)->pluck('method.id')->all(),
                 ],
             );
@@ -219,6 +233,8 @@ class CheckoutService
                 'number' => $number,
                 'total' => $total,
                 'base_total' => $baseTotal,
+                'deposit_amount' => $depositAmount,
+                'remaining_base_total' => $remainingBaseTotal,
                 'payment_charge_amount' => $paymentChargeAmount,
                 'paid_amount' => $total,
                 'change_amount' => $changeAmount,

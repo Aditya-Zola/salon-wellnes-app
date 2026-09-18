@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/scheduling.css') }}?v={{ filemtime(public_path('css/scheduling.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
     <style>
         @cannot('reservations.view') #reservasi-antrean,#reservasi-kalender,.go-reservation{display:none!important} @endcannot
         @cannot('therapist_attendance.view') #kehadiran-terapis,.dashboard-therapist-attendance,.go-therapist-attendance{display:none!important} @endcannot
@@ -24,7 +25,7 @@
         @cannot('memberships.view') #membership{display:none!important} @endcannot
         @cannot('products.view') #stok,#stok-riwayat,#stok-opname,.stock-mini .link{display:none!important} @endcannot
         @cannot('finance.view') #keuangan-arus-kas,#keuangan-laba-rugi,#keuangan-neraca{display:none!important} @endcannot
-        @cannot('payroll.view') #panduan-remunerasi,#penggajian,#remunerasi{display:none!important} @endcannot
+        @cannot('payroll.view') #panduan-remunerasi,#penggajian,#remunerasi,#arsip-remunerasi{display:none!important} @endcannot
         @cannot('activity.view') #log{display:none!important} @endcannot
         @cannot('reservations.create') .open-reservation{display:none!important} @endcannot
         @cannot('cashier.process') #open-payment,#add-extra,.cashier-create-transaction{display:none!important} @endcannot
@@ -229,17 +230,18 @@
         <section class="page remuneration-guide-page" id="panduan-remunerasi">
             <div class="remuneration-guide-copy">
                 <div class="remuneration-guide-title"><span class="material-symbols-outlined" aria-hidden="true">info</span><h3>Panduan remunerasi</h3></div>
-                <p class="remuneration-guide-lead">Gunakan halaman ini untuk mengetahui sumber setiap angka pada rekap remunerasi.</p>
+                <p class="remuneration-guide-lead">Alur penggajian: catat kehadiran, isi komponen gaji per karyawan dan periode, lalu periksa rekap sebelum mengunduh slip.</p>
                 <ol>
-                    <li><strong>JHK, GP, bonus, tunjangan, mangkir, telat, kasbon, dan potongan lain diisi manual per periode.</strong><p>Data ini merupakan kebijakan penggajian salon, sehingga petugas perlu mengisinya untuk setiap karyawan pada periode gaji yang sesuai. Jumlah hari kerja dibayar dan bayaran per hari digunakan sistem untuk menghitung gaji pokok periode. Bonus, tunjangan, mangkir, keterlambatan, kasbon, serta potongan lain juga dicatat pada halaman yang sama. Isi atau ubah datanya di <button type="button" class="remuneration-guide-go" data-remuneration-page="penggajian">Input &amp; Edit Remunerasi</button>.</p></li>
+                    <li><strong>Isi komponen gaji untuk setiap karyawan dan periode.</strong><p>Di menu <button type="button" class="remuneration-guide-go" data-remuneration-page="penggajian">Penggajian</button>, pilih periode gaji lalu isi hari kerja dibayar, bayaran per hari, bonus, tunjangan, mangkir, keterlambatan, kasbon, dan potongan lain sesuai kebijakan salon. Gaji pokok periode dihitung dari hari dibayar dan bayaran per hari. Bulan berikutnya dibuat sebagai periode baru; data bulan sebelumnya tidak direset.</p></li>
                     <li><strong>Status masuk, libur, dan lembur diisi manual per tanggal.</strong><p>Catatan kehadiran digunakan untuk mencatat kondisi kerja karyawan pada setiap tanggal. Pilih status masuk, libur, atau lembur pada halaman Kehadiran Terapis. Jika memilih lembur, nominal lembur wajib diisi pada tanggal yang sama agar masuk ke kalender lembur dan rekap KOM-LEM. Status libur adalah catatan kehadiran; keputusan hari tersebut dibayar atau tidak tetap ditentukan melalui JHK atau mangkir pada data remunerasi. Buka <button type="button" class="remuneration-guide-go" data-remuneration-page="kehadiran-terapis">Kehadiran Terapis</button>.</p></li>
                     <li><strong>Komisi treatment dihitung otomatis dari transaksi yang sudah lunas.</strong><p>Sistem mengambil treatment yang telah dibayar di kasir, lalu memasukkan komisi kepada therapist yang tercatat mengerjakan treatment tersebut. Jika satu treatment dikerjakan lebih dari satu therapist, pembagian mengikuti profil komisi yang diatur pada menu Treatment. Komisi tidak perlu diinput ulang pada remunerasi dan akan tercatat pada tanggal transaksi dinyatakan lunas.</p></li>
-                    <li><strong>Pendapatan kotor, total potongan, pendapatan bersih, rekap KOM-LEM, dan slip Excel dihitung otomatis.</strong><p>Sistem menjumlahkan gaji pokok, komisi, lembur, bonus, tunjangan, dan TIP sebagai pendapatan kotor. Setelah itu sistem mengurangi mangkir, keterlambatan, kasbon, serta potongan lain untuk memperoleh pendapatan bersih. Gunakan halaman <button type="button" class="remuneration-guide-go" data-remuneration-page="remunerasi">Rekap &amp; Export Excel</button> untuk memeriksa hasil per karyawan, melihat detail sumber angka, dan mengunduh rekap beserta slip gaji.</p></li>
+                    <li><strong>Periksa hasil, lalu unduh rekap dan slip gaji.</strong><p>Sistem menjumlahkan gaji pokok, komisi, lembur, bonus, tunjangan, dan TIP; kemudian mengurangi mangkir, keterlambatan, kasbon, serta potongan lain. Di <button type="button" class="remuneration-guide-go" data-remuneration-page="remunerasi">Rekap &amp; Export Excel</button>, pilih rentang tanggal, periksa detail tiap karyawan, lalu unduh hasilnya. Tanggal gajian dan cutoff adalah penanda periode, bukan tombol pembayaran atau reset.</p></li>
+                    <li><strong>Pembayaran gaji belum dicatat otomatis.</strong><p>Saat ini menyimpan data atau mengunduh slip tidak menandai gaji sebagai sudah dibayar. Belum ada tombol pembayaran gaji atau pencatatan tanggal dan nominal gaji yang benar-benar dibayarkan di alur ini.</p></li>
                 </ol>
             </div>
         </section>
 
-        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Data remunerasi</h3><p>Masukkan atau ubah data per karyawan dan periode gaji.</p></div><div class="payroll-toolbar-actions"><p>Komisi treatment diambil otomatis dari transaksi lunas.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data</button></div></div><div class="card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Setelah data tersimpan, unduh rekap dan seluruh slip melalui submenu Rekap &amp; Export Excel.</div></section>
+        <section class="page" id="penggajian"><div class="toolbar"><div><h3>Penggajian</h3><p>Masukkan atau ubah komponen gaji per karyawan dan periode.</p></div><div class="payroll-toolbar-actions"><p>Komisi treatment diambil otomatis dari transaksi lunas.</p><button type="button" class="primary" id="open-payroll"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data</button></div></div><div class="card payroll-card"><div class="table payroll-table" id="payroll-table"></div></div><div class="notice">ⓘ Data tersimpan per periode, tidak direset setelah gajian. Periksa dan unduh slip di Rekap &amp; Export Excel; pembayaran gaji belum tercatat otomatis.</div></section>
 
         <section class="page remuneration-page" id="remunerasi">
             <div class="remuneration-toolbar">
@@ -247,6 +249,8 @@
                 <div class="remuneration-actions">
                     <label>Dari<input id="remuneration-from" type="date" aria-label="Tanggal awal rekap remunerasi"></label>
                     <label>Sampai<input id="remuneration-to" type="date" aria-label="Tanggal akhir rekap remunerasi"></label>
+                    <button type="button" class="secondary" id="open-remuneration-archives"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>Lihat arsip</button>
+                    @can('payroll.manage') <button type="button" class="primary" id="finalize-remuneration"><span class="material-symbols-outlined" aria-hidden="true">lock</span>Finalisasi periode</button> @endcan
                     <button type="button" class="secondary" id="export-remuneration" title="Satu file berisi rekap dan slip tiap karyawan yang sudah diinput"><span class="material-symbols-outlined" aria-hidden="true">download</span>Ekspor rekap &amp; slip</button>
                     <button type="button" class="secondary" id="remuneration-schedule" title="Atur penanda tanggal gajian dan cutoff"><span class="material-symbols-outlined" aria-hidden="true">settings</span></button>
                 </div>
@@ -255,6 +259,15 @@
             <div class="remuneration-summary" id="remuneration-summary"></div>
             <article class="card remuneration-table-card"><div class="card-head"><div><h3>Per karyawan</h3><p>Komisi terambil dari transaksi lunas; komponen gaji berasal dari input manual.</p></div></div><div class="table remuneration-table" id="remuneration-table"></div></article>
             <div class="notice">ⓘ Tanggal gajian dan cutoff hanya penanda periode. Sistem tidak menghapus atau mereset gaji, komisi, bonus, maupun keterlambatan.</div>
+        </section>
+
+        <section class="page remuneration-archive-page" id="arsip-remunerasi">
+            <div class="remuneration-archive-toolbar card">
+                <div><h3>Arsip Remunerasi</h3><p>Hasil final tersimpan dan tidak dihitung ulang dari data sumber.</p></div>
+                <div class="remuneration-archive-actions"><label>Tahun<input id="remuneration-archive-year" type="number" min="2000" max="2100" aria-label="Tahun arsip remunerasi"></label><button type="button" class="secondary" id="back-to-remuneration"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Kembali ke rekap</button></div>
+            </div>
+            <div class="remuneration-archive-grid" id="remuneration-archive-grid"></div>
+            <div class="remuneration-archive-detail card" id="remuneration-archive-detail" hidden></div>
         </section>
 
         <section class="page" id="log"><div class="card activity-card"><div class="card-head"><div><h3>Aktivitas perubahan data</h3><p>Jejak reservasi, stok opname, penjualan, dan perubahan data penting.</p></div></div><div class="filters activity-filters"><label class="activity-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="activity-search" type="search" placeholder="Cari customer, aktivitas, atau pengguna..." aria-label="Cari log aktivitas"></label><input id="activity-filter-date" type="date" aria-label="Filter tanggal aktivitas"><select id="activity-filter-user" aria-label="Filter pengguna aktivitas"><option value="">Semua pengguna</option></select><select id="activity-filter-action" aria-label="Filter kategori aktivitas"><option value="">Semua kategori aktivitas</option></select></div><div id="activity-list"></div></div></section>
@@ -282,6 +295,18 @@
             </div>
             <div class="reservation-items-head"><div><h3>Daftar treatment</h3><p>Atur waktu dan pembagian therapist untuk setiap treatment.</p></div><button type="button" class="secondary" id="add-reservation-item"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div>
             <div id="reservation-items"></div>
+            @can('cashier.process')
+                <fieldset class="reservation-customer-type" id="reservation-deposit-choice">
+                    <legend>Pembayaran awal</legend>
+                    <label><input type="radio" name="payment_stage" value="unpaid" checked> Belum ada pembayaran</label>
+                    <label><input type="radio" name="payment_stage" value="deposit"> Terima DP</label>
+                    <div class="form-grid" id="reservation-deposit-fields" hidden>
+                        <label>Metode pembayaran<select name="deposit_payment_method_id"></select></label>
+                        <label>Nominal DP<input name="deposit_amount" type="number" min="1" step="1" inputmode="numeric" placeholder="Contoh: 50000"></label>
+                        <label class="full-width">Nomor referensi<input name="deposit_reference_number" maxlength="100" placeholder="Wajib bila transfer/QRIS, opsional untuk tunai"></label>
+                    </div>
+                </fieldset>
+            @endcan
             <label class="reservation-notes">Catatan kunjungan<textarea name="notes" placeholder="Permintaan atau catatan umum pelanggan"></textarea></label>
             <div class="conflict-panel hidden" id="reservation-conflict" role="alert"></div>
             <footer class="reservation-footer"><button type="button" class="secondary close-modal">Batal</button><button class="primary"><span class="material-symbols-outlined" aria-hidden="true">check</span> <span id="reservation-submit-label">Simpan reservasi</span></button></footer>
@@ -307,6 +332,7 @@
         'view_memberships' => auth()->user()->can('memberships.view') || auth()->user()->can('memberships.manage'),
         'manage_therapist_attendance' => auth()->user()->can('therapist_attendance.manage'),
         'manage_payroll' => auth()->user()->can('payroll.manage'),
+        'process_cashier' => auth()->user()->can('cashier.process'),
     ];
 @endphp
 <div id="toast"></div>

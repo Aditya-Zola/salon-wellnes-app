@@ -210,6 +210,58 @@ class ReservationService
                 ];
             }
 
+            $deposit = null;
+            if (isset($data['deposit'])) {
+                abort_unless($request->user()?->can('cashier.process'), 403);
+
+                $depositInput = $data['deposit'];
+                $reservationSubtotal = array_sum(array_column($createdItems, 'unit_price'));
+                $depositAmount = (int) $depositInput['amount'];
+                if ($depositAmount >= $reservationSubtotal) {
+                    throw ValidationException::withMessages([
+                        'deposit.amount' => ['DP harus lebih kecil dari total treatment reservasi. Gunakan pelunasan di kasir untuk pembayaran penuh.'],
+                    ]);
+                }
+
+                $method = DB::table('payment_methods')
+                    ->where('id', (int) $depositInput['payment_method_id'])
+                    ->where('is_active', true)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $method) {
+                    throw ValidationException::withMessages([
+                        'deposit.payment_method_id' => ['Metode pembayaran DP tidak tersedia atau tidak aktif.'],
+                    ]);
+                }
+                $referenceNumber = trim((string) ($depositInput['reference_number'] ?? '')) ?: null;
+                if ($method->requires_reference && ! $referenceNumber) {
+                    throw ValidationException::withMessages([
+                        'deposit.reference_number' => ['Nomor referensi wajib diisi untuk metode pembayaran ini.'],
+                    ]);
+                }
+
+                $depositId = DB::table('reservation_deposits')->insertGetId([
+                    'reservation_id' => $reservationId,
+                    'payment_method_id' => $method->id,
+                    'amount' => $depositAmount,
+                    'reference_number' => $referenceNumber,
+                    'paid_at' => $now,
+                    'status' => 'confirmed',
+                    'notes' => trim((string) ($depositInput['notes'] ?? '')) ?: null,
+                    'received_by' => $request->user()?->id,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                $deposit = [
+                    'id' => $depositId,
+                    'amount' => $depositAmount,
+                    'payment_method_id' => (int) $method->id,
+                    'payment_method_name' => $method->name,
+                    'reference_number' => $referenceNumber,
+                    'paid_at' => $now->toDateTimeString(),
+                ];
+            }
+
             $this->logger->log(
                 $request,
                 'reservation.created',
@@ -241,8 +293,20 @@ class ReservationService
                     'conflict_overridden' => $conflicts !== [],
                     'override_reason' => $conflicts !== [] ? $data['override_reason'] : null,
                     'conflicts' => $conflicts,
+                    'deposit_amount' => $deposit['amount'] ?? 0,
                 ],
             );
+
+            if ($deposit) {
+                $this->logger->log(
+                    $request,
+                    'reservation.deposit_received',
+                    'reservation',
+                    $reservationId,
+                    "Menerima DP Rp{$deposit['amount']} untuk reservasi {$bookingCode}",
+                    ['deposit_id' => $deposit['id'], 'amount' => $deposit['amount'], 'payment_method_id' => $deposit['payment_method_id']],
+                );
+            }
 
             $firstItem = $createdItems[0] ?? null;
             $primaryStaff = collect($firstItem['staff'] ?? [])->firstWhere('role', 'primary')
@@ -264,6 +328,8 @@ class ReservationService
                 'created_at' => $now->toDateTimeString(),
                 'updated_at' => $now->toDateTimeString(),
                 'is_paid' => false,
+                'deposit_amount' => $deposit['amount'] ?? 0,
+                'deposit' => $deposit,
                 'items' => $createdItems,
                 'product_items' => [],
                 'treatment_id' => $firstItem['treatment_id'] ?? null,

@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
 </head>
 <body>
 <div class="app">
