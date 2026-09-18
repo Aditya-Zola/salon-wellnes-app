@@ -331,7 +331,22 @@ class SalonSnapshotService
             ])
             ->groupBy('reservation_id');
 
-        return $reservations->map(function (object $reservation) use ($items, $products, $maySeePhone, $maySeeTransactionDetails): array {
+        $deposits = DB::table('reservation_deposits as deposit')
+            ->join('payment_methods as method', 'method.id', '=', 'deposit.payment_method_id')
+            ->whereIn('deposit.reservation_id', $reservations->pluck('id'))
+            ->where('deposit.status', 'confirmed')
+            ->get([
+                'deposit.reservation_id',
+                'deposit.id',
+                'deposit.amount',
+                'deposit.reference_number',
+                'deposit.paid_at',
+                'method.id as payment_method_id',
+                'method.name as payment_method_name',
+            ])
+            ->keyBy('reservation_id');
+
+        return $reservations->map(function (object $reservation) use ($items, $products, $deposits, $maySeePhone, $maySeeTransactionDetails): array {
             $reservationItems = collect($items->get($reservation->id, []))->map(function (array $item): array {
                 unset($item['reservation_id']);
 
@@ -356,6 +371,15 @@ class SalonSnapshotService
                 'created_at' => $reservation->created_at,
                 'updated_at' => $reservation->updated_at,
                 'is_paid' => $reservation->transaction_status === 'paid',
+                'deposit_amount' => (int) ($deposits->get($reservation->id)?->amount ?? 0),
+                'deposit' => ($deposit = $deposits->get($reservation->id)) ? [
+                    'id' => (int) $deposit->id,
+                    'amount' => (int) $deposit->amount,
+                    'payment_method_id' => (int) $deposit->payment_method_id,
+                    'payment_method_name' => $deposit->payment_method_name,
+                    'reference_number' => $deposit->reference_number,
+                    'paid_at' => $deposit->paid_at,
+                ] : null,
                 'items' => $reservationItems,
                 'product_items' => collect($products->get($reservation->id, []))->map(function (array $item): array {
                     unset($item['reservation_id']);
@@ -1524,6 +1548,17 @@ class SalonSnapshotService
             ->select('payment.payment_method_id', DB::raw('SUM(payment.amount) as total'))
             ->groupBy('payment.payment_method_id')
             ->pluck('total', 'payment.payment_method_id');
+        $depositInflows = DB::table('reservation_deposits as deposit')
+            ->where('deposit.status', 'confirmed')
+            ->whereBetween('deposit.paid_at', [$from->startOfDay(), $to->endOfDay()])
+            ->select('deposit.payment_method_id', DB::raw('SUM(deposit.amount) as total'))
+            ->groupBy('deposit.payment_method_id')
+            ->pluck('total', 'deposit.payment_method_id');
+        $inflows = $inflows->keys()
+            ->merge($depositInflows->keys())
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->mapWithKeys(fn (int $id): array => [$id => (int) $inflows->get($id, 0) + (int) $depositInflows->get($id, 0)]);
         $outflows = DB::table('sales_returns')
             ->where('status', 'posted')
             ->whereBetween('returned_at', [$from->startOfDay(), $to->endOfDay()])
