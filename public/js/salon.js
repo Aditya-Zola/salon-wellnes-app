@@ -33,6 +33,7 @@ const canViewSales = Boolean(capabilities.view_sales);
 const canRefundSales = Boolean(capabilities.refund_sales);
 const canViewMemberships = Boolean(capabilities.view_memberships);
 const canManageTherapistAttendance = Boolean(capabilities.manage_therapist_attendance);
+const canProcessCashier = Boolean(capabilities.process_cashier);
 const headerStatusLabels = {
     paid: 'Lunas',
     scheduled: 'Terjadwal',
@@ -113,8 +114,9 @@ const copy = {
     'keuangan-laba-rugi': ['Laba-Rugi', 'Pendapatan, HPP, biaya operasional, dan laba bersih'],
     'keuangan-neraca': ['Neraca', 'Posisi aset, kewajiban, dan ekuitas salon'],
     'panduan-remunerasi': ['Remunerasi', 'Panduan sumber data manual dan perhitungan otomatis'],
-    penggajian: ['Remunerasi', 'Input dan edit komponen remunerasi per periode'],
+    penggajian: ['Penggajian', 'Komponen gaji per karyawan dan periode'],
     remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
+    'arsip-remunerasi': ['Arsip Remunerasi', 'Riwayat hasil final per tahun dan bulan'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
@@ -602,6 +604,16 @@ function isAlreadyPaid(reservation) {
     );
 }
 
+function reservationDepositAmount(reservation) {
+    return Number(reservation?.deposit_amount ?? reservation?.deposit?.amount ?? 0);
+}
+
+function reservationPaymentLabel(reservation) {
+    if (isAlreadyPaid(reservation)) return 'Lunas';
+    const deposit = reservationDepositAmount(reservation);
+    return deposit > 0 ? `Sudah DP ${money(deposit)}` : 'Belum dibayar';
+}
+
 // Pembayaran dan pengerjaan treatment adalah dua hal yang berbeda. Kalender
 // menampilkan keduanya tanpa mengubah status layanan saat kasir menutup tagihan.
 function reservationCalendarStatus(reservation) {
@@ -616,7 +628,7 @@ function statusClass(status) {
 
 function openPage(id) {
     const pageId = ({ reservasi: 'reservasi-antrean', keuangan: 'keuangan-arus-kas' })[id] || id;
-    const navigationPage = pageId === 'stok-opname' ? 'stok' : pageId;
+    const navigationPage = ({ 'stok-opname': 'stok', 'arsip-remunerasi': 'remunerasi' })[pageId] || pageId;
     const nav = document.querySelector(`#navigation [data-page="${navigationPage}"]`);
     const page = document.getElementById(pageId);
     if (!nav || !page) return;
@@ -642,6 +654,7 @@ function openPage(id) {
     }
     if (pageId === 'remunerasi' || pageId === 'penggajian') loadRemunerationReport().catch((error) => toast(error.message, true));
     scrollTo(0, 0);
+    if (pageId === 'arsip-remunerasi') return loadRemunerationArchives().catch((error) => toast(error.message, true));
 }
 
 function openDashboardMetric(card) {
@@ -947,7 +960,7 @@ function openReservationDetail(reservation) {
     const items = reservationItems(reservation);
     const paid = isAlreadyPaid(reservation);
     const serviceStatus = reservationStatus(reservation);
-    const paymentStatus = paid ? 'Lunas' : 'Belum dibayar';
+    const paymentStatus = reservationPaymentLabel(reservation);
     wrapper.innerHTML = `<div class="modal-box reservation-modal-box">
         <div class="modal-head">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
@@ -957,7 +970,8 @@ function openReservationDetail(reservation) {
             <p><span>Telepon</span><b>${escapeHtml(reservationPhone(reservation) || '-')}</b></p>
             <p><span>Sumber booking</span><b>${escapeHtml(reservation.source || '-')}</b></p>
             <p><span>Status layanan</span><b>${escapeHtml(statusLabel(serviceStatus))}</b></p>
-            <p><span>Pembayaran</span><b class="reservation-payment-status ${paid ? 'paid' : 'unpaid'}">${paymentStatus}</b></p>
+            <p><span>Pembayaran</span><b class="reservation-payment-status ${paid || reservationDepositAmount(reservation) > 0 ? 'paid' : 'unpaid'}">${paymentStatus}</b></p>
+            ${reservationDepositAmount(reservation) > 0 ? `<p><span>Metode DP</span><b>${escapeHtml(reservation.deposit?.payment_method_name || '-')}</b></p>` : ''}
             <p><span>Catatan</span><b>${escapeHtml(reservation.general_notes || reservation.notes || '-')}</b></p>
         </div>
         <div class="reservation-detail-items">${items.map((item, index) => {
@@ -1039,7 +1053,7 @@ function selectedTotal() {
     if (!reservation) return 0;
     const serviceSubtotal = reservationSubtotal(reservation);
     const productSubtotal = reservationProductItems(reservation).reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
-    return Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal);
+    return Math.max(0, Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal) - reservationDepositAmount(reservation));
 }
 
 function reservationProductItems(reservation) {
@@ -1101,6 +1115,8 @@ function selectCashier(id) {
     const discount = selectedDiscount();
     const discountAmount = Math.round(serviceSubtotal * discount / 100);
     const total = subtotal - discountAmount;
+    const depositAmount = reservationDepositAmount(reservation);
+    const remainingTotal = Math.max(0, total - depositAmount);
 
     const receipt = document.getElementById('cashier-receipt');
     receipt?.classList.remove('empty');
@@ -1132,8 +1148,10 @@ function selectCashier(id) {
     document.getElementById('subtotal').textContent = money(subtotal);
     document.getElementById('discount-value').textContent = `-${money(discountAmount)}`;
     document.getElementById('grand-total').textContent = money(total);
-    document.getElementById('payment-total').textContent = money(total);
-    document.getElementById('payment-description').textContent = `${reservation.queue_number || reservation.booking_code} · ${reservationCustomerName(reservation)}`;
+    document.getElementById('payment-total').textContent = money(remainingTotal);
+    document.getElementById('payment-description').textContent = depositAmount > 0
+        ? `${reservation.queue_number || reservation.booking_code} · DP ${money(depositAmount)} · Sisa ${money(remainingTotal)}`
+        : `${reservation.queue_number || reservation.booking_code} · ${reservationCustomerName(reservation)}`;
     resetPaymentRows();
 }
 
@@ -3114,9 +3132,9 @@ function renderPayroll() {
     const box = document.getElementById('payroll-table');
     if (!box) return;
     const page = document.getElementById('penggajian');
-    page?.querySelector('.toolbar h3')?.replaceChildren('Data remunerasi');
+    page?.querySelector('.toolbar h3')?.replaceChildren('Penggajian');
     const toolbarCopy = page?.querySelector('.toolbar > div > p');
-    if (toolbarCopy) toolbarCopy.textContent = 'Masukkan atau ubah data per karyawan dan periode gaji.';
+    if (toolbarCopy) toolbarCopy.textContent = 'Masukkan atau ubah komponen gaji per karyawan dan periode.';
     const toolbarHint = page?.querySelector('.payroll-toolbar-actions > p');
     if (toolbarHint) toolbarHint.textContent = 'Komisi treatment tetap diambil otomatis dari transaksi lunas.';
     const openButton = document.getElementById('open-payroll');
@@ -3136,7 +3154,7 @@ function renderPayroll() {
             : '<em class="remuneration-input-state">Belum diinput</em>';
         const action = hasPayrollInput
             ? `<button type="button" class="remuneration-action edit payroll-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
-            : `<button type="button" class="remuneration-action edit payroll-input" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
+            : `<button type="button" class="remuneration-action input payroll-input" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
         return `<div class="tr"><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${escapeHtml(payrollPeriod)}</small>${payrollState}</span>
             <span><b>${money(employee.base_salary)}</b><small>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(employee.daily_rate)}/hari</small></span>
             <span><b>${money(employee.commission)}</b><small>${money(employee.overtime)} lembur</small></span>
@@ -3213,6 +3231,16 @@ function legacyRenderRemuneration() {
     }
 
     const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
+    const finalizeButton = document.getElementById('finalize-remuneration');
+    if (finalizeButton) {
+        const filledPayrolls = Number(summary.payroll_input_count || 0);
+        const employees = Number(summary.employee_count || 0);
+        const isComplete = employees > 0 && filledPayrolls === employees;
+        finalizeButton.disabled = !isComplete;
+        finalizeButton.title = isComplete
+            ? 'Simpan hasil periode ini ke Arsip Remunerasi'
+            : `Lengkapi data penggajian seluruh karyawan terlebih dahulu (${filledPayrolls}/${employees}).`;
+    }
     note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)} · Input gaji ${escapeHtml(String(period.payroll_period || '-'))}</small></span>`;
     const summaries = [
         ['groups', 'Karyawan', Number(summary.employee_count || 0).toLocaleString('id-ID'), 'Aktif'],
@@ -3332,7 +3360,6 @@ function renderRemuneration() {
         ['account_balance_wallet', 'Pendapatan kotor', money(summary.gross_income), 'Gaji + komisi + tambahan'],
         ['remove_circle', 'Total potongan', `-${money(summary.deductions)}`, 'Mangkir, telat, kasbon'],
         ['payments', 'Pendapatan bersih', money(summary.net_income), 'Hasil perhitungan sistem'],
-        ['inventory_2', 'Stok in / out', `+${Number(summary.stock_in || 0).toLocaleString('id-ID')} / -${Number(summary.stock_out || 0).toLocaleString('id-ID')}`, `${Number(summary.stock_movement_count || 0)} mutasi`],
     ];
     summaryBox.innerHTML = summaries.map(([icon, label, value, meta]) => `<article><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${meta}</em></div></article>`).join('');
 
@@ -3360,6 +3387,73 @@ function renderRemuneration() {
             if (employee) openRemunerationDetail(employee);
         });
     });
+}
+
+async function loadRemunerationArchives() {
+    const yearInput = document.getElementById('remuneration-archive-year');
+    const grid = document.getElementById('remuneration-archive-grid');
+    const detail = document.getElementById('remuneration-archive-detail');
+    if (!yearInput || !grid || !detail) return;
+    if (!yearInput.value) yearInput.value = localDate().slice(0, 4);
+    const year = Number(yearInput.value);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return;
+    detail.hidden = true;
+    grid.innerHTML = '<p class="empty-state">Memuat arsip…</p>';
+    const archives = await api(`/operasional/penggajian/arsip?year=${year}`);
+    const byMonth = new Map(array(archives).map((archive) => [Number(archive.month), archive]));
+    const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    grid.innerHTML = monthNames.map((name, index) => {
+        const archive = byMonth.get(index + 1);
+        return `<article class="remuneration-archive-card ${archive ? 'is-saved' : ''}"><div class="remuneration-archive-card-top"><span class="material-symbols-outlined" aria-hidden="true">${archive ? 'inventory_2' : 'calendar_month'}</span><em>${archive ? 'Tersimpan' : 'Belum ada arsip'}</em></div><h3>${name} ${year}</h3><p>${archive ? `${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}` : 'Belum difinalisasi'}</p>${archive ? `<button type="button" class="secondary" data-archive-id="${Number(archive.id)}">Lihat hasil</button>` : ''}</article>`;
+    }).join('');
+    grid.querySelectorAll('[data-archive-id]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            try {
+                await showRemunerationArchive(Number(button.dataset.archiveId));
+            } catch (error) { toast(error.message, true); }
+        });
+    });
+}
+
+async function showRemunerationArchive(id) {
+    const detail = document.getElementById('remuneration-archive-detail');
+    if (!detail) return;
+    const archive = await api(`/operasional/penggajian/arsip/${id}`);
+    const report = archive.snapshot || {};
+    const employees = array(report.employees);
+    detail.hidden = false;
+    detail.innerHTML = `<div class="remuneration-archive-detail-head"><div><small>HASIL FINAL · ${escapeHtml(String(archive.year))}-${String(archive.month).padStart(2, '0')}</small><h3>${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}</h3><p>${employees.length} karyawan · Pendapatan bersih ${money(report.summary?.net_income)}</p></div><a class="secondary" href="/operasional/penggajian/rekap/ekspor?archive_id=${id}"><span class="material-symbols-outlined" aria-hidden="true">download</span>Unduh rekap & slip</a></div><div class="remuneration-archive-employee-list">${employees.map((employee) => `<div><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')}</small></span><span>Komisi <b>${money(employee.commission)}</b></span><span>Gaji bersih <strong>${money(employee.net_salary)}</strong></span></div>`).join('')}</div>`;
+    detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function confirmRemunerationArchive() {
+    if (!canManagePayroll || !remunerationReport) return;
+    const { period = {}, summary = {} } = remunerationReport;
+    const filledPayrolls = Number(summary.payroll_input_count || 0);
+    const employees = Number(summary.employee_count || 0);
+    if (employees === 0 || filledPayrolls !== employees) {
+        toast(`Finalisasi belum bisa dilakukan. Lengkapi data penggajian seluruh karyawan (${filledPayrolls}/${employees} terisi).`, true);
+        return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal open remuneration-archive-confirm';
+    overlay.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title"><div class="modal-head"><div><h2 id="archive-confirm-title">Finalisasi remunerasi?</h2><p>Periksa rentang dan nominal sebelum menyimpan arsip.</p></div></div><div class="remuneration-archive-confirm-body"><p><b>Periode komisi</b><span>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</span></p><p><b>Input gaji bulan</b><span>${escapeHtml(String(period.payroll_period || '-'))}</span></p><p><b>Data gaji terisi</b><span>${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)} karyawan</span></p><p><b>Total gaji bersih</b><strong>${money(summary.net_income)}</strong></p><small>Hasil ini disimpan sebagai arsip tetap, bukan tanda gaji sudah dibayar. Data sumber yang berubah kemudian tidak mengubah arsip. Arsip untuk bulan akhir periode yang sama tidak bisa ditimpa.</small></div><footer><button type="button" class="secondary" data-cancel>Batal</button><button type="button" class="primary" data-confirm>Simpan arsip final</button></footer></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('[data-cancel]').onclick = () => overlay.remove();
+    overlay.querySelector('[data-confirm]').onclick = async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+            const result = await api('/operasional/penggajian/arsip', { method: 'POST', body: JSON.stringify({ from: period.from, to: period.to }) });
+            overlay.remove();
+            toast(result.message);
+            await openPage('arsip-remunerasi');
+            await showRemunerationArchive(result.id);
+        } catch (error) {
+            button.disabled = false;
+            toast(error.message, true);
+        }
+    };
 }
 
 function openRemunerationDetail(employee) {
@@ -4037,7 +4131,7 @@ function addReservationItem(values = {}) {
     const card = document.createElement('article');
     card.className = 'reservation-item-card';
     const itemNumber = container.children.length + 1;
-    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment"><span class="material-symbols-outlined">delete</span></button></div>
+    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div>
         <div class="reservation-item-grid">
             <label class="treatment-picker-label">Treatment<select class="item-treatment" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results" role="listbox" hidden></div></label>
             <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
@@ -4095,8 +4189,26 @@ function resetReservationForm() {
     const items = document.getElementById('reservation-items');
     if (items) items.innerHTML = '';
     addReservationItem();
+    syncReservationDeposit();
     hideConflictPanel();
     pendingReservationPayload = null;
+}
+
+function syncReservationDeposit() {
+    const choice = document.querySelector('#reservation-form [name="payment_stage"]:checked')?.value || 'unpaid';
+    const fields = document.getElementById('reservation-deposit-fields');
+    const method = document.querySelector('#reservation-form [name="deposit_payment_method_id"]');
+    const amount = document.querySelector('#reservation-form [name="deposit_amount"]');
+    const active = canProcessCashier && choice === 'deposit';
+
+    if (fields) fields.hidden = !active;
+    if (method) {
+        const selected = method.value;
+        method.innerHTML = `<option value="">Pilih metode</option>${paymentMethods().map((item) => `<option value="${Number(item.id)}">${escapeHtml(item.name)}</option>`).join('')}`;
+        method.value = [...method.options].some((option) => option.value === selected) ? selected : '';
+        method.required = active;
+    }
+    if (amount) amount.required = active;
 }
 
 function setReservationLaunchContext(context = 'reservation') {
@@ -4264,6 +4376,14 @@ function collectReservationPayload(form) {
     } else {
         payload.name = formData.get('name');
         payload.phone = formData.get('phone');
+    }
+
+    if (canProcessCashier && formData.get('payment_stage') === 'deposit') {
+        payload.deposit = {
+            payment_method_id: Number(formData.get('deposit_payment_method_id')),
+            amount: Number(formData.get('deposit_amount')),
+            reference_number: formData.get('deposit_reference_number') || null,
+        };
     }
 
     return payload;
@@ -4454,9 +4574,12 @@ function syncPaymentCharge(row, resetToDefault = false) {
     if (toggle) {
         toggle.setAttribute('aria-pressed', String(charge.enabled));
         toggle.classList.toggle('active', charge.enabled);
-        toggle.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">${charge.enabled ? 'toggle_on' : 'toggle_off'}</span> Charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}% ${charge.enabled ? 'aktif' : 'nonaktif'}`;
-    }
-    if (summary) summary.textContent = charge.enabled ? `+ ${money(charge.amount)} · Total ${money(charge.total)}` : 'Charge tidak dipakai';
+    toggle.setAttribute('aria-label', `${charge.enabled ? 'Nonaktifkan' : 'Aktifkan'} charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}%`);
+    toggle.innerHTML = '<span class="payment-charge-knob" aria-hidden="true"></span>';
+}
+const label = row.querySelector('.payment-charge-label');
+if (label) label.textContent = `Charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}%`;
+if (summary) summary.textContent = charge.enabled ? `Biaya ${money(charge.amount)} · Total ${money(charge.total)}` : 'Tanpa biaya tambahan';
 
     return charge;
 }
@@ -4471,13 +4594,14 @@ function addPaymentRow(values = {}) {
     row.dataset.autoBalance = values.auto_balance ? 'true' : 'false';
     row.dataset.autoTendered = 'true';
     row.dataset.chargeEnabled = values.charge_enabled === undefined ? '' : String(Boolean(values.charge_enabled));
-    row.innerHTML = `<label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
+    row.innerHTML = `<div class="payment-row-head"><strong>Detail pembayaran</strong><button type="button" class="remove-payment" aria-label="Hapus pembayaran" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span> Hapus</button></div>
+        <label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
         <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
         <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
-        <div class="payment-charge-control" hidden><button type="button" class="payment-charge-toggle" aria-pressed="false"></button><small class="payment-charge-summary"></small></div>
-        <button type="button" class="icon-button remove-payment" aria-label="Hapus pembayaran"><span class="material-symbols-outlined">close</span></button>`;
+        <div class="payment-charge-control" hidden><span class="payment-charge-label">Biaya metode pembayaran</span><button type="button" class="payment-charge-toggle" aria-pressed="false"></button><small class="payment-charge-summary"></small></div>`;
     container.appendChild(row);
+    syncPaymentRowHeaders();
     row.querySelector('.payment-amount').addEventListener('input', () => {
         row.dataset.autoBalance = 'false';
         syncCashTendered(row);
@@ -4507,11 +4631,22 @@ function addPaymentRow(values = {}) {
             return;
         }
         row.remove();
+        syncPaymentRowHeaders();
         syncSplitAutoBalance();
         updatePaymentReconciliation();
     };
     syncPaymentReference(row, values.charge_enabled === undefined);
     updatePaymentReconciliation();
+}
+
+function syncPaymentRowHeaders() {
+    const rows = [...document.querySelectorAll('#payment-rows .payment-row')];
+    rows.forEach((row, index) => {
+        row.querySelector('.payment-row-head strong').textContent = rows.length > 1
+            ? `Pembayaran ${index + 1}`
+            : 'Detail pembayaran';
+        row.querySelector('.remove-payment').hidden = rows.length <= 1;
+    });
 }
 
 function syncPaymentReference(row, resetCharge = false) {
@@ -5034,6 +5169,10 @@ document.getElementById('product-import-file')?.addEventListener('change', (even
 });
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
+document.getElementById('open-remuneration-archives')?.addEventListener('click', () => openPage('arsip-remunerasi'));
+document.getElementById('back-to-remuneration')?.addEventListener('click', () => openPage('remunerasi'));
+document.getElementById('remuneration-archive-year')?.addEventListener('change', () => loadRemunerationArchives().catch((error) => toast(error.message, true)));
+document.getElementById('finalize-remuneration')?.addEventListener('click', confirmRemunerationArchive);
 document.getElementById('remuneration-from')?.addEventListener('change', () => loadRemunerationReport().catch((error) => toast(error.message, true)));
 document.getElementById('remuneration-to')?.addEventListener('change', () => loadRemunerationReport().catch((error) => toast(error.message, true)));
 document.getElementById('export-remuneration')?.addEventListener('click', () => {
@@ -5121,6 +5260,9 @@ document.getElementById('reservation-form')?.addEventListener('submit', async (e
 
 document.querySelectorAll('#reservation-form [name="customer_type"]').forEach((input) => {
     input.addEventListener('change', syncReservationCustomerType);
+});
+document.querySelectorAll('#reservation-form [name="payment_stage"]').forEach((input) => {
+    input.addEventListener('change', syncReservationDeposit);
 });
 document.getElementById('reservation-member-id')?.addEventListener('change', syncReservationCustomerType);
 function syncReservationMemberSearch() {
@@ -5257,9 +5399,8 @@ function prepareInlinePayment() {
     const splitHead = modalElement.querySelector('.split-payment-head');
     const rows = document.getElementById('payment-rows');
     const reconciliation = modalElement.querySelector('.payment-reconciliation');
-    const stockImpact = modalElement.querySelector('.stock-impact');
     const completeButton = document.getElementById('complete-payment');
-    if (!description || !total || !splitHead || !rows || !reconciliation || !stockImpact || !completeButton) return;
+    if (!description || !total || !splitHead || !rows || !reconciliation || !completeButton) return;
 
     const inline = document.createElement('section');
     inline.id = 'inline-payment';
@@ -5268,7 +5409,7 @@ function prepareInlinePayment() {
     heading.className = 'inline-payment-head';
     heading.innerHTML = '<h3>Pembayaran</h3>';
     heading.append(description);
-    inline.append(heading, total, splitHead, rows, reconciliation, stockImpact, completeButton);
+    inline.append(heading, total, splitHead, rows, reconciliation, completeButton);
     cashier.append(inline);
     completeButton.textContent = 'Proses transaksi';
     document.getElementById('open-payment').hidden = true;

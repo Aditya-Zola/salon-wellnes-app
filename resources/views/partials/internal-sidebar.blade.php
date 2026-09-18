@@ -46,7 +46,7 @@
             'permission' => 'payroll.view',
             'children' => [
                 ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
-                ['page' => 'penggajian', 'label' => 'Input & Edit Remunerasi'],
+                ['page' => 'penggajian', 'label' => 'Penggajian'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
             ],
         ],

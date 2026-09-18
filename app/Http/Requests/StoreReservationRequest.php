@@ -83,6 +83,11 @@ class StoreReservationRequest extends FormRequest
             'items.*.staff.*.role' => ['required', Rule::in(['primary', 'assistant'])],
             'override_conflict' => ['sometimes', 'boolean'],
             'override_reason' => ['nullable', 'required_if:override_conflict,true', 'string', 'max:500'],
+            'deposit' => ['nullable', 'array'],
+            'deposit.payment_method_id' => ['required_with:deposit', 'integer', 'exists:payment_methods,id'],
+            'deposit.amount' => ['required_with:deposit', 'integer', 'min:1', 'max:999999999999'],
+            'deposit.reference_number' => ['nullable', 'string', 'max:100'],
+            'deposit.notes' => ['nullable', 'string', 'max:500'],
         ];
     }
 }

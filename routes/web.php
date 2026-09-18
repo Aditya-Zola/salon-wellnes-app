@@ -26,6 +26,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/keuangan/laporan', [SalonController::class, 'financeReport'])->middleware('permission:finance.view')->name('finance.report');
         Route::get('/penggajian/rekap', [SalonController::class, 'remunerationReport'])->middleware('permission:payroll.view')->name('remuneration.report');
         Route::get('/penggajian/rekap/ekspor', [SalonController::class, 'exportRemuneration'])->middleware('permission:payroll.view')->name('remuneration.export');
+        Route::get('/penggajian/arsip', [SalonController::class, 'remunerationArchives'])->middleware('permission:payroll.view')->name('remuneration.archives');
+        Route::get('/penggajian/arsip/{id}', [SalonController::class, 'remunerationArchive'])->middleware('permission:payroll.view')->name('remuneration.archive');
+        Route::post('/penggajian/arsip', [SalonController::class, 'finalizeRemunerationArchive'])->middleware('permission:payroll.manage')->name('remuneration.archive.finalize');
         Route::post('/produk/import', [SalonController::class, 'importProducts'])->middleware('permission:products.create')->name('products.import');
         Route::get('/reservasi/ekspor', [SalonController::class, 'exportSchedule'])->middleware('permission:reservations.view')->name('reservations.export');
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');

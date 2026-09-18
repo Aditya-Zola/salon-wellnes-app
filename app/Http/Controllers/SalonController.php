@@ -96,10 +96,92 @@ class SalonController extends Controller
         return response()->json($this->remuneration->report($request->user(), $from, $to));
     }
 
+    public function remunerationArchives(Request $request): JsonResponse
+    {
+        $year = (int) $request->validate(['year' => ['required', 'integer', 'min:2000', 'max:2100']])['year'];
+
+        return response()->json(DB::table('remuneration_archives')
+            ->where('year', $year)
+            ->orderBy('month')
+            ->get(['id', 'year', 'month', 'period_start', 'period_end', 'finalized_at']));
+    }
+
+    public function remunerationArchive(Request $request, int $id): JsonResponse
+    {
+        $archive = DB::table('remuneration_archives')->find($id);
+        abort_unless($archive, 404, 'Arsip remunerasi tidak ditemukan.');
+
+        return response()->json([
+            'id' => $archive->id,
+            'year' => $archive->year,
+            'month' => $archive->month,
+            'period_start' => $archive->period_start,
+            'period_end' => $archive->period_end,
+            'finalized_at' => $archive->finalized_at,
+            'snapshot' => json_decode($archive->snapshot, true, 512, JSON_THROW_ON_ERROR),
+        ]);
+    }
+
+    public function finalizeRemunerationArchive(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'from' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'to' => ['required', 'date_format:Y-m-d', 'after_or_equal:from', 'before_or_equal:today'],
+        ]);
+        $from = CarbonImmutable::createFromFormat('!Y-m-d', $data['from'], config('app.timezone'));
+        $to = CarbonImmutable::createFromFormat('!Y-m-d', $data['to'], config('app.timezone'));
+        $year = (int) $to->format('Y');
+        $month = (int) $to->format('m');
+
+        $id = DB::transaction(function () use ($request, $from, $to, $year, $month): int {
+            abort_if(DB::table('remuneration_archives')->where('year', $year)->where('month', $month)->exists(), 422,
+                'Bulan ini sudah memiliki arsip. Arsip lama tidak boleh ditimpa.');
+            abort_if(DB::table('remuneration_archives')
+                ->where('period_start', '<=', $to->toDateString())
+                ->where('period_end', '>=', $from->toDateString())
+                ->exists(), 422, 'Rentang tanggal bertumpang tindih dengan arsip lain.');
+
+            $report = $this->remuneration->report($request->user(), $from, $to);
+            $filledPayrolls = (int) ($report['summary']['payroll_input_count'] ?? 0);
+            $employees = (int) ($report['summary']['employee_count'] ?? 0);
+            abort_if($employees === 0 || $filledPayrolls !== $employees, 422,
+                "Lengkapi data penggajian seluruh karyawan sebelum finalisasi ({$filledPayrolls}/{$employees} terisi).");
+
+            $now = now();
+            $id = DB::table('remuneration_archives')->insertGetId([
+                'year' => $year,
+                'month' => $month,
+                'period_start' => $from->toDateString(),
+                'period_end' => $to->toDateString(),
+                'snapshot' => json_encode($report, JSON_THROW_ON_ERROR),
+                'finalized_by' => $request->user()->id,
+                'finalized_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $this->logger->log($request, 'remuneration.archived', 'remuneration_archive', $id,
+                'Memfinalisasi arsip remunerasi '.$year.'-'.str_pad((string) $month, 2, '0', STR_PAD_LEFT),
+                ['from' => $from->toDateString(), 'to' => $to->toDateString()]);
+
+            return $id;
+        }, 3);
+
+        return response()->json(['message' => 'Arsip remunerasi berhasil disimpan.', 'id' => $id], 201);
+    }
+
     public function exportRemuneration(Request $request): StreamedResponse
     {
-        [$from, $to] = $this->remunerationRange($request);
-        $report = $this->remuneration->report($request->user(), $from, $to);
+        if ($request->filled('archive_id')) {
+            $data = $request->validate(['archive_id' => ['required', 'integer', 'min:1']]);
+            $archive = DB::table('remuneration_archives')->find($data['archive_id']);
+            abort_unless($archive, 404, 'Arsip remunerasi tidak ditemukan.');
+            $from = CarbonImmutable::parse($archive->period_start);
+            $to = CarbonImmutable::parse($archive->period_end);
+            $report = json_decode($archive->snapshot, true, 512, JSON_THROW_ON_ERROR);
+        } else {
+            [$from, $to] = $this->remunerationRange($request);
+            $report = $this->remuneration->report($request->user(), $from, $to);
+        }
 
         // The workbook follows the salon's manual recap: one monthly table for
         // commission/overtime, one income table, and one stock in-out table.
