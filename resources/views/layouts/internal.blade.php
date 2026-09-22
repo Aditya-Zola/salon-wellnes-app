@@ -15,8 +15,9 @@
     <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/ui-system.css') }}?v={{ filemtime(public_path('css/ui-system.css')) }}">
 </head>
-<body>
+<body class="ui-shell">
 <div class="app">
     @include('partials.internal-sidebar')
 
@@ -30,6 +31,9 @@
         </header>
 
         <div class="access-content">
+            @if (session('error'))
+                <div class="alert alert-error"><strong>Tindakan tidak dapat dilakukan.</strong><span>{{ session('error') }}</span></div>
+            @endif
             @if ($errors->any())
                 <div class="alert alert-error">
                     <strong>Data belum dapat disimpan.</strong>

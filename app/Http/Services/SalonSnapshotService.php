@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class SalonSnapshotService
 {
+    public function __construct(private readonly ReservationService $reservationService) {}
+
     public function forUser(Authenticatable $user): array
     {
         $snapshot = [];
@@ -19,6 +21,10 @@ class SalonSnapshotService
         }
 
         if ($this->can($user, 'reservations.view')) {
+            // Tidak memerlukan scheduler eksternal: ketika data operasional
+            // dibuka/disegarkan, treatment yang telah melewati estimasi + 15
+            // menit akan ditutup otomatis.
+            $this->reservationService->completeOverdueItems();
             $snapshot['reservations'] = $this->reservations($user);
         }
 
@@ -69,6 +75,7 @@ class SalonSnapshotService
         if ($this->canAny($user, ['cashier.view', 'cashier.process'])) {
             $snapshot['payment_methods'] = DB::table('payment_methods')
                 ->where('is_active', true)
+                ->whereNull('archived_at')
                 ->orderBy('name')
                 ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference', 'account_name', 'account_number', 'charge_percent', 'charge_default_enabled']);
             $snapshot['salon'] = $this->salonContact();
@@ -675,11 +682,13 @@ class SalonSnapshotService
             ],
             'payment_options' => DB::table('payment_methods')
                 ->where('is_active', true)
+                ->whereNull('archived_at')
                 ->orderBy('name')
                 ->pluck('name')
                 ->values(),
             'refund_payment_options' => DB::table('payment_methods')
                 ->where('is_active', true)
+                ->whereNull('archived_at')
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get(['id', 'code', 'name', 'type', 'is_cash', 'requires_reference'])
@@ -748,7 +757,7 @@ class SalonSnapshotService
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
             ],
-            'payment_options' => DB::table('payment_methods')->where('is_active', true)->orderBy('name')->pluck('name')->values(),
+            'payment_options' => DB::table('payment_methods')->where('is_active', true)->whereNull('archived_at')->orderBy('name')->pluck('name')->values(),
         ];
     }
 
@@ -1565,14 +1574,9 @@ class SalonSnapshotService
             ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
             ->groupBy('refund_payment_method_id')
             ->pluck('total', 'refund_payment_method_id');
-        $usedMethodIds = $inflows->keys()->merge($outflows->keys())->map(fn ($id): int => (int) $id)->unique()->values();
         $methods = DB::table('payment_methods')
-            ->where(function ($query) use ($usedMethodIds): void {
-                $query->where('is_active', true);
-                if ($usedMethodIds->isNotEmpty()) {
-                    $query->orWhereIn('id', $usedMethodIds->all());
-                }
-            })
+            ->where('is_active', true)
+            ->whereNull('archived_at')
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get([
