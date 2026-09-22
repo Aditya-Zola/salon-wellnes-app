@@ -17,6 +17,8 @@ class ReservationService
 
     private const REST_MINUTES = 45;
 
+    private const AUTO_COMPLETE_GRACE_MINUTES = 15;
+
     public function __construct(private readonly ActivityLogger $logger) {}
 
     public function create(array $data, Request $request): array
@@ -65,20 +67,9 @@ class ReservationService
             $candidates = $this->buildCandidates($data, $treatments);
             $this->validateStaffAssignments($candidates);
             $this->authorizePriceOverrides($candidates, $request);
-            [$conflicts, $conflictAssignments] = $this->findConflicts($candidates, $employees);
-
-            $override = (bool) ($data['override_conflict'] ?? false);
-            $canOverride = (bool) $request->user()?->can('reservations.override_conflict');
-
-            if ($conflicts !== [] && ! $override) {
-                throw new ReservationConflictException($conflicts, $canOverride);
-            }
-
-            if ($conflicts !== [] && (! $canOverride || trim((string) ($data['override_reason'] ?? '')) === '')) {
-                throw ValidationException::withMessages([
-                    'override_reason' => ['Override konflik memerlukan izin khusus dan alasan.'],
-                ]);
-            }
+            // Jadwal di reservasi adalah estimasi operasional. Therapist aktif
+            // boleh memiliki jadwal yang bertumpuk; operator yang menentukan
+            // kapan treatment benar-benar selesai dari antrean hari ini.
 
             $customer = $this->resolveCustomer($data);
             $customerId = (int) $customer->id;
@@ -152,8 +143,6 @@ class ReservationService
                 foreach ($candidate['input']['staff'] as $staff) {
                     $employeeId = (int) $staff['employee_id'];
                     $employee = $employees->get($employeeId);
-                    $assignmentKey = $itemIndex.':'.$employeeId;
-                    $wasOverridden = isset($conflictAssignments[$assignmentKey]);
                     $staffCommission = $commission['by_employee'][$employeeId];
 
                     DB::table('reservation_item_staff')->insert([
@@ -162,9 +151,9 @@ class ReservationService
                         'role' => $staff['role'],
                         'commission_percent' => $staffCommission['percent'],
                         'commission_amount' => $staffCommission['amount'],
-                        'conflict_override_reason' => $wasOverridden ? $data['override_reason'] : null,
-                        'conflict_overridden_by' => $wasOverridden ? $request->user()?->id : null,
-                        'conflict_overridden_at' => $wasOverridden ? $now : null,
+                        'conflict_override_reason' => null,
+                        'conflict_overridden_by' => null,
+                        'conflict_overridden_at' => null,
                         'created_at' => $now,
                         'updated_at' => $now,
                     ]);
@@ -178,11 +167,7 @@ class ReservationService
                         'role' => $staff['role'],
                         'commission_percent' => $staffCommission['percent'],
                         'commission_amount' => $staffCommission['amount'],
-                        'conflict_overridden' => $wasOverridden,
-                        ...($wasOverridden ? [
-                            'conflict_override_reason' => $data['override_reason'],
-                            'conflict_overridden_at' => $now->toDateTimeString(),
-                        ] : []),
+                        'conflict_overridden' => false,
                     ];
                 }
 
@@ -226,6 +211,7 @@ class ReservationService
                 $method = DB::table('payment_methods')
                     ->where('id', (int) $depositInput['payment_method_id'])
                     ->where('is_active', true)
+                    ->whereNull('archived_at')
                     ->lockForUpdate()
                     ->first();
                 if (! $method) {
@@ -234,12 +220,6 @@ class ReservationService
                     ]);
                 }
                 $referenceNumber = trim((string) ($depositInput['reference_number'] ?? '')) ?: null;
-                if ($method->requires_reference && ! $referenceNumber) {
-                    throw ValidationException::withMessages([
-                        'deposit.reference_number' => ['Nomor referensi wajib diisi untuk metode pembayaran ini.'],
-                    ]);
-                }
-
                 $depositId = DB::table('reservation_deposits')->insertGetId([
                     'reservation_id' => $reservationId,
                     'payment_method_id' => $method->id,
@@ -290,9 +270,6 @@ class ReservationService
                         ->filter()
                         ->values()
                         ->all(),
-                    'conflict_overridden' => $conflicts !== [],
-                    'override_reason' => $conflicts !== [] ? $data['override_reason'] : null,
-                    'conflicts' => $conflicts,
                     'deposit_amount' => $deposit['amount'] ?? 0,
                 ],
             );
@@ -706,7 +683,9 @@ class ReservationService
             }
 
             $transitions = [
-                'waiting' => ['in_progress', 'cancelled'],
+                // Operator cukup menandai treatment selesai. Tidak diperlukan
+                // status mulai maupun alur override untuk antrean reservasi.
+                'waiting' => ['in_progress', 'finished', 'cancelled'],
                 'in_progress' => ['continue', 'ready', 'finished', 'overtime', 'cancelled'],
                 'continue' => ['in_progress', 'ready', 'finished', 'overtime', 'cancelled'],
                 'ready' => ['in_progress', 'finished', 'overtime', 'cancelled'],
@@ -770,10 +749,6 @@ class ReservationService
         $treatment = DB::table('treatments')->where('id', $treatmentId)->where('is_active', true)->first();
         abort_unless($treatment, 404, 'Treatment tidak ditemukan atau tidak aktif.');
 
-        $start = CarbonImmutable::createFromFormat('!Y-m-d H:i', "{$date} {$time}", config('app.timezone'));
-        $end = $start->addMinutes((int) $treatment->duration_minutes + self::PREPARATION_MINUTES);
-        $ready = $end->addMinutes(self::REST_MINUTES);
-
         $offEmployeeIds = DB::table('employee_attendances')
             ->where('attendance_date', $date)
             ->where('status', 'off')
@@ -786,8 +761,7 @@ class ReservationService
             ->where('is_service_provider', true)
             ->orderBy('name')
             ->get(['id', 'code', 'name', 'position', 'specialty'])
-            ->map(function (object $employee) use ($start, $end, $ready, $offEmployeeIds): array {
-                $conflicts = $this->existingConflicts((int) $employee->id, $start, $ready);
+            ->map(function (object $employee) use ($offEmployeeIds): array {
                 $isOff = in_array((int) $employee->id, $offEmployeeIds, true);
 
                 return [
@@ -796,22 +770,50 @@ class ReservationService
                     'name' => $employee->name,
                     'position' => $employee->position,
                     'specialty' => $employee->specialty,
-                    'available' => ! $isOff && $conflicts->isEmpty(),
+                    'available' => ! $isOff,
                     'attendance_status' => $isOff ? 'off' : 'present',
-                    'scheduled_end_at' => $end->toIso8601String(),
-                    'ready_at' => $ready->toIso8601String(),
-                    'conflicts' => $conflicts->map(fn (object $row): array => [
-                        'reservation_id' => (int) $row->reservation_id,
-                        'reservation_item_id' => (int) $row->reservation_item_id,
-                        'booking_code' => $row->booking_code,
-                        'start_at' => $row->scheduled_start_at,
-                        'end_at' => $row->scheduled_end_at,
-                        'ready_at' => $row->scheduled_ready_at,
-                    ])->values()->all(),
+                    'conflicts' => [],
                 ];
             })
             ->values()
             ->all();
+    }
+
+    public function completeOverdueItems(): void
+    {
+        $now = now();
+        $cutoff = $now->copy()->subMinutes(self::AUTO_COMPLETE_GRACE_MINUTES);
+
+        $reservationIds = DB::table('reservation_items as item')
+            ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
+            ->whereNotIn('reservation.status', ['cancelled', 'completed'])
+            ->whereIn('item.work_status', ['waiting', 'in_progress', 'continue', 'ready', 'overtime'])
+            ->where('item.scheduled_end_at', '<=', $cutoff)
+            ->distinct()
+            ->pluck('item.reservation_id');
+
+        foreach ($reservationIds as $reservationId) {
+            DB::transaction(function () use ($reservationId, $cutoff, $now): void {
+                $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+                if (! $reservation || in_array($reservation->status, ['cancelled', 'completed'], true)) {
+                    return;
+                }
+
+                $updated = DB::table('reservation_items')
+                    ->where('reservation_id', $reservationId)
+                    ->whereIn('work_status', ['waiting', 'in_progress', 'continue', 'ready', 'overtime'])
+                    ->where('scheduled_end_at', '<=', $cutoff)
+                    ->update([
+                        'work_status' => 'finished',
+                        'finished_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                if ($updated > 0) {
+                    $this->syncHeaderStatus((int) $reservationId, null, null);
+                }
+            }, 3);
+        }
     }
 
     /** @param Collection<int, int> $employeeIds */

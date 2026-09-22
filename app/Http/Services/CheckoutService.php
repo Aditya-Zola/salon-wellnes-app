@@ -71,7 +71,7 @@ class CheckoutService
             }
             $remainingBaseTotal = $baseTotal - $depositAmount;
 
-            [$payments, $paymentChargeAmount] = $this->resolvePayments($data, $remainingBaseTotal);
+            [$payments, $paymentChargeAmount] = $this->resolvePayments($data, $remainingBaseTotal, $baseTotal);
             $total = $this->safeAdd($baseTotal, $paymentChargeAmount);
             $changeAmount = $this->sumMoney(collect($payments)->map(
                 fn (array $payment): int => $payment['tendered_amount'],
@@ -425,13 +425,13 @@ class CheckoutService
         throw ValidationException::withMessages(['promotion_id' => ['Jenis promosi belum didukung.']]);
     }
 
-    private function resolvePayments(array $data, int $total): array
+    private function resolvePayments(array $data, int $total, int $chargeBaseTotal): array
     {
         $paymentInputs = $data['payments'] ?? null;
 
         if (! is_array($paymentInputs)) {
             $needle = mb_strtolower(trim((string) $data['payment_method']));
-            $method = DB::table('payment_methods')->where('is_active', true)->get()->first(
+            $method = DB::table('payment_methods')->where('is_active', true)->whereNull('archived_at')->get()->first(
                 fn (object $candidate): bool => in_array($needle, [
                     mb_strtolower($candidate->name),
                     mb_strtolower($candidate->code),
@@ -455,6 +455,7 @@ class CheckoutService
         $methods = DB::table('payment_methods')
             ->whereIn('id', $methodIds)
             ->where('is_active', true)
+            ->whereNull('archived_at')
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
@@ -475,11 +476,17 @@ class CheckoutService
             $chargeRequested = array_key_exists('charge_enabled', $input)
                 ? filter_var($input['charge_enabled'], FILTER_VALIDATE_BOOLEAN)
                 : (bool) ($method->charge_default_enabled ?? true);
-            $chargePercent = FixedPoint::normalizePercent((string) ($method->charge_percent ?? 0));
+            $chargePercent = array_key_exists('charge_percent', $input) && $input['charge_percent'] !== null
+                ? FixedPoint::normalizePercent((string) $input['charge_percent'])
+                : FixedPoint::normalizePercent((string) ($method->charge_percent ?? 0));
             $chargeEnabled = ! (bool) $method->is_cash
                 && $chargeRequested
                 && FixedPoint::parse($chargePercent, FixedPoint::PERCENT_SCALE) > 0;
-            $chargeAmount = $chargeEnabled ? FixedPoint::percentOf($baseAmount, $chargePercent) : 0;
+            // DP tidak dikenai charge. Jika pelunasan memakai satu metode,
+            // charge dihitung dari total tagihan sebelum DP. Split tetap
+            // menghitung charge per nominal metode agar pembagiannya akurat.
+            $chargeBasis = count($paymentInputs) === 1 ? $chargeBaseTotal : $baseAmount;
+            $chargeAmount = $chargeEnabled ? FixedPoint::percentOf($chargeBasis, $chargePercent) : 0;
             $amount = $this->safeAdd($baseAmount, $chargeAmount);
             $tenderedAmount = isset($input['tendered_amount'])
                 ? (int) $input['tendered_amount']

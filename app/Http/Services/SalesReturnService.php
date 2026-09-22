@@ -30,6 +30,7 @@ class SalesReturnService
 
             $paymentMethod = DB::table('payment_methods')
                 ->where('id', $data['payment_method_id'])
+                ->whereNull('archived_at')
                 ->lockForUpdate()
                 ->first();
             abort_unless($paymentMethod && $paymentMethod->is_active, 422, 'Metode pengembalian dana tidak tersedia.');

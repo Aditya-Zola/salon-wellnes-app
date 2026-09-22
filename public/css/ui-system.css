@@ -1,0 +1,580 @@
+/* Selésa UI system. Shared visual tokens and components for every operational
+   page. Legacy sheets retain feature layouts; this file owns the final theme. */
+:root {
+    color-scheme: light;
+    --ui-brand: #704c3a;
+    --ui-brand-hover: #553727;
+    --ui-ink: #2e2723;
+    --ui-muted: #746c65;
+    --ui-line: #e7ded7;
+    --ui-soft: #f5efe9;
+    --ui-canvas: #f7f5f2;
+    --ui-surface: #fff;
+    --ui-blue: #315e80;
+    --ui-blue-soft: #edf4f9;
+    --ui-danger: #b3423e;
+    --ui-danger-soft: #fdf0ee;
+    --ui-success: #34745b;
+    --ui-success-soft: #edf6f0;
+    --ui-warning: #915c18;
+    --ui-warning-soft: #fff6e8;
+    --ui-radius: 0;
+    --ui-control-radius: 10px;
+    --ui-shadow: 0 3px 14px rgb(53 37 26 / .035);
+    --ui-ring: 0 0 0 3px rgb(112 76 58 / .14);
+    --ui-sidebar-width: 244px;
+    /* Aliases also theme existing widgets without duplicating feature logic. */
+    --ink: var(--ui-ink);
+    --muted: var(--ui-muted);
+    --line: var(--ui-line);
+    --cream: var(--ui-canvas);
+    --clay: var(--ui-brand);
+    --sage: var(--ui-success);
+    --rose: var(--ui-danger);
+    --purple: var(--ui-brand);
+    --purple-dark: var(--ui-brand-hover);
+    --purple-soft: var(--ui-soft);
+    --violet-line: var(--ui-line);
+    --ui-purple: var(--ui-brand);
+    --ui-purple-soft: var(--ui-soft);
+    --ui-text: var(--ui-ink);
+    --ui-bg: var(--ui-canvas);
+    --ui-green: var(--ui-success);
+    --ui-amber: var(--ui-warning);
+    --selesa-brown: var(--ui-brand);
+    --surface-line: var(--ui-line);
+    --surface-muted: var(--ui-soft);
+    --access-purple: var(--ui-brand);
+    --access-purple-soft: var(--ui-soft);
+    --access-muted: var(--ui-muted);
+    --access-line: var(--ui-line);
+}
+
+/* Shell and navigation */
+.ui-shell { background: var(--ui-canvas); color: var(--ui-ink); font-size: 14px; line-height: 1.5; }
+.ui-shell main { min-width: 0; margin-left: var(--ui-sidebar-width); padding: 0 30px 36px; }
+.ui-shell main > header { height: auto; min-height: 96px; gap: 20px; margin: 0 -30px 26px; padding: 22px 30px; background: #fff; }
+.ui-shell main > header h1 { font-size: clamp(23px, 2vw, 28px); font-weight: 700; letter-spacing: -.045em; line-height: 1.2; }
+.ui-shell main > header p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
+.ui-shell .page, .ui-shell .access-content { max-width: 1600px; margin-inline: auto; }
+.ui-shell .sidebar { z-index: 40; width: var(--ui-sidebar-width); padding: 28px 16px 16px; }
+.ui-shell .dashboard-brand { width: 160px; padding: 4px 8px 34px; }
+.ui-shell .dashboard-brand img { width: 100%; max-width: 170px; height: auto; object-fit: contain; filter: brightness(0) invert(1); opacity: .92; }
+.ui-shell .sidebar nav { gap: 6px; }
+.ui-shell .sidebar nav > button, .ui-shell .sidebar nav > a, .ui-shell .access-menu > summary { min-height: 46px; border-radius: 10px; padding: 12px; font-size: 13px; font-weight: 500; }
+.ui-shell .sidebar nav button.active, .ui-shell .sidebar nav a.active, .ui-shell .access-menu summary.active { font-weight: 650; }
+.ui-shell .access-submenu { margin: 6px 0 8px 23px; padding-left: 12px; gap: 5px; }
+.ui-shell .access-submenu :is(a,button) { display: flex; align-items: center; min-height: 42px; padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.ui-shell .sidebar-toggle { z-index: 45; top: 24px; left: 196px; width: 34px; height: 34px; box-shadow: none; border-color: #645046; }
+.ui-shell .account { margin: 24px -16px -16px; padding: 18px 16px; gap: 10px; }
+.ui-shell .account > div { min-width: 0; flex: 1; }
+.ui-shell .account strong { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.ui-shell .account small { font-size: 11px; }
+.ui-shell .account .logout { min-width: 32px; min-height: 36px; }
+.ui-shell.sidebar-is-collapsed .sidebar { width: 76px; padding-inline: 14px; }
+.ui-shell.sidebar-is-collapsed main { margin-left: 76px; }
+.ui-shell.sidebar-is-collapsed .sidebar-toggle { left: 21px; }
+.ui-shell .sidebar-scrim { display: none; }
+.ui-shell .bell { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; }
+.ui-shell .notification-menu { position: relative; }
+.ui-shell .notification-toggle { position: relative; cursor: pointer; }
+.ui-shell .notification-toggle sup { position: absolute; top: -5px; right: -5px; display: grid; min-width: 18px; height: 18px; place-items: center; padding: 0 4px; border: 2px solid #fff; border-radius: 999px; background: var(--ui-danger); color: #fff; font-size: 10px; font-weight: 700; line-height: 1; }
+.ui-shell .notification-panel { position: absolute; top: calc(100% + 10px); right: 0; z-index: 80; width: min(360px, calc(100vw - 32px)); border: 1px solid var(--ui-line); border-radius: 0; background: #fff; box-shadow: 0 18px 42px rgb(45 31 22 / .16); }
+.ui-shell .notification-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px 16px; border-bottom: 1px solid var(--ui-line); }
+.ui-shell .notification-panel-head b, .ui-shell .notification-panel-head small { display: block; }
+.ui-shell .notification-panel-head b { font-size: 13px; font-weight: 700; }
+.ui-shell .notification-panel-head small { margin-top: 2px; color: var(--ui-muted); font-size: 11px; }
+.ui-shell .notification-clear { padding: 3px 0; border: 0; background: transparent; color: var(--ui-brand); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.ui-shell .notification-list { max-height: min(420px, calc(100dvh - 150px)); overflow-y: auto; }
+.ui-shell .notification-item { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--ui-line); }
+.ui-shell .notification-item:last-child { border-bottom: 0; }
+.ui-shell .notification-item > .material-symbols-outlined { display: grid; width: 28px; height: 28px; place-items: center; background: var(--ui-success-soft); color: var(--ui-success); font-size: 17px; }
+.ui-shell .notification-item.error > .material-symbols-outlined { background: var(--ui-danger-soft); color: var(--ui-danger); }
+.ui-shell .notification-item b, .ui-shell .notification-item small { display: block; }
+.ui-shell .notification-item b { color: var(--ui-ink); font-size: 12px; font-weight: 600; line-height: 1.45; }
+.ui-shell .notification-item small { margin-top: 3px; color: var(--ui-muted); font-size: 10px; }
+.ui-shell .notification-empty { margin: 0; padding: 24px 16px; color: var(--ui-muted); font-size: 12px; text-align: center; }
+
+/* Surface hierarchy: a quiet canvas, white cards, inset detail panels. */
+.ui-shell :is(.page .card, .analytics-card, .payment-revenue-card, .treatment-card, .access-card, .remuneration-toolbar, .remuneration-summary > article, .remuneration-archive-card) {
+    border: 1px solid var(--ui-line); border-radius: var(--ui-radius); background: var(--ui-surface); box-shadow: var(--ui-shadow);
+}
+.ui-shell :is(.card, .analytics-card, .payment-revenue-card, .treatment-card, .access-card, .remuneration-toolbar, .remuneration-summary > article, .remuneration-archive-card, .page > .toolbar, .stocktake-overview article, .remuneration-guide-page, .permission-group) {
+    border-radius: 0 !important;
+}
+.ui-shell :is(.page .card, .analytics-card, .access-card) { padding: 22px; }
+.ui-shell :is(.card-head, .analytics-head, .access-card-head) { align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+.ui-shell :is(.card-head, .analytics-head, .access-card-head, .toolbar) > div { min-width: 0; }
+.ui-shell :is(.card-head h3, .toolbar h3, .analytics-head h3, .access-card-head h2, .remuneration-toolbar h3) { color: var(--ui-ink); font-size: 17px; font-weight: 650; line-height: 1.4; letter-spacing: -.025em; }
+.ui-shell :is(.card-head p, .toolbar p, .analytics-head p, .access-card-head p, .remuneration-toolbar p) { color: var(--ui-muted); margin: 5px 0 0; font-size: 12px; line-height: 1.65; }
+.ui-shell .page > .toolbar, .ui-shell .remuneration-toolbar { padding: 20px 22px; margin-bottom: 20px; border-radius: var(--ui-radius); gap: 20px; flex-wrap: wrap; }
+.ui-shell .card > .toolbar { margin: 0 0 20px; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: none; }
+.ui-shell :is(.two-column, .cashier-grid, .analytics-grid, .access-grid) { gap: 22px; }
+.ui-shell .access-grid { grid-template-columns: minmax(0,1fr); }
+.ui-shell :is(.access-card, .card, .analytics-card, .treatment-card, .stocktake-filters) { min-width: 0; }
+.ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions, .table-actions, .ui-header-actions) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ui-shell .empty-state { padding: 44px 22px !important; color: var(--ui-muted) !important; font-size: 13px; line-height: 1.7; }
+
+/* Buttons: one geometry, with role-based color rather than page-based color. */
+.ui-shell :is(.primary, .secondary, .access-button, .remuneration-action, .sales-reprint-button, .sales-return-receipt, .membership-actions button, .commission-edit, .recipe-button, .product-edit, .sales-page, .product-page, .member-page, .treatment-page, .dashed, .ui-action-view, .ui-action-edit, .ui-action-delete, .ui-action-success) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 42px; padding: 10px 15px; border: 1px solid var(--ui-line);
+    border-radius: var(--ui-control-radius); background: #fff; color: var(--ui-brand);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 600; line-height: 1.3;
+    text-decoration: none; white-space: nowrap; cursor: pointer; box-shadow: none;
+    transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.ui-shell :is(.primary, .access-button.primary, .remuneration-action.input) { min-height: 44px; background: var(--ui-brand) !important; border-color: var(--ui-brand); color: #fff !important; box-shadow: 0 3px 6px rgb(112 76 58 / .1); }
+.ui-shell :is(.primary, .access-button.primary, .remuneration-action.input):hover:not(:disabled) { background: var(--ui-brand-hover) !important; border-color: var(--ui-brand-hover); }
+.ui-shell :is(.secondary, .access-button.secondary):hover:not(:disabled) { border-color: #c5b3a6 !important; background: var(--ui-soft) !important; color: var(--ui-brand) !important; }
+.ui-shell :is(.remuneration-action.detail, .ui-action-view) { color: var(--ui-blue) !important; background: var(--ui-blue-soft) !important; border-color: #cfdfec !important; }
+.ui-shell :is(.remuneration-action.edit, .action-edit, .ui-action-edit) { color: var(--ui-warning) !important; background: var(--ui-warning-soft) !important; border-color: #ecd6b2 !important; }
+.ui-shell :is(.action-delete, .ui-action-delete) { color: var(--ui-danger) !important; background: var(--ui-danger-soft) !important; border-color: #efcbc5 !important; }
+.ui-shell .ui-action-success { color: var(--ui-success) !important; background: var(--ui-success-soft) !important; border-color: #c5ddce !important; }
+.ui-shell :is(.ui-action-view, .ui-action-edit, .ui-action-delete, .ui-action-success):hover:not(:disabled) { box-shadow: inset 0 0 0 1px currentColor; }
+.ui-shell :is(.remuneration-action, .access-button.compact, .membership-actions button) { min-height: 38px; padding: 8px 12px; font-size: 12px; }
+.ui-shell :is(.primary, .secondary, .access-button, .remuneration-action) .material-symbols-outlined { flex-shrink: 0; font-size: 18px; }
+.ui-shell :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 3px solid #a37b5e; outline-offset: 3px; }
+.ui-shell :is(button, .access-button):disabled, .ui-shell [aria-disabled="true"] { cursor: not-allowed; opacity: .48; box-shadow: none !important; transform: none !important; }
+.ui-shell :is(.link, .text-button, .remuneration-guide-go) { color: var(--ui-brand) !important; font-size: 12px; font-weight: 600; line-height: 1.5; text-underline-offset: 4px; }
+.ui-shell .link { min-height: 36px; padding: 6px 2px; }
+.ui-shell :is(.link, .text-button):hover { text-decoration: underline; }
+.ui-shell .dashed { border: 1px dashed #cbb5a5; background: #fcfaf7; color: var(--ui-brand); }
+.ui-shell .dashed:hover { border-color: var(--ui-brand); background: var(--ui-soft); }
+
+/* Forms: persistent labels, comfortable target sizes, obvious focus. */
+.ui-shell :is(.page, .modal, .access-content) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]), select, textarea) {
+    min-width: 0; min-height: 44px; max-width: 100%; padding: 10px 12px;
+    border: 1px solid #d9cec5; border-radius: var(--ui-control-radius);
+    background-color: #fff; color: var(--ui-ink); font-family: var(--font-sans); font-size: 13px; line-height: 1.4;
+    transition: border-color .16s ease, box-shadow .16s ease;
+}
+.ui-shell :is(.page, .modal, .access-content) :is(input, select, textarea):focus { border-color: #a37b5e !important; outline: none; box-shadow: var(--ui-ring) !important; }
+.ui-shell :is(input, select, textarea):disabled { background: #f2efec !important; color: #89817a !important; cursor: not-allowed; }
+.ui-shell input::placeholder, .ui-shell textarea::placeholder { color: #938981; opacity: 1; font-weight: 400; }
+.ui-shell :is(.modal label, .quick-fields label, .access-form label, .role-name-card label, .remuneration-date-field, .stock-history-date) { color: #544a43; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.ui-shell :is(.modal label, .access-form label) > small { font-size: 11px; color: var(--ui-muted); font-weight: 400; }
+.ui-shell :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--ui-brand); }
+.ui-shell :is(.filters, .sales-filters, .finance-history-filters) { gap: 10px; flex-wrap: wrap; }
+.ui-shell :is(.page-search, .activity-search) { min-height: 44px; border-color: #d9cec5; border-radius: var(--ui-control-radius); background: #fff; }
+.ui-shell :is(.page-search, .activity-search) input { min-height: 40px !important; border: 0 !important; background: transparent; }
+.ui-shell :is(.page-search, .activity-search):focus-within { box-shadow: var(--ui-ring); border-color: #a37b5e; }
+.ui-shell :is(.page-search, .activity-search) input:focus { box-shadow: none !important; }
+.ui-shell .access-form { gap: 20px; }
+.ui-shell .access-form .form-actions { gap: 10px; padding-top: 18px; border-top: 1px solid var(--ui-line); }
+.ui-shell .form-card .form-actions .access-button { width: auto; flex: 1; }
+
+/* Tables: continuous columns contained by their parent card, never negative
+   outside margins. Wide operational tables scroll inside the card on mobile. */
+.ui-shell .page .table { margin: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: #cabbb0 #f7f3ef; }
+.ui-shell .page .table .tr { gap: 0; padding: 0; min-height: 72px; border-color: var(--ui-line); font-size: 13px; }
+.ui-shell .page .table .tr > * { min-width: 0; align-self: stretch; align-content: center; padding: 16px; border-right: 1px solid var(--ui-line); overflow-wrap: anywhere; }
+.ui-shell .page .table .tr > :last-child { border-right: 0; }
+.ui-shell .page .table .tr.th { min-height: 48px; background: #f8f6f3; color: #766a61; font-size: 11px; font-weight: 650; line-height: 1.5; letter-spacing: .035em; }
+.ui-shell .page .table .tr:not(.th):hover { background: #fdfbf9; }
+.ui-shell .page .table .tr small { margin-top: 5px; color: var(--ui-muted); font-size: 11px; line-height: 1.6; }
+.ui-shell .page .table .tr :is(b, strong) { font-size: 13px; font-weight: 600; }
+.ui-shell :is(.stock-list-card, .sales-history-card, .payroll-card, .remuneration-table-card) { overflow: hidden; }
+.ui-shell #penggajian .payroll-card, .ui-shell #penjualan .sales-history-card { padding: 0; }
+.ui-shell #penggajian .payroll-table .tr { grid-template-columns: minmax(170px,1.1fr) minmax(175px,1fr) minmax(140px,.85fr) minmax(190px,1.1fr) minmax(180px,1fr) minmax(180px,1fr) 126px; }
+.ui-shell #remunerasi .remuneration-table .tr { grid-template-columns: minmax(180px,1.1fr) minmax(170px,1fr) minmax(170px,1fr) minmax(180px,1fr) minmax(180px,1fr) minmax(175px,1fr) 115px; }
+.ui-shell :is(.stock-table, .history-table, .finance-history-table, .sales-history-table) .tr { min-width: 1050px; }
+.ui-shell :is(#stok, #penjualan) .table-pagination { margin: 0; padding: 16px; gap: 12px; }
+.ui-shell .table-pagination :is(small, span) { font-size: 12px !important; }
+.ui-shell .access-table-wrap { border: 1px solid var(--ui-line); border-radius: 12px; }
+.ui-shell .access-table { min-width: 600px; }
+.ui-shell .access-table th { padding: 14px 16px; background: #f8f6f3; color: #766a61; font-size: 11px; letter-spacing: .035em; }
+.ui-shell .access-table td { padding: 16px; font-size: 13px; border-color: var(--ui-line); }
+.ui-shell .access-table td + td, .ui-shell .access-table th + th { border-left: 1px solid var(--ui-line); }
+.ui-shell .access-table td strong { font-size: 13px; }
+.ui-shell .access-table td small { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
+.ui-shell .access-table tbody tr:hover { background: #fdfbf9; }
+.ui-shell .table-actions { flex-wrap: nowrap; }
+
+/* Status chips and notices */
+.ui-shell :is(.pill, .category, .count-badge, .role-badge, .sales-payment, .finance-source) { padding: 5px 9px; border-radius: 7px; background: var(--ui-soft); color: var(--ui-brand); font-size: 11px; line-height: 1.4; font-weight: 600; }
+.ui-shell .ui-status-success { background: var(--ui-success-soft) !important; color: var(--ui-success) !important; }
+.ui-shell .ui-status-neutral { background: #f1eeeb !important; color: #746c65 !important; }
+.ui-shell .ui-status-warning { background: var(--ui-warning-soft); color: var(--ui-warning); }
+.ui-shell :is(.notice, .stock-impact, .alert-info) { margin-top: 18px; padding: 15px 18px; border: 1px solid #dddfd9; border-radius: 12px; background: #f2f4ef; color: #586151; font-size: 12px; line-height: 1.7; }
+.ui-shell :is(.alert-error, .product-import-warning) { color: var(--ui-danger); }
+.ui-shell #toast { font-size: 13px; border-color: #c5ddce; color: var(--ui-success) !important; border-radius: 12px !important; box-shadow: 0 8px 32px rgb(46 39 35 / .12); }
+.ui-shell #toast.error { color: var(--ui-danger) !important; }
+
+/* Dashboard / metrics */
+.ui-shell #dashboard .welcome { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 22px; padding: 26px; border: 1px solid #e3d5c7; border-radius: var(--ui-radius); background: linear-gradient(115deg, #eee3d6, #f7f1e8 65%, #f9f6ef); }
+.ui-shell #dashboard .welcome small { color: #836348; font-size: 11px; letter-spacing: .12em; }
+.ui-shell #dashboard .welcome h2 { margin: 8px 0; color: #463327; font-size: clamp(23px,2.5vw,30px); font-weight: 600; }
+.ui-shell #dashboard .welcome p { margin: 0; color: #786959; font-size: 13px; }
+.ui-shell .metrics { gap: 16px; margin-bottom: 22px; }
+.ui-shell .metrics article { min-width: 0; min-height: 134px; padding: 20px; align-items: flex-start; gap: 14px; border-radius: var(--ui-radius) !important; box-shadow: var(--ui-shadow); }
+.ui-shell .metrics article > div { min-width: 0; }
+.ui-shell .metrics article > i.material-symbols-outlined { flex: 0 0 40px; width: 40px; height: 40px; align-self: flex-start; background: var(--ui-soft) !important; color: var(--ui-brand) !important; }
+.ui-shell .metrics article > i.green { background: var(--ui-success-soft) !important; color: var(--ui-success) !important; }
+.ui-shell .metrics article > i.gold { background: var(--ui-warning-soft) !important; color: var(--ui-warning) !important; }
+.ui-shell .metrics article > i.rose { background: var(--ui-danger-soft) !important; color: var(--ui-danger) !important; }
+.ui-shell .metrics small { font-size: 12px; }
+.ui-shell .metrics strong { font-size: clamp(20px,1.7vw,27px); font-weight: 650; letter-spacing: -.04em; line-height: 1.3; overflow-wrap: anywhere; }
+.ui-shell .metrics span { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
+.ui-shell .dashboard-metric { transition: border-color .15s ease, box-shadow .15s ease; }
+.ui-shell .dashboard-metric:hover { border-color: #bfa38b !important; box-shadow: 0 5px 18px rgb(53 37 26 / .07); }
+.ui-shell .payment-revenue-card > .analytics-head { padding: 22px 22px 0; margin: 0; }
+.ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) { padding: 20px; }
+.ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) small { font-size: 12px; }
+.ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) strong { font-size: 23px; font-weight: 600; }
+.ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) span { font-size: 11px; }
+.ui-shell .analytics-period { padding: 5px 8px; background: var(--ui-soft); border-radius: 6px; color: #84715f; font-size: 10px; letter-spacing: .06em; }
+.ui-shell #dashboard .analytics-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.ui-shell #dashboard .revenue-analytics { grid-column: 1 / -1; }
+.ui-shell .dashboard-operational-card { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; padding: 0; overflow: hidden; }
+.ui-shell .dashboard-operational-item { padding: 22px; border-right: 1px solid var(--ui-line); }
+.ui-shell .dashboard-operational-item:last-child { border-right: 0; }
+.ui-shell :is(.queue-row, .treatment-stock-alert, .therapist-availability-row) { gap: 10px; padding-block: 14px; }
+.ui-shell :is(.queue-row b, .treatment-stock-alert b, .therapist-availability-row b) { font-size: 12px; }
+.ui-shell :is(.queue-row small, .treatment-stock-alert small, .therapist-availability-row small) { font-size: 11px; }
+.ui-shell .queue-row > strong { color: var(--ui-brand); }
+
+/* Selection controls share a calm, explicit selected state. */
+.ui-shell :is(.sales-view-tabs, .calendar-mode-tabs, .revenue-period-filter) { padding: 5px; gap: 4px; border: 1px solid var(--ui-line); border-radius: 12px; background: #eee9e3; }
+.ui-shell :is(.sales-view-tabs, .calendar-mode-tabs, .revenue-period-filter) button { min-height: 36px; padding: 8px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--ui-muted); font-size: 12px; font-weight: 600; }
+.ui-shell :is(.sales-view-tabs, .calendar-mode-tabs, .revenue-period-filter) button.active { background: #fff; color: var(--ui-brand); box-shadow: 0 2px 5px rgb(46 39 35 / .06); }
+.ui-shell .tabs button { min-height: 44px; font-size: 13px; }
+
+/* Cashier: independent-height cards and a clearly grouped checkout. */
+.ui-shell .cashier-grid { grid-template-columns: minmax(280px,.78fr) minmax(0,1.35fr); align-items: start; }
+.ui-shell .cashier-grid.cashier-awaiting-selection { grid-template-columns: minmax(0,1fr); }
+.ui-shell .cashier-grid.cashier-awaiting-selection > div:first-child { max-width: none; }
+.ui-shell .cashier-queue-head { flex-wrap: wrap; }
+.ui-shell .cashier-item { min-height: 72px; margin-top: 10px; padding: 16px; border: 1px solid var(--ui-line); border-radius: 12px; background: #fff; cursor: pointer; }
+.ui-shell .cashier-item:hover { background: #fcfaf7; border-color: #ccb7a6; }
+.ui-shell .cashier-item.active { background: #f7eee6; border-color: #ac876c; box-shadow: inset 3px 0 var(--ui-brand); }
+.ui-shell .cashier-item small { margin-top: 4px; font-size: 11px; }
+.ui-shell .cashier-item > strong { font-size: 13px; }
+.ui-shell .member { color: var(--ui-brand); }
+.ui-shell .receipt-line { padding-block: 18px; gap: 12px; }
+.ui-shell .receipt-line small { margin-top: 4px; font-size: 12px; }
+.ui-shell .receipt-line > i { background: var(--ui-soft); color: var(--ui-brand); }
+.ui-shell .promo { flex-wrap: wrap; padding: 16px; background: var(--ui-soft); border-radius: 12px; gap: 12px; }
+.ui-shell .promo small { font-size: 11px; }
+.ui-shell .totals { padding-block: 10px; }
+.ui-shell .totals hr { border: 0; border-top: 1px solid var(--ui-line); }
+.ui-shell .totals .grand { align-items: center; padding-top: 8px; }
+.ui-shell .totals .grand b { font-size: 28px; font-weight: 650; }
+.ui-shell #kasir .payment-row { padding: 18px; border-color: var(--ui-line); border-radius: 12px; }
+.ui-shell #kasir .payment-row-head { padding-bottom: 12px; }
+.ui-shell #kasir .payment-row label { font-size: 12px; }
+.ui-shell #kasir .payment-charge-control { background: var(--ui-soft); border-color: var(--ui-line); border-radius: 10px; }
+.ui-shell #kasir .payment-charge-toggle { flex-shrink: 0; min-width: 64px; min-height: 38px; }
+.ui-shell :is(.payment-source-details, .payment-reconciliation) { border-color: var(--ui-line); border-radius: 12px; background: #faf7f3; }
+.ui-shell .payment-reconciliation { gap: 16px; padding: 16px; flex-wrap: wrap; font-size: 12px; }
+.ui-shell .payment-reconciliation b { font-variant-numeric: tabular-nums; }
+.ui-shell .payment-mode-list { flex-wrap: wrap; gap: 8px; }
+.ui-shell .payment-mode-list .payment-mode { min-height: 42px; padding: 9px 12px; border: 1px solid var(--ui-line); border-radius: 9px; background: #fff; font-size: 13px; }
+.ui-shell .payment-mode-list .payment-mode.active { border-color: #ae8b72; background: var(--ui-soft); color: var(--ui-brand); }
+.ui-shell .payment-mode.active i { border-color: var(--ui-brand); background: var(--ui-brand); }
+
+/* Kasir: pemilihan metode dibuat seperti pilihan kasir sehari-hari, bukan kumpulan kartu. */
+.ui-shell #kasir .split-payment-head { margin: 16px 0 6px; }
+.ui-shell #kasir .split-payment-head h3 { margin: 0; font-size: 14px; }
+.ui-shell #kasir .payment-method-choices { margin: 0 0 12px; }
+.ui-shell #kasir .payment-mode-list { gap: 8px 18px; }
+.ui-shell #kasir .payment-mode-list .payment-mode { min-height: 30px; padding: 3px 0; border: 0; border-radius: 0; background: transparent; color: var(--ui-text); font-size: 12px; }
+.ui-shell #kasir .payment-mode-list .payment-mode.active { border: 0; background: transparent; color: var(--ui-text); font-weight: 750; }
+.ui-shell #kasir .payment-mode-list .payment-mode:focus-visible { outline: 2px solid var(--ui-brand); outline-offset: 3px; }
+.ui-shell #kasir .payment-source-details { margin-top: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.ui-shell #kasir .payment-source-fields { grid-template-columns: minmax(210px, .8fr) minmax(0, 1.2fr); align-items:end; gap: 12px; }
+.ui-shell #kasir .payment-source-fields-single { grid-template-columns:minmax(210px, .8fr); }
+.ui-shell #kasir .card-source-details .payment-source-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ui-shell #kasir .payment-destination { display:flex; align-items:center; gap:7px; min-height:38px; margin:0; padding:0 11px; border:1px solid var(--ui-line); border-radius:8px; background:#fff; color:var(--ui-muted); font-size:11px; }
+.ui-shell #kasir .payment-destination b { margin:0; color:var(--ui-text); font-size:11px; }
+.ui-shell #kasir .payment-destination span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ui-shell #kasir .payment-charge-control { display:grid; grid-template-columns:minmax(0, 1fr) 150px; align-items:center; gap:6px 12px; min-height:64px; padding:10px 12px; }
+.ui-shell #kasir .payment-charge-label { color:var(--ui-text); font-size:12px; font-weight:700; }
+.ui-shell #kasir .payment-charge-choice { display:grid; gap:3px; color:var(--ui-muted); font-size:10px; font-weight:600; }
+.ui-shell #kasir .payment-charge-percent { min-height:32px; padding:5px 26px 5px 8px; border:1px solid var(--ui-line); border-radius:7px; background:#fff; color:var(--ui-text); font:inherit; font-size:11px; }
+.ui-shell #kasir .payment-charge-summary { grid-column:1 / -1; color:var(--ui-muted); font-size:10px; text-align:left; }
+@media (max-width: 760px) {
+    .ui-shell #kasir .payment-source-fields,
+    .ui-shell #kasir .card-source-details .payment-source-fields { grid-template-columns:1fr; }
+    .ui-shell #kasir .payment-mode-list { gap:6px 14px; }
+}
+
+/* Catalog, membership and financial reports */
+.ui-shell .treatment-grid { gap: 18px; }
+.ui-shell .treatment-card { padding: 20px; }
+.ui-shell .treatment-card h3 { font-size: 17px; line-height: 1.5; }
+.ui-shell .treatment-card > p { font-size: 12px; }
+.ui-shell .treatment-foot { align-items: center; flex-wrap: wrap; gap: 14px; padding-top: 16px; }
+.ui-shell .treatment-foot small { color: var(--ui-muted); font-size: 11px; }
+.ui-shell .treatment-foot b { margin-top: 4px; font-size: 17px; }
+.ui-shell .treatment-actions { flex-wrap: wrap; }
+.ui-shell .treatment-foot .recipe-info-button { flex: 0 0 40px; width: 40px; height: 42px; padding: 0; }
+.ui-shell .recipe-info-button::before { content: none; display: none; }
+.ui-shell .recipe-info-button .material-symbols-outlined { font-size: 20px; }
+.ui-shell .recipe-summary li { padding: 14px 0; font-size: 13px; }
+.ui-shell .recipe-summary li b { color: var(--ui-brand); font-size: 12px; }
+.ui-shell .recipe-modal .recipe-checklist { margin-inline: 0; }
+.ui-shell .recipe-modal .recipe-product-search { margin: 0; }
+.ui-shell .recipe-product.selected { border-color: #cab5a5; background: #faf5f0; }
+.ui-shell #treatment .treatment-card-grid { padding: 0; }
+.ui-shell .membership-event { padding: 20px 0; }
+.ui-shell .membership-event h3 { font-size: 16px; }
+.ui-shell .membership-event :is(p, small, div > span) { font-size: 12px; line-height: 1.6; }
+.ui-shell .member-row { padding: 16px 0; }
+.ui-shell .member-row small { margin-top: 4px; font-size: 11px; }
+.ui-shell .cash-flow-head { font-size: 13px; }
+.ui-shell .cash-flow-head b { font-size: 15px; }
+.ui-shell .finance-statement { font-size: 14px; }
+.ui-shell .finance-statement :is(small,p) { font-size: 12px; line-height: 1.6; }
+.ui-shell .activity { padding: 18px 0; border-bottom: 1px solid var(--ui-line); }
+.ui-shell .activity p { margin-top: 6px; font-size: 12px; line-height: 1.6; }
+
+/* Payroll / archive: separate selection, summary, data and final actions. */
+.ui-shell #remunerasi .remuneration-toolbar { align-items: flex-start; }
+.ui-shell #remunerasi .remuneration-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.ui-shell #remunerasi .remuneration-actions :is(button,a) { min-height: 44px; font-size: 12px; border-radius: 10px; }
+.ui-shell #remunerasi .remuneration-period-note { padding: 15px 18px; border-radius: 12px; background: var(--ui-soft); }
+.ui-shell #remunerasi .remuneration-summary { gap: 14px; margin-block: 20px; }
+.ui-shell #remunerasi .remuneration-summary > article { padding: 18px; border-radius: 14px; }
+.ui-shell #remunerasi .remuneration-summary small { font-size: 11px; }
+.ui-shell #remunerasi .remuneration-summary strong { font-size: 18px; line-height: 1.4; }
+.ui-shell #remunerasi .remuneration-summary em { font-size: 11px; }
+.ui-shell .payroll-toolbar-actions { flex-wrap: wrap; gap: 16px; }
+.ui-shell .payroll-toolbar-actions p { white-space: normal; font-size: 12px; }
+.ui-shell .remuneration-guide-page { padding: 24px; background: #fff; border: 1px solid var(--ui-line); border-radius: var(--ui-radius); }
+.ui-shell .remuneration-guide-copy { max-width: 1000px; }
+.ui-shell .remuneration-guide-copy strong { font-size: 15px; }
+.ui-shell :is(.remuneration-guide-lead, .remuneration-guide-copy li p) { font-size: 13px; line-height: 1.8; }
+.ui-shell .remuneration-archive-card { min-height: 208px; padding: 22px; }
+.ui-shell .remuneration-archive-card.is-saved { border-color: #c5ddce; background: #fbfdfb; }
+.ui-shell .remuneration-archive-card h3 { font-size: 18px; }
+.ui-shell .remuneration-archive-card p { font-size: 12px; line-height: 1.6; }
+.ui-shell .remuneration-archive-card-top em { font-size: 11px; }
+.ui-shell #remunerasi .remuneration-period-note b { font-size: 13px; }
+.ui-shell #remunerasi .remuneration-period-note small { font-size: 12px; line-height: 1.6; }
+.ui-shell .remuneration-validation-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--ui-line); }
+.ui-shell .remuneration-validation-note.is-pending { color: var(--ui-warning); }
+.ui-shell .remuneration-validation-note.is-complete { color: var(--ui-success); }
+.ui-shell .remuneration-input-state { font-size: 10px; padding: 4px 7px; }
+
+/* Attendance and stock entry use usable stacked fields on narrow screens. */
+.ui-shell .therapist-attendance-row { grid-template-columns: minmax(120px,1fr) minmax(240px,1.4fr); gap: 14px; padding: 14px; }
+.ui-shell .therapist-status-option { min-height: 40px; font-size: 12px; border-radius: 9px; }
+.ui-shell .therapist-attendance-calendar-nav { grid-template-columns: 34px minmax(0,1fr) 34px; }
+.ui-shell .therapist-attendance-calendar-nav button { width: 34px; height: 34px; border-radius: 9px; }
+.ui-shell .therapist-attendance-calendar-day { font-size: 12px; border-radius: 9px; }
+.ui-shell .therapist-attendance-calendar-nav strong { font-size: 12px; }
+.ui-shell .therapist-attendance-calendar-tooltip { display: none; }
+.ui-shell .therapist-attendance-calendar-day:is(:hover,:focus-visible) .therapist-attendance-calendar-tooltip { display: grid; }
+.ui-shell .therapist-attendance-calendar-day:nth-child(7n) .therapist-attendance-calendar-tooltip,
+.ui-shell .therapist-attendance-calendar-day:nth-child(7n - 1) .therapist-attendance-calendar-tooltip { left: auto; right: 0; transform: translate(0,0); }
+.ui-shell .therapist-attendance-calendar-day:nth-child(7n + 1) .therapist-attendance-calendar-tooltip,
+.ui-shell .therapist-attendance-calendar-day:nth-child(7n + 2) .therapist-attendance-calendar-tooltip { left: 0; transform: translate(0,0); }
+.ui-shell #stok-opname .stocktake-card { padding: 0; }
+.ui-shell .stocktake-overview article { border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); }
+.ui-shell .stocktake-card-head { padding: 22px; }
+.ui-shell .stocktake-card-head p { font-size: 12px; line-height: 1.6; }
+.ui-shell .stocktake-filters { flex-wrap: wrap; }
+.ui-shell .stocktake-table-head { font-size: 11px; }
+.ui-shell .stocktake-row { padding-block: 16px; }
+.ui-shell .stocktake-row small { font-size: 11px; }
+.ui-shell .stocktake-input-wrap input { border: 0 !important; }
+.ui-shell #stok .stock-table .tr { grid-template-columns: minmax(250px,1.65fr) minmax(140px,.9fr) minmax(135px,.85fr) minmax(130px,.9fr) minmax(145px,.95fr) 112px; }
+.ui-shell #stok .stock-table .tr.th span { white-space: nowrap; }
+.ui-shell #stok .stock-amount b { font-variant-numeric: tabular-nums; }
+.ui-shell #stok .stock-amount small { display: inline; margin: 0 0 0 3px; color: var(--ui-muted); font-size: 11px; font-weight: 600; text-transform: lowercase; }
+.ui-shell #stok .product-row-actions .product-edit { min-width: 88px; }
+.ui-shell .calendar-event.status-scheduled { border-color: #decaba; border-left-color: var(--ui-brand); background: #f6ede5; }
+.ui-shell .calendar-event.status-scheduled :is(time,b,small) { color: #6e4e39; }
+.ui-shell .therapist-day-event.status-scheduled { --service-bg: #f6ede5; }
+.ui-shell :is(.calendar-week-hint, .calendar-day-head.is-today) { background: #f7f2ec; color: var(--ui-brand); }
+.ui-shell .calendar-nav { width: 36px; height: 40px; border-radius: 10px; }
+.ui-shell .calendar-period { flex-wrap: wrap; }
+.ui-shell .calendar-mode-tabs { flex-wrap: wrap; }
+.ui-shell #penjualan .sales-toolbar { position: static; padding: 18px 22px; margin-bottom: 20px; border: 1px solid var(--ui-line); background: #fff; }
+.ui-shell #penjualan .sales-toolbar > div:first-child { display: block; }
+.ui-shell .payment-method-label b { font-size: 12px; }
+.ui-shell .payment-revenue-summary :is(small,span) { font-size: 11px; }
+
+/* Dialogs: legible headers, deliberate boundaries, safe scrolling. */
+.ui-shell .modal { padding: 24px; background: rgb(36 28 22 / .48); backdrop-filter: blur(3px); z-index: 60; }
+.ui-shell .modal-box { max-width: 100%; max-height: calc(100dvh - 48px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid #e7ded7; border-radius: 20px; box-shadow: 0 28px 90px rgb(36 28 22 / .22); }
+.ui-shell .modal-head { align-items: flex-start; gap: 16px; padding: 24px; border-color: var(--ui-line); }
+.ui-shell .modal-head h2 { font-size: 21px; font-weight: 650; line-height: 1.4; }
+.ui-shell .modal-head p { margin: 6px 0 0; color: var(--ui-muted); font-size: 13px; line-height: 1.6; }
+.ui-shell .modal-head > button { display: inline-grid; place-items: center; flex-shrink: 0; width: 38px; height: 38px; border: 1px solid var(--ui-line); border-radius: 10px; background: #faf7f3; color: #786456; }
+.ui-shell .modal-head > button:hover { background: var(--ui-soft); border-color: #c5b3a6; }
+.ui-shell .modal :is(form, .quick-fields) { padding: 24px; }
+.ui-shell .modal form .quick-fields { padding: 0; }
+.ui-shell:has(.modal.open) { overflow: hidden; }
+.ui-shell .modal .form-grid { gap: 18px; }
+.ui-shell .modal :is(footer, form > footer) { gap: 10px; padding: 20px 24px; border-top: 1px solid var(--ui-line); background: #fcfaf8; }
+.ui-shell .modal form > footer { margin: 22px -24px -24px; }
+.ui-shell .quick-info p { padding: 14px 0; font-size: 13px; }
+.ui-shell #reservation-modal .modal-head { padding: 24px; }
+.ui-shell #reservation-modal .reservation-modal-box { border-radius: 20px; }
+.ui-shell #reservation-modal .reservation-items > article { box-shadow: none; }
+.ui-shell #reservation-modal .reservation-footer { margin: 22px -24px -24px; padding: 18px 24px; }
+.ui-shell .permission-item strong { font-size: 13px; }
+.ui-shell .permission-item small { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
+.ui-shell .permission-group { padding: 20px; border-radius: 14px; }
+.ui-shell .permission-group legend { font-size: 14px; }
+.ui-shell .transaction-success-modal { position: relative; width: min(440px,100%); background: #fff; }
+.ui-shell .transaction-success-close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--ui-line); border-radius: 10px; background: #faf7f3; cursor: pointer; }
+.ui-shell .transaction-success-body { display: flex; flex-direction: column; align-items: center; padding: 42px 24px 26px; text-align: center; }
+.ui-shell .transaction-success-emblem { display: grid; place-items: center; width: 76px; height: 76px; margin: 10px 0 22px; border: 1px solid #168049; border-radius: 50%; background: #1d9b57; color: #fff; clip-path: none; box-shadow: 0 8px 18px rgb(29 155 87 / .22); }
+.ui-shell .transaction-success-emblem svg { width: 52px; height: 52px; }
+.ui-shell .transaction-success-emblem path { stroke: currentColor; stroke-width: 7; }
+
+/* Pengaturan metode pembayaran: daftar ringkas, detail hanya saat diperlukan. */
+.ui-shell .payment-methods-card { padding: 0; overflow: hidden; }
+.ui-shell .payment-methods-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 22px; margin: 0; border-bottom: 1px solid var(--ui-line); }
+.ui-shell .payment-methods-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.ui-shell .payment-methods-head-actions .primary { min-height: 40px; }
+.ui-shell .payment-methods-table-wrap { margin: 0; border: 0; border-radius: 0; }
+.ui-shell .payment-methods-table { min-width: 680px; }
+.ui-shell .payment-methods-table td { padding-block: 13px; }
+.ui-shell .payment-methods-table td > small { display: block; margin-top: 3px; }
+.ui-shell .payment-methods-table .table-actions { justify-content: flex-end; flex-wrap: nowrap; }
+.ui-shell .payment-methods-table .table-actions form { margin: 0; }
+.payment-method-modal[hidden] { display: none; }
+.payment-method-modal { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; }
+.payment-method-modal-backdrop { position: absolute; inset: 0; background: rgb(36 28 22 / .5); backdrop-filter: blur(3px); }
+.payment-method-modal-dialog { position: relative; width: min(650px, 100%); max-height: calc(100dvh - 40px); overflow: auto; border: 1px solid #e7ded7; border-radius: 16px; background: #fff; box-shadow: 0 28px 90px rgb(36 28 22 / .25); }
+.payment-method-modal-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px; border-bottom: 1px solid var(--ui-line); }
+.payment-method-modal-dialog h2 { margin: 0; color: var(--ui-ink); font-size: 18px; font-weight: 650; }
+.payment-method-modal-dialog header p { margin: 5px 0 0; color: var(--ui-muted); font-size: 12px; line-height: 1.55; }
+.payment-method-modal-close { display: grid; flex: 0 0 auto; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid var(--ui-line); border-radius: 8px; background: #faf7f3; color: var(--ui-muted); cursor: pointer; }
+.payment-method-modal-close:hover { color: var(--ui-brand); border-color: #c5b3a6; background: var(--ui-soft); }
+.payment-method-modal-close .material-symbols-outlined { font-size: 18px; }
+.payment-method-modal-dialog form { padding: 20px 22px 0; }
+.payment-method-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.payment-method-form-grid label { display: grid; gap: 6px; color: var(--ui-ink); font-size: 12px; font-weight: 650; }
+.payment-method-form-grid label.payment-method-field-wide { grid-column: 1 / -1; }
+.payment-method-form-grid input, .payment-method-form-grid select { width: 100%; min-height: 40px; padding: 9px 10px; border: 1px solid var(--ui-line); border-radius: 8px; background: #fff; color: var(--ui-ink); font: inherit; font-size: 12px; font-weight: 400; }
+.payment-method-form-grid input:focus, .payment-method-form-grid select:focus { outline: 0; border-color: #b99d89; box-shadow: 0 0 0 3px rgb(112 76 58 / .12); }
+.payment-method-form-grid small { color: var(--ui-muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
+.payment-method-modal-dialog footer { display: flex; justify-content: flex-end; gap: 9px; margin: 20px -22px 0; padding: 15px 22px; border-top: 1px solid var(--ui-line); background: #fcfbfa; }
+.payment-method-modal-open { overflow: hidden; }
+.ui-shell .transaction-success-body h2 { margin: 0; font-size: 23px; letter-spacing: -.025em; }
+.ui-shell .transaction-success-body > p { margin: 10px 0; color: var(--ui-muted); font-size: 13px; }
+.ui-shell .transaction-success-meta { display: grid; gap: 6px; margin-top: 8px; color: var(--ui-muted); font-size: 12px; }
+.ui-shell .transaction-success-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 24px 26px; }
+
+/* Responsive rules stay centralized. Table content scrolls, the page does not. */
+@media (max-width: 1350px) {
+    .ui-shell .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .ui-shell .metrics.three { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .ui-shell .dashboard-operational-card { grid-template-columns: 1fr; }
+    .ui-shell .dashboard-operational-item { border-right: 0; border-bottom: 1px solid var(--ui-line); }
+    .ui-shell .dashboard-operational-item:last-child { border-bottom: 0; }
+    .ui-shell .cashier-grid { grid-template-columns: minmax(250px,.7fr) minmax(0,1fr); }
+    .ui-shell .treatment-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .ui-shell .access-grid-sidebar { grid-template-columns: minmax(240px,300px) minmax(0,1fr); }
+}
+@media (max-width: 1100px) {
+    .ui-shell main { padding-inline: 22px; }
+    .ui-shell main > header { margin-inline: -22px; padding-inline: 22px; }
+    .ui-shell #dashboard .analytics-grid, .ui-shell :is(.two-column, .cashier-grid, .access-grid-sidebar, .therapist-attendance-layout) { grid-template-columns: minmax(0,1fr); }
+    .ui-shell .therapist-attendance-calendars { position: static; grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .ui-shell .therapist-attendance-row { grid-template-columns: minmax(120px,1fr) minmax(240px,1.4fr); }
+    .ui-shell .card-head { flex-wrap: wrap; }
+    .ui-shell .toolbar { align-items: flex-start; flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+    .ui-shell main, .ui-shell.sidebar-is-collapsed main { margin-left: 0; padding: 0 16px 28px; }
+    .ui-shell main > header { min-height: 84px; margin: 0 -16px 20px; padding: 19px 16px 19px 68px; }
+    .ui-shell main > header h1 { font-size: 21px; }
+    .ui-shell main > header p { font-size: 11px; }
+    .ui-shell .access-header { flex-wrap: wrap; }
+    .ui-shell .sidebar, .ui-shell.sidebar-is-collapsed .sidebar { width: 272px; max-width: calc(100vw - 54px); padding: 26px 16px 16px; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility .2s; z-index: 80; }
+    .ui-shell.sidebar-mobile-open .sidebar { transform: translateX(0); visibility: visible; }
+    .ui-shell .sidebar-toggle, .ui-shell.sidebar-is-collapsed .sidebar-toggle { top: 23px; left: 16px; z-index: 90; width: 36px; height: 36px; background: #fff; color: var(--ui-brand); border-color: var(--ui-line); }
+    .ui-shell.sidebar-mobile-open .sidebar-toggle { left: min(222px, calc(100vw - 104px)); background: #48362c; color: #fff; border-color: #6a5347; }
+    .ui-shell.sidebar-mobile-open { overflow: hidden; }
+    .ui-shell.sidebar-mobile-open .sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 70; background: rgb(36 28 22 / .45); }
+    .ui-shell .sidebar .dashboard-brand, .ui-shell.sidebar-is-collapsed .dashboard-brand { display: block; }
+    .ui-shell .sidebar nav span, .ui-shell .access-menu summary > i, .ui-shell .sidebar .account > div, .ui-shell .sidebar .account form { display: block; }
+    .ui-shell .sidebar nav { margin-top: 0; }
+    .ui-shell .sidebar nav :is(button,a,summary) { justify-content: flex-start; gap: 12px; padding-inline: 12px; }
+    .ui-shell .sidebar details:not([open]) .access-submenu { display: none; }
+    .ui-shell .sidebar details[open] .access-submenu { display: grid; }
+    .ui-shell .sidebar .access-submenu { position: static; width: auto; background: transparent; box-shadow: none; border-radius: 0; }
+    .ui-shell .sidebar .access-menu summary > span { display: block; }
+    .ui-shell :is(.page .card, .analytics-card, .access-card) { padding: 18px; }
+    .ui-shell #dashboard .welcome { padding: 22px; }
+    .ui-shell #dashboard .welcome .primary { width: 100%; }
+    .ui-shell .metrics, .ui-shell .metrics.three { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+    .ui-shell .metrics article { min-height: 144px; flex-direction: column; padding: 16px; gap: 10px; }
+    .ui-shell .metrics strong { font-size: 22px; }
+    .ui-shell :is(.page > .toolbar, .remuneration-toolbar) { padding: 18px; }
+    .ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions, .payroll-toolbar-actions, .stock-history-controls, .sales-filters) { width: 100%; }
+    .ui-shell .page-toolbar-actions > :is(label,button), .ui-shell .stock-toolbar-actions > button { flex: 1 1 auto; }
+    .ui-shell .page-toolbar-actions .page-search { flex-basis: 100%; width: 100%; }
+    .ui-shell :is(.filters, .finance-history-filters) > :is(input,select,label) { width: 100%; flex: 1 1 160px; }
+    .ui-shell :is(.treatment-grid, .permission-groups, .two-form-columns, .therapist-attendance-calendars) { grid-template-columns: minmax(0,1fr); }
+    .ui-shell .analytics-head { flex-wrap: wrap; }
+    .ui-shell .payment-revenue-list { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .ui-shell .payment-revenue-item { padding: 16px; }
+    .ui-shell .payment-revenue-item strong { font-size: 19px; }
+    .ui-shell .card-head h3, .ui-shell .toolbar h3 { font-size: 16px; }
+    .ui-shell .promo { align-items: flex-start; }
+    .ui-shell .promo select { width: 100%; }
+    .ui-shell #manual-discount { width: 100%; }
+    .ui-shell .modal { padding: 12px; }
+    .ui-shell .modal-box { width: min(100%, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin-inline: auto; border-radius: 16px; }
+    .ui-shell .modal-box.payroll-editor-modal, .ui-shell .modal-box.remuneration-detail-modal { width: 100%; max-width: 100%; }
+    .ui-shell .modal-head, .ui-shell #reservation-modal .modal-head { padding: 20px; }
+    .ui-shell .modal :is(form, .quick-fields) { padding: 20px; }
+    .ui-shell .modal :is(footer, form > footer) { flex-wrap: wrap; padding: 16px 20px; }
+    .ui-shell .modal form > footer { margin: 20px -20px -20px; }
+    .ui-shell #reservation-modal .reservation-footer { margin: 20px -20px -20px; padding: 16px 20px; }
+    .ui-shell .modal footer > :is(button,a) { flex: 1; }
+    .ui-shell #remunerasi .remuneration-actions { width: 100%; }
+    .ui-shell #remunerasi .remuneration-actions > * { flex: 1 1 145px; }
+    .ui-shell #remunerasi .remuneration-actions input { width: 100%; }
+    .ui-shell .remuneration-guide-page { padding: 20px; }
+    .ui-shell .dashboard-operational-card { padding: 0; }
+    .ui-shell .therapist-attendance-row { grid-template-columns: minmax(0,1fr); gap: 12px; padding: 18px 14px; }
+    .ui-shell .therapist-attendance-table-head { display: none; }
+    .ui-shell .therapist-attendance-row > span b { font-size: 14px; }
+    .ui-shell .therapist-attendance-row .therapist-overtime-field.is-hidden { display: none; }
+    .ui-shell .therapist-attendance-calendars { width: 100%; }
+    .ui-shell .stocktake-table-head { display: none; }
+    .ui-shell .stocktake-row { min-width: 0; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; padding: 18px; }
+    .ui-shell .stocktake-row > :nth-child(3), .ui-shell .stocktake-row > :nth-child(4) { grid-column: 1 / -1; }
+    .ui-shell .stocktake-row > :nth-child(3)::before { content: 'Jumlah masuk'; display: block; margin-bottom: 6px; color: var(--ui-muted); font-size: 12px; }
+    .ui-shell .stocktake-row > :nth-child(4)::before { content: 'Catatan'; display: block; margin-bottom: 6px; color: var(--ui-muted); font-size: 12px; }
+    .ui-shell .stocktake-page-actions { display: flex; flex-wrap: wrap; justify-content: stretch; }
+    .ui-shell .stocktake-page-actions button { flex: 1 1 auto; }
+    .ui-shell .stocktake-filters .page-search { width: 100%; }
+}
+@media (max-width: 420px) {
+    .ui-shell main > header p { max-width: 230px; }
+    .ui-shell .metrics strong { font-size: 20px; }
+    .ui-shell .metrics article { padding: 14px; }
+    .ui-shell .metrics small { font-size: 11px; }
+    .ui-shell #remunerasi .remuneration-summary { grid-template-columns: 1fr; }
+    .ui-shell .payment-revenue-list { grid-template-columns: 1fr; }
+    .ui-shell .payment-revenue-item { border-right: 0; border-bottom: 1px solid var(--ui-line); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ui-shell *, .ui-shell *::before, .ui-shell *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+@media (max-width: 760px) {
+    .ui-shell .payment-methods-head { align-items: flex-start; flex-direction: column; padding: 18px; }
+    .ui-shell .payment-methods-head-actions { width: 100%; justify-content: space-between; }
+    .ui-shell .payment-methods-head-actions .primary { flex: 1; justify-content: center; }
+    .ui-shell .payment-methods-table { min-width: 600px; }
+    .ui-shell .payment-method-action-label { display: none; }
+    .payment-method-modal { padding: 12px; }
+    .payment-method-modal-dialog { max-height: calc(100dvh - 24px); border-radius: 14px; }
+    .payment-method-modal-dialog > header, .payment-method-modal-dialog form { padding-inline: 18px; }
+    .payment-method-form-grid { grid-template-columns: 1fr; gap: 12px; }
+    .payment-method-modal-dialog footer { margin-inline: -18px; padding-inline: 18px; }
+    .payment-method-modal-dialog footer .access-button { flex: 1; justify-content: center; }
+}
+
+/* Functional visibility must win over component display rules. */
+.ui-shell [hidden], .ui-shell .hidden { display: none !important; }

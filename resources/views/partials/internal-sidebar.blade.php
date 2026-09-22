@@ -153,12 +153,14 @@
         </div>
         <form method="POST" action="{{ route('logout') }}">
             @csrf
-            <button type="submit" class="logout" title="Keluar dari sistem">
+            <button type="submit" class="logout" title="Keluar dari sistem" aria-label="Keluar dari sistem">
                 <b class="material-symbols-outlined" aria-hidden="true">logout</b><span>Logout</span>
             </button>
         </form>
     </div>
 </aside>
+
+<div class="sidebar-scrim" id="sidebar-scrim" aria-hidden="true"></div>
 
 <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Tutup sidebar" title="Tutup sidebar">
     <span class="material-symbols-outlined" aria-hidden="true">menu_open</span>
@@ -172,16 +174,60 @@
 
     sidebar.id = 'app-sidebar';
     const storageKey = 'selesa-sidebar-collapsed';
+    const mobile = window.matchMedia('(max-width: 760px)');
+    const scrim = document.getElementById('sidebar-scrim');
+    let desktopCollapsed = false;
+    try { desktopCollapsed = localStorage.getItem(storageKey) === 'true'; } catch {}
+    const updateToggle = (expanded) => {
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.setAttribute('aria-label', expanded ? 'Tutup menu navigasi' : 'Buka menu navigasi');
+        toggle.title = expanded ? 'Tutup menu navigasi' : 'Buka menu navigasi';
+        toggle.querySelector('span').textContent = expanded ? (mobile.matches ? 'close' : 'menu_open') : 'menu';
+    };
     const setCollapsed = (collapsed) => {
+        desktopCollapsed = collapsed;
         document.body.classList.toggle('sidebar-is-collapsed', collapsed);
-        toggle.setAttribute('aria-expanded', String(!collapsed));
-        toggle.setAttribute('aria-label', collapsed ? 'Buka sidebar' : 'Tutup sidebar');
-        toggle.title = collapsed ? 'Buka sidebar' : 'Tutup sidebar';
-        toggle.querySelector('span').textContent = collapsed ? 'menu' : 'menu_open';
-        localStorage.setItem(storageKey, String(collapsed));
+        updateToggle(!collapsed);
+        try { localStorage.setItem(storageKey, String(collapsed)); } catch {}
+    };
+    const setMobileOpen = (open, returnFocus = false) => {
+        document.body.classList.toggle('sidebar-mobile-open', open);
+        sidebar.inert = !open;
+        updateToggle(open);
+        if (returnFocus) toggle.focus();
+    };
+    const syncViewport = () => {
+        document.body.classList.remove('sidebar-mobile-open');
+        document.body.classList.toggle('sidebar-is-collapsed', !mobile.matches && desktopCollapsed);
+        sidebar.inert = mobile.matches;
+        updateToggle(!mobile.matches && !desktopCollapsed);
     };
 
-    setCollapsed(localStorage.getItem(storageKey) === 'true');
-    toggle.addEventListener('click', () => setCollapsed(!document.body.classList.contains('sidebar-is-collapsed')));
+    sidebar.querySelectorAll('nav > button, nav > a, .access-menu > summary').forEach(item => {
+        const label = item.querySelector('span')?.textContent.trim();
+        if (label) { item.title = label; item.setAttribute('aria-label', label); }
+    });
+    syncViewport();
+    mobile.addEventListener('change', syncViewport);
+    toggle.addEventListener('click', () => {
+        if (mobile.matches) setMobileOpen(!document.body.classList.contains('sidebar-mobile-open'));
+        else setCollapsed(!desktopCollapsed);
+    });
+    scrim?.addEventListener('click', () => setMobileOpen(false, true));
+    sidebar.addEventListener('click', event => {
+        if (!mobile.matches && desktopCollapsed && event.target.closest('summary')) setCollapsed(false);
+        if (mobile.matches && event.target.closest('a, button[data-page]')) setMobileOpen(false, true);
+    });
+    document.addEventListener('keydown', event => {
+        if (!mobile.matches || !document.body.classList.contains('sidebar-mobile-open')) return;
+        if (event.key === 'Escape') { event.preventDefault(); setMobileOpen(false, true); }
+        if (event.key === 'Tab') {
+            const focusable = [...sidebar.querySelectorAll('a, button, summary, input')].filter(item => !item.disabled && item.getClientRects().length);
+            focusable.push(toggle);
+            const current = focusable.indexOf(document.activeElement);
+            if (event.shiftKey && current <= 0) { event.preventDefault(); toggle.focus(); }
+            else if (!event.shiftKey && (current === -1 || current === focusable.length - 1)) { event.preventDefault(); focusable[0]?.focus(); }
+        }
+    });
 })();
 </script>

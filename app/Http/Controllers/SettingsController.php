@@ -68,6 +68,7 @@ class SettingsController extends Controller
         $config = $this->section($section);
         $methods = DB::table('payment_methods')
             ->where('type', $config['type'])
+            ->whereNull('archived_at')
             ->orderByDesc('is_active')
             ->orderBy('name')
             ->get();
@@ -135,6 +136,22 @@ class SettingsController extends Controller
         return back()->with('success', $method->name.($active ? ' diaktifkan.' : ' dinonaktifkan.'));
     }
 
+    public function destroyPaymentMethod(Request $request, string $section, int $paymentMethod): RedirectResponse
+    {
+        $config = $this->section($section);
+        $method = $this->methodInSection($paymentMethod, $config['type']);
+        // Metode adalah label operasional. Arsipkan agar tidak lagi tersedia untuk
+        // transaksi baru, sambil mempertahankan label pada seluruh riwayat lama.
+        DB::table('payment_methods')->where('id', $method->id)->update([
+            'is_active' => false,
+            'archived_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->logger->log($request, 'settings.payment_method_archived', 'payment_method', $method->id, 'Menghapus dari daftar '.$config['title'].' '.$method->name);
+
+        return back()->with('success', $method->name.' dihapus dari daftar metode. Riwayat transaksi tetap tersimpan.');
+    }
+
     private function section(string $section): array
     {
         abort_unless(isset(self::SECTIONS[$section]), 404);
@@ -144,7 +161,7 @@ class SettingsController extends Controller
 
     private function methodInSection(int $id, string $type): object
     {
-        return DB::table('payment_methods')->where('id', $id)->where('type', $type)->firstOrFail();
+        return DB::table('payment_methods')->where('id', $id)->where('type', $type)->whereNull('archived_at')->firstOrFail();
     }
 
     private function validatedPaymentMethod(Request $request, string $section): array

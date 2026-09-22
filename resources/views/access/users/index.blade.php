@@ -34,8 +34,8 @@
                             </td>
                             <td><span class="role-badge">{{ $user->role_name }}</span><small>&#64;{{ $user->username }}</small></td>
                             <td>{{ $employee?->is_service_provider ? 'Therapist' : 'Non-layanan' }}</td>
-                            <td><span class="role-badge">{{ ! $employee || $employee->active ? 'Aktif' : 'Nonaktif' }}</span></td>
-                            <td class="table-actions">
+                            <td><span class="role-badge {{ ! $employee || $employee->active ? 'ui-status-success' : 'ui-status-neutral' }}">{{ ! $employee || $employee->active ? 'Aktif' : 'Nonaktif' }}</span></td>
+                            <td class="align-right"><div class="table-actions">
                                 <a class="access-button action-edit compact" href="{{ route('access.users.edit', $user) }}">Edit</a>
                                 @can('access.users.manage')
                                     @if (! auth()->user()->is($user) && ! $user->isSuperAdmin())
@@ -46,7 +46,7 @@
                                         </form>
                                     @endif
                                 @endcan
-                            </td>
+                            </div></td>
                         </tr>
                     @empty
                     @endforelse
@@ -60,8 +60,8 @@
                             </td>
                             <td><span class="employee-without-login">Tanpa akses login</span></td>
                             <td>{{ $employee->is_service_provider ? 'Therapist' : 'Non-layanan' }}</td>
-                            <td><span class="role-badge">{{ $employee->active ? 'Aktif' : 'Nonaktif' }}</span></td>
-                            <td class="table-actions">
+                            <td><span class="role-badge {{ $employee->active ? 'ui-status-success' : 'ui-status-neutral' }}">{{ $employee->active ? 'Aktif' : 'Nonaktif' }}</span></td>
+                            <td class="align-right"><div class="table-actions">
                                 <a class="access-button action-edit compact" href="{{ route('access.users.employees.edit', $employee) }}">Edit</a>
                                 @can('access.users.manage')
                                     <form method="POST" action="{{ route('access.users.employees.destroy', $employee) }}" onsubmit="return confirm('Hapus karyawan ini? Jika sudah memiliki riwayat jadwal atau penggajian, sistem akan menonaktifkannya agar histori tetap aman.')">
@@ -70,7 +70,7 @@
                                         <button class="access-button action-delete compact" type="submit">Hapus</button>
                                     </form>
                                 @endcan
-                            </td>
+                            </div></td>
                         </tr>
                     @empty
                     @endforelse
