@@ -8,8 +8,8 @@
     <section class="access-card settings-card">
         <div class="access-card-head">
             <div>
-                <h2>Penjualan</h2>
-                <p>Prefix digunakan di awal nomor invoice, misalnya INV20260814001. Informasi salon dipakai pada cetak ulang nota.</p>
+                <h2>Invoice & informasi salon</h2>
+                <p>Informasi ini tampil pada nota dan struk pelanggan.</p>
             </div>
         </div>
         <form class="access-form settings-form" method="POST" action="{{ route('settings.sale.update') }}">
@@ -18,7 +18,7 @@
             <label>
                 Prefix invoice
                 <input name="invoice_prefix" value="{{ old('invoice_prefix', $invoicePrefix) }}" maxlength="20" required autofocus>
-                <small>Gunakan huruf dan angka tanpa spasi atau tanda hubung.</small>
+                <small>Contoh hasil: INV20260814001. Gunakan huruf dan angka tanpa spasi atau tanda hubung untuk prefix.</small>
             </label>
             <label>
                 Alamat salon
@@ -30,7 +30,7 @@
                 <small>Menjadi nomor WhatsApp default saat nota dibagikan dari kasir.</small>
             </label>
             <div class="form-actions">
-                <button class="access-button primary" type="submit">Simpan pengaturan</button>
+                <button class="access-button primary" type="submit"><span class="material-symbols-outlined" aria-hidden="true">save</span> Simpan pengaturan</button>
             </div>
         </form>
     </section>

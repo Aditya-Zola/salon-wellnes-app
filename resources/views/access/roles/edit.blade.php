@@ -5,7 +5,7 @@
 @section('subtitle', 'Centang menu dan tindakan yang dapat digunakan oleh peran ini.')
 
 @section('header-action')
-    <a class="access-button secondary" href="{{ route('access.roles.index') }}">Kembali ke daftar</a>
+    <a class="access-button secondary" href="{{ route('access.roles.index') }}"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span> Kembali ke daftar</a>
 @endsection
 
 @section('content')
@@ -38,13 +38,13 @@
 
         <div class="permission-toolbar">
             <div>
-                <strong>Daftar permission</strong>
+                <strong>Hak akses per menu</strong>
                 <small>Pilih sesuai tanggung jawab peran.</small>
             </div>
             @if ($canManage && ! $isProtectedSuperAdmin)
                 <div>
-                    <button type="button" class="text-button" id="select-all">Pilih semua</button>
-                    <button type="button" class="text-button" id="clear-all">Kosongkan</button>
+                    <button type="button" class="access-button secondary compact" id="select-all"><span class="material-symbols-outlined" aria-hidden="true">done_all</span> Pilih semua</button>
+                    <button type="button" class="access-button secondary compact" id="clear-all">Kosongkan pilihan</button>
                 </div>
             @endif
         </div>
@@ -54,7 +54,7 @@
                 <fieldset class="permission-group">
                     <legend>
                         <span>{{ $group }}</span>
-                        <small>{{ $permissions->count() }} permission</small>
+                        <small>{{ $permissions->count() }} hak akses</small>
                     </legend>
                     <div class="permission-list">
                         @foreach ($permissions as $permission)
@@ -76,7 +76,7 @@
         @if ($canManage)
             <div class="sticky-actions">
                 <a class="access-button secondary" href="{{ route('access.roles.index') }}">Batal</a>
-                <button class="access-button primary" type="submit">Simpan hak akses</button>
+                <button class="access-button primary" type="submit"><span class="material-symbols-outlined" aria-hidden="true">save</span> Simpan hak akses</button>
             </div>
         @endif
     </form>

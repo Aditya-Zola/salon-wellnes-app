@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/login.css') }}?v={{ filemtime(public_path('css/login.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/login-redesign.css') }}?v={{ filemtime(public_path('css/login-redesign.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/login-redesign.css') }}?v={{ filemtime(public_path('css/login-redesign.css')) }}">
 </head>
 <body>
 <main class="login-layout">
@@ -22,6 +22,9 @@
             <small>SISTEM OPERASIONAL INTERNAL</small>
             <h1>Kelola salon dengan lebih tenang.</h1>
             <p>Reservasi, pelayanan, stok, transaksi, dan laporan dalam satu tempat.</p>
+            <div class="identity-services" aria-label="Layanan Selesa">
+                <span>Salon</span><span>Spa & Wellness</span><span>Nail & Eyelash</span>
+            </div>
         </div>
 
         <p class="address">Jl. Telaga Asmara, Tlogosari Kulon, Semarang</p>
@@ -35,12 +38,13 @@
                 <div class="mobile-brand-logo">
                     <img src="{{ asset('images/selesa-logo.png') }}?v={{ filemtime(public_path('images/selesa-logo.png')) }}" alt="Selesa Salon">
                 </div>
+                <span class="login-eyebrow">RUANG KERJA SELESA</span>
                 <h2>Selamat datang</h2>
                 <p>Masukkan username dan kata sandi untuk melanjutkan.</p>
             </header>
 
             @if ($errors->any())
-                <div class="error" role="alert">{{ $errors->first() }}</div>
+                <div class="error" role="alert" id="login-error">{{ $errors->first() }}</div>
             @endif
 
             <label for="username">Username</label>
@@ -51,6 +55,9 @@
                 value="{{ old('username') }}"
                 placeholder="Contoh: kasir.selesa"
                 autocomplete="username"
+                autocapitalize="none"
+                spellcheck="false"
+                @if ($errors->any()) aria-invalid="true" aria-describedby="login-error" @endif
                 required
                 autofocus
             >
@@ -65,7 +72,7 @@
                     autocomplete="current-password"
                     required
                 >
-                <button type="button" id="toggle-password" aria-controls="password" aria-pressed="false">Lihat</button>
+                <button type="button" id="toggle-password" aria-controls="password" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
             </div>
 
             <label class="remember">
@@ -86,6 +93,7 @@
 
         password.type = isHidden ? 'text' : 'password';
         this.textContent = isHidden ? 'Sembunyikan' : 'Lihat';
+        this.setAttribute('aria-label', isHidden ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi');
         this.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
     });
 </script>

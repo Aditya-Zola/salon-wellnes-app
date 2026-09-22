@@ -5,11 +5,11 @@
 @section('subtitle', 'Buat peran dan tentukan menu serta tindakan yang dapat digunakan.')
 
 @section('header-action')
-    <div style="display: flex; gap: 9px; margin-left: auto;">
+    <div class="ui-header-actions">
         @can('access.roles.manage')
-            <button type="button" class="access-button primary" id="open-role-modal"><span class="material-symbols-outlined" aria-hidden="true">add</span> Input peran baru</button>
+            <button type="button" class="access-button primary" id="open-role-modal"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah peran</button>
         @endcan
-        <a class="access-button secondary" href="{{ route('dashboard') }}">Kembali ke halaman utama</a>
+        <a class="access-button secondary" href="{{ route('dashboard') }}"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span> Halaman utama</a>
     </div>
 @endsection
 
@@ -27,10 +27,10 @@
                 <table class="access-table">
                     <thead>
                     <tr>
-                        <th>Peran</th>
-                        <th>Hak akses</th>
-                        <th>Pengguna</th>
-                        <th class="align-right">Aksi</th>
+                        <th scope="col">Peran</th>
+                        <th scope="col">Hak akses</th>
+                        <th scope="col">Pengguna</th>
+                        <th scope="col" class="align-right">Aksi</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -42,18 +42,18 @@
                             </td>
                             <td><span class="count-badge">{{ $role->permissions_count }}</span></td>
                             <td>{{ $role->users_count }} orang</td>
-                            <td class="table-actions">
-                                <a class="access-button action-edit compact" href="{{ route('access.roles.edit', $role) }}">Atur akses</a>
+                            <td class="align-right"><div class="table-actions">
+                                <a class="access-button action-edit ui-action-edit compact" href="{{ route('access.roles.edit', $role) }}"><span class="material-symbols-outlined" aria-hidden="true">tune</span> Atur akses</a>
                                 @can('access.roles.manage')
                                     @if (! $role->is_system && $role->users_count === 0)
                                         <form method="POST" action="{{ route('access.roles.destroy', $role) }}" onsubmit="return confirm('Hapus peran ini?')">
                                             @csrf
                                             @method('DELETE')
-                                            <button class="access-button action-delete compact" type="submit">Hapus</button>
+                                            <button class="access-button action-delete ui-action-delete compact" type="submit"><span class="material-symbols-outlined" aria-hidden="true">delete</span> Hapus</button>
                                         </form>
                                     @endif
                                 @endcan
-                            </td>
+                            </div></td>
                         </tr>
                     @empty
                         <tr><td colspan="4" class="empty-state">Belum ada peran.</td></tr>
@@ -68,7 +68,7 @@
         <div class="modal {{ $errors->any() ? 'open' : '' }}" id="role-modal" role="dialog" aria-modal="true" aria-labelledby="role-modal-title">
             <div class="modal-box small">
                 <div class="modal-head">
-                    <div><h2 id="role-modal-title">Input peran baru</h2><p>Contoh: Terapis, Supervisor, atau Finance.</p></div>
+                    <div><h2 id="role-modal-title">Input peran baru</h2><p>Tentukan nama peran. Hak akses dapat diatur setelah disimpan.</p></div>
                     <button type="button" class="role-modal-close material-symbols-outlined" aria-label="Tutup">close</button>
                 </div>
                 <form method="POST" action="{{ route('access.roles.store') }}" class="access-form">
@@ -90,12 +90,22 @@
 @push('scripts')
     <script>
         const roleModal = document.getElementById('role-modal');
-        const closeRoleModal = () => roleModal?.classList.remove('open');
+        const roleModalTrigger = document.getElementById('open-role-modal');
+        const closeRoleModal = () => {
+            roleModal?.classList.remove('open');
+            roleModalTrigger?.focus();
+        };
 
-        document.getElementById('open-role-modal')?.addEventListener('click', () => roleModal?.classList.add('open'));
+        roleModalTrigger?.addEventListener('click', () => {
+            roleModal?.classList.add('open');
+            roleModal?.querySelector('input[name="display_name"]')?.focus();
+        });
         document.querySelectorAll('.role-modal-close').forEach((button) => button.addEventListener('click', closeRoleModal));
         roleModal?.addEventListener('click', (event) => {
             if (event.target === roleModal) closeRoleModal();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && roleModal?.classList.contains('open')) closeRoleModal();
         });
     </script>
 @endpush

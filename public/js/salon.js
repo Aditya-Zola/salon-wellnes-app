@@ -39,6 +39,7 @@ const headerStatusLabels = {
     scheduled: 'Terjadwal',
     arrived: 'Sudah datang',
     in_service: 'Sedang dilayani',
+    overdue: 'Melewati estimasi',
     waiting_payment: 'Menunggu pembayaran',
     completed: 'Selesai',
     cancelled: 'Batal',
@@ -47,6 +48,7 @@ const headerStatusLabels = {
 const workStatusLabels = {
     waiting: 'Menunggu jadwal',
     in_progress: 'Sedang dilayani',
+    overdue: 'Melewati estimasi',
     continue: 'Dilanjutkan',
     ready: 'Persiapan / istirahat',
     finished: 'Selesai',
@@ -83,6 +85,7 @@ let paymentIdempotencyKey = null;
 let paymentMode = null;
 let selectedPaymentMethodId = null;
 let toastTimer;
+let notificationItems = [];
 let reservationCalendarTooltipTimer;
 let reservationCalendarTooltipListenersBound = false;
 let reservationCalendarTooltipAnchor = null;
@@ -120,8 +123,44 @@ const copy = {
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
+function notificationTimestamp() {
+    return new Intl.DateTimeFormat('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(new Date()).replace('.', ':');
+}
+
+function renderNotificationCenter() {
+    const toggle = document.getElementById('notification-toggle');
+    const panel = document.getElementById('notification-panel');
+    const count = document.getElementById('notification-count');
+    const list = document.getElementById('notification-list');
+    const clear = document.getElementById('notification-clear');
+    if (!toggle || !panel || !count || !list) return;
+
+    const unread = notificationItems.filter((item) => !item.read).length;
+    count.hidden = unread === 0;
+    count.textContent = String(unread);
+    toggle.setAttribute('aria-label', unread ? `Buka ${unread} pemberitahuan baru` : 'Buka pemberitahuan');
+    if (clear) clear.hidden = notificationItems.length === 0;
+    list.innerHTML = notificationItems.length
+        ? notificationItems.map((item) => `<article class="notification-item${item.error ? ' error' : ''}"><span class="material-symbols-outlined" aria-hidden="true">${item.error ? 'error' : 'check_circle'}</span><div><b>${escapeHtml(item.message)}</b><small>${escapeHtml(item.time)}</small></div></article>`).join('')
+        : '<p class="notification-empty">Belum ada pemberitahuan.</p>';
+}
+
+function addNotification(message, error = false) {
+    notificationItems = [{
+        message: String(message || ''),
+        error: Boolean(error),
+        time: notificationTimestamp(),
+        read: false,
+    }, ...notificationItems].slice(0, 12);
+    renderNotificationCenter();
+}
+
 function toast(message, error = false) {
     const element = document.getElementById('toast');
+    addNotification(message, error);
     if (!element) return;
 
     clearTimeout(toastTimer);
@@ -169,6 +208,16 @@ function confirmAction({
                 event.preventDefault();
                 event.stopImmediatePropagation();
                 finish(false);
+            } else if (event.key === 'Tab') {
+                const first = cancelButton;
+                const last = confirmButton;
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
             }
         };
 
@@ -345,6 +394,21 @@ function reservationStatus(reservation) {
     return status;
 }
 
+function reservationQueueStatus(reservation) {
+    const stored = reservationStatus(reservation);
+    if (['completed', 'cancelled'].includes(stored)) return stored;
+
+    const statuses = reservationItems(reservation)
+        .filter((item) => item.work_status !== 'cancelled')
+        .map((item) => automaticWorkStatus(item, reservation));
+
+    if (statuses.length && statuses.every((status) => status === 'finished')) return 'completed';
+    if (statuses.includes('overdue')) return 'overdue';
+    if (statuses.includes('in_progress')) return 'in_service';
+
+    return stored;
+}
+
 function statusLabel(status) {
     return headerStatusLabels[status] || status || '-';
 }
@@ -392,7 +456,15 @@ function itemReadyTime(item, reservation) {
     return Number.isNaN(date.getTime()) ? String(value).slice(11, 16) : date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
 }
 
+function itemAutoCompleteTime(item, reservation) {
+    const end = itemEndTime(item, reservation);
+    const [hour = 0, minute = 0] = end.split(':').map(Number);
+    const total = (hour * 60) + minute + 15;
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 function automaticWorkStatus(item, reservation, now = new Date()) {
+    if (item?.work_status === 'finished') return 'finished';
     if (item?.work_status === 'cancelled') return 'cancelled';
     const at = (value) => {
         if (!value) return null;
@@ -401,13 +473,10 @@ function automaticWorkStatus(item, reservation, now = new Date()) {
     };
     const start = at(item?.scheduled_start_at || item?.start_at);
     const end = at(item?.scheduled_end_at || item?.end_at);
-    const ready = at(item?.scheduled_ready_at) || (end ? new Date(end.getTime() + (45 * 60 * 1000)) : null);
-
-    if (!start || !end || !ready) return item?.work_status || 'waiting';
+    if (!start || !end) return item?.work_status || 'waiting';
     if (now < start) return 'waiting';
     if (now < end) return 'in_progress';
-    if (now < ready) return 'ready';
-    return 'finished';
+    return 'overdue';
 }
 
 function clockMinutes(value) {
@@ -553,7 +622,7 @@ function showReservationCalendarTooltip(anchor, reservation, item) {
     <dl>
         <div><dt>Treatment</dt><dd>${escapeHtml(itemTreatmentName(item))}</dd></div>
         <div><dt>Therapist</dt><dd>${escapeHtml(staff)}</dd></div>
-        <div><dt>Status otomatis</dt><dd>${escapeHtml(workStatus)}</dd></div>
+        <div><dt>Status treatment</dt><dd>${escapeHtml(workStatus)}</dd></div>
         <div><dt>Status layanan</dt><dd>${escapeHtml(statusLabel(serviceStatus))}</dd></div>
         <div><dt>Pembayaran</dt><dd>${escapeHtml(paymentLabel)}</dd></div>
     </dl>
@@ -608,10 +677,16 @@ function reservationDepositAmount(reservation) {
     return Number(reservation?.deposit_amount ?? reservation?.deposit?.amount ?? 0);
 }
 
+function reservationRemainingAmount(reservation) {
+    return Math.max(0, reservationSubtotal(reservation) - reservationDepositAmount(reservation));
+}
+
 function reservationPaymentLabel(reservation) {
     if (isAlreadyPaid(reservation)) return 'Lunas';
     const deposit = reservationDepositAmount(reservation);
-    return deposit > 0 ? `Sudah DP ${money(deposit)}` : 'Belum dibayar';
+    return deposit > 0
+        ? `DP ${money(deposit)} · Sisa ${money(reservationRemainingAmount(reservation))}`
+        : 'Belum dibayar';
 }
 
 // Pembayaran dan pengerjaan treatment adalah dua hal yang berbeda. Kalender
@@ -907,12 +982,11 @@ function renderReservations() {
                     if (therapistIndex < 0) return '';
                     const status = reservationCalendarStatus(reservation);
                     const startRow = Math.max(2, Math.floor((start - openingMinutes) / 30) + 2);
-                    const readyMinutes = clockMinutes(itemReadyTime(item, reservation)) ?? end;
-                    const span = Math.max(1, Math.ceil((readyMinutes - start) / 30));
-                    const serviceRatio = Math.min(100, Math.max(0, ((end - start) / Math.max(1, readyMinutes - start)) * 100));
+                    const span = Math.max(1, Math.ceil((end - start) / 30));
+                    const serviceRatio = 100;
                     const staffName = employeeName(assignment);
-                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, siap lagi ${itemReadyTime(item, reservation)}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
-                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--service-ratio:${serviceRatio}%"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(item))}</small><span class="calendar-rest-label">Istirahat · siap lagi ${escapeHtml(itemReadyTime(item, reservation))}</span></button>`;
+                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
+                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--service-ratio:${serviceRatio}%"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(timing.endLabel)}</span></button>`;
                 });
             }).join('');
             const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty">Belum ada therapist aktif untuk ditampilkan.</p>';
@@ -941,8 +1015,14 @@ function renderReservations() {
     const queueDate = document.getElementById('today-queue-date');
     if (queueDate) queueDate.textContent = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
     if (queue) queue.innerHTML = todayRows.map((reservation) => {
-        const status = reservationCalendarStatus(reservation);
-        return `<button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>`;
+        const status = reservationQueueStatus(reservation);
+        const payment = reservationPaymentLabel(reservation);
+        const method = reservation.deposit?.payment_method_name;
+        const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
+        const completeAction = canUpdateReservations && unfinishedItems.length
+            ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Selesai</button>`
+            : '';
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${completeAction}</article>`;
     }).join('') || '<p class="empty-state">Belum ada reservasi pada tanggal ini.</p>';
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
@@ -952,6 +1032,44 @@ function renderReservations() {
             if (reservation) openReservationDetail(reservation);
         };
     });
+    document.querySelectorAll('.queue-complete-reservation').forEach((button) => {
+        button.onclick = async () => {
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (!reservation) return;
+
+            button.disabled = true;
+            try {
+                await completeReservationTreatments(reservation);
+            } catch (error) {
+                toast(error.message, true);
+            } finally {
+                button.disabled = false;
+            }
+        };
+    });
+}
+
+async function completeReservationTreatments(reservation) {
+    const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
+    if (!unfinishedItems.length) {
+        toast('Semua treatment pada reservasi ini sudah selesai.');
+        return;
+    }
+
+    const confirmed = await confirmAction({
+        title: 'Selesaikan treatment?',
+        message: `${unfinishedItems.length} treatment pada ${reservation.queue_number || reservation.booking_code} akan ditandai selesai. Tindakan ini tidak dapat dibatalkan dari antrean.`,
+        confirmLabel: 'Selesaikan',
+        icon: 'check_circle',
+    });
+    if (!confirmed) return;
+
+    await Promise.all(unfinishedItems.map((item) => api(`/operasional/reservasi/${Number(reservation.id)}/item/${Number(item.id)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'finished' }),
+    })));
+    toast(unfinishedItems.length === 1 ? 'Treatment ditandai selesai.' : `${unfinishedItems.length} treatment ditandai selesai.`);
+    await refresh();
 }
 
 function openReservationDetail(reservation) {
@@ -959,12 +1077,12 @@ function openReservationDetail(reservation) {
     wrapper.className = 'modal open quick-modal';
     const items = reservationItems(reservation);
     const paid = isAlreadyPaid(reservation);
-    const serviceStatus = reservationStatus(reservation);
+    const serviceStatus = reservationQueueStatus(reservation);
     const paymentStatus = reservationPaymentLabel(reservation);
     wrapper.innerHTML = `<div class="modal-box reservation-modal-box">
         <div class="modal-head">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
-            <button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button>
+            <button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
         </div>
         <div class="quick-info reservation-summary">
             <p><span>Telepon</span><b>${escapeHtml(reservationPhone(reservation) || '-')}</b></p>
@@ -982,14 +1100,14 @@ function openReservationDetail(reservation) {
                 <div class="reservation-detail-meta">
                     <span>Mulai <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
                     <span>Selesai <b>${escapeHtml(itemEndTime(item, reservation))}</b></span>
-                    <span>Siap lagi <b>${escapeHtml(itemReadyTime(item, reservation))}</b></span>
+                    <span>Otomatis selesai <b>${escapeHtml(itemAutoCompleteTime(item, reservation))}</b></span>
                     <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
                 </div>
-                <div class="reservation-work-status"><span><small>Status otomatis berdasarkan jadwal</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Berubah otomatis mengikuti jam mulai, selesai, dan siap therapist.</small></div>
+                <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small></div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
         <footer>${canUpdateReservations && !paid && !['cancelled', 'completed'].includes(reservation.status)
-            ? '<button type="button" class="secondary reservation-cancel">Batalkan reservasi</button>'
+            ? '<button type="button" class="secondary reservation-cancel ui-action-delete">Batalkan reservasi</button>'
             : ''}<button type="button" class="primary quick-close">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
@@ -1050,10 +1168,15 @@ function selectedDiscount() {
 
 function selectedTotal() {
     const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+    return Math.max(0, selectedInvoiceTotal() - reservationDepositAmount(reservation));
+}
+
+function selectedInvoiceTotal() {
+    const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
     if (!reservation) return 0;
     const serviceSubtotal = reservationSubtotal(reservation);
     const productSubtotal = reservationProductItems(reservation).reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
-    return Math.max(0, Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal) - reservationDepositAmount(reservation));
+    return Math.max(0, Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal));
 }
 
 function reservationProductItems(reservation) {
@@ -1068,7 +1191,7 @@ function renderCashier() {
     const box = document.getElementById('cashier-queue');
     if (!box) return;
 
-    box.innerHTML = rows.map((reservation) => `<button class="cashier-item ${Number(reservation.id) === Number(selectedReservation) ? 'active' : ''}" data-id="${Number(reservation.id)}">
+    box.innerHTML = rows.map((reservation) => `<button type="button" class="cashier-item ${Number(reservation.id) === Number(selectedReservation) ? 'active' : ''}" data-id="${Number(reservation.id)}">
         <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
         <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
         <i class="material-symbols-outlined row-action">chevron_right</i>
@@ -1136,7 +1259,7 @@ function selectCashier(id) {
         <i class="material-symbols-outlined">inventory_2</i>
         <span><b>${escapeHtml(item.name)}</b><small>${Number(item.quantity)} ${escapeHtml(item.unit || 'pcs')} × ${money(item.unit_price)}</small></span>
         <strong>${money(Number(item.unit_price) * Number(item.quantity))}</strong>
-        <button type="button" class="link remove-cashier-product" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
+        <button type="button" class="link remove-cashier-product ui-action-delete" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
     </div>`).join('');
     document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
     document.getElementById('discount').disabled = false;
@@ -1172,7 +1295,7 @@ function openCashierProductPicker() {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Tambah</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Tambah</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const select = wrapper.querySelector('select[name="product_id"]');
     const quantity = wrapper.querySelector('input[name="quantity"]');
@@ -1233,7 +1356,7 @@ function openCashierAddPicker() {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambahkan ke transaksi</h2><p>Pilih jenis tambahan sebelum pembayaran.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-add-type="product"><i class="material-symbols-outlined">inventory_2</i><span><b>Produk</b><small>Jual produk retail atau add-on.</small></span></button><button type="button" class="cashier-add-choice" data-add-type="treatment"><i class="material-symbols-outlined">spa</i><span><b>Treatment</b><small>Pilih layanan, jam, dan therapist.</small></span></button></div></div>`;
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambahkan ke transaksi</h2><p>Pilih jenis tambahan sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-add-type="product"><i class="material-symbols-outlined">inventory_2</i><span><b>Produk</b><small>Jual produk retail atau add-on.</small></span></button><button type="button" class="cashier-add-choice" data-add-type="treatment"><i class="material-symbols-outlined">spa</i><span><b>Treatment</b><small>Pilih layanan, jam, dan therapist.</small></span></button></div></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('[data-add-type="product"]').onclick = () => {
@@ -1257,7 +1380,7 @@ function openCashierTreatmentPicker() {
     const defaultTime = String(reservation.reservation_time || '09:00').slice(0, 5);
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah treatment</h2><p>Masuk ke jadwal reservasi dan invoice sebelum pembayaran.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Treatment<select name="treatment_id">${treatments.map((treatment) => `<option value="${Number(treatment.id)}">${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('')}</select></label><label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label><label class="treatment-therapist-field">Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label><p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist…</p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" disabled>Tambahkan</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah treatment</h2><p>Masuk ke jadwal reservasi dan invoice sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Treatment<select name="treatment_id">${treatments.map((treatment) => `<option value="${Number(treatment.id)}">${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('')}</select></label><label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label><label class="treatment-therapist-field">Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label><p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist…</p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary" disabled>Tambahkan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const treatmentSelect = wrapper.querySelector('[name="treatment_id"]');
     const timeSelect = wrapper.querySelector('[name="start_time"]');
@@ -1513,12 +1636,42 @@ function openReceiptPrintChoice(receipt, options = {}) {
         <button type="button" class="save-therapist-ratings">Simpan rating therapist</button>
     </section>` : '';
     wrapper.innerHTML = showSuccessAnimation
-        ? `<div class="modal-box transaction-success-modal" role="status" style="position:relative;width:min(390px,calc(100vw - 32px));min-height:410px;overflow:hidden;border:0;border-radius:22px;background:#f2f1ee;"><button type="button" class="quick-close transaction-success-close" aria-label="Tutup" style="position:absolute;z-index:1;top:13px;right:13px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;cursor:pointer;"><span class="material-symbols-outlined">close</span></button><div class="transaction-success-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:295px;padding:52px 24px 30px;text-align:center;"><span class="transaction-success-emblem" aria-hidden="true" style="display:grid;place-items:center;width:90px;height:90px;margin-bottom:23px;background:#62c52f;clip-path:polygon(50% 0%,61% 9%,76% 6%,83% 20%,97% 25%,92% 40%,100% 50%,92% 60%,97% 75%,83% 80%,76% 94%,61% 91%,50% 100%,39% 91%,24% 94%,17% 80%,3% 75%,8% 60%,0 50%,8% 40%,3% 25%,17% 20%,24% 6%,39% 9%);"><svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="width:61px;height:61px;"><path d="M17 33l10 10 21-22"/></svg></span><h2 style="margin:0;color:#171513;font-size:21px;letter-spacing:.02em;">TRANSAKSI BERHASIL</h2><p style="margin:10px 0 0;color:#69635e;font-size:12px;font-weight:650;">${escapeHtml(description)}</p><div class="transaction-success-meta" style="display:grid;gap:4px;margin-top:12px;color:#827b75;font-size:9px;font-weight:600;line-height:1.35;">${transactionMeta}</div></div><div class="transaction-success-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:13px;padding:0 26px 30px;"><button type="button" class="success-print-button" data-print="struk" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak struk</button><button type="button" class="success-print-button" data-print="nota" style="min-height:55px;border:0;border-radius:17px;background:#765039;color:#fff;font:700 11px/1 inherit;letter-spacing:.02em;text-transform:uppercase;cursor:pointer;">Cetak nota</button></div></div>`
-        : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>${printChoices}</div>`;
+        ? `<div class="modal-box transaction-success-modal" role="status">
+            <button type="button" class="quick-close transaction-success-close" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+            <div class="transaction-success-body">
+                <span class="transaction-success-emblem" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
+                <h2>Transaksi berhasil</h2><p>${escapeHtml(description)}</p>
+                <div class="transaction-success-meta">${transactionMeta}</div>
+            </div>
+            <div class="transaction-success-actions">
+                <button type="button" class="primary success-print-button" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
+                <button type="button" class="secondary success-print-button" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
+            </div>
+        </div>`
+        : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
     if (showSuccessAnimation && ratingPanel) {
         wrapper.querySelector('.transaction-success-body')?.insertAdjacentHTML('beforeend', ratingPanel);
     }
+    wrapper.querySelectorAll('.therapist-rating-field').forEach((field) => {
+        const syncStars = (animate = false) => {
+            const selected = Number(field.querySelector('input:checked')?.value || 0);
+            field.querySelectorAll('.therapist-rating-choice').forEach((choice) => {
+                const value = Number(choice.querySelector('input')?.value || 0);
+                choice.classList.toggle('is-filled', value > 0 && value <= selected);
+            });
+            if (animate) {
+                field.classList.remove('rating-just-selected');
+                void field.offsetWidth;
+                field.classList.add('rating-just-selected');
+            }
+        };
+
+        syncStars();
+        field.querySelectorAll('input[type="radio"]').forEach((input) => {
+            input.addEventListener('change', () => syncStars(true));
+        });
+    });
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelectorAll('[data-print]').forEach((button) => {
         button.onclick = () => printReceipt(receipt, button.dataset.print);
@@ -1603,7 +1756,7 @@ function openTreatmentCommissionEditor(treatment) {
     });
 
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi: ${escapeHtml(treatment.name)}</h2><p>Komisi total dibagi ke therapist sesuai jumlah yang menangani treatment.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields"><label>Komisi total untuk 1 therapist (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Profil jumlah therapist<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} therapist</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan profil</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi: ${escapeHtml(treatment.name)}</h2><p>Komisi total dibagi ke therapist sesuai jumlah yang menangani treatment.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Komisi total untuk 1 therapist (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Profil jumlah therapist<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} therapist</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan profil</button></footer></form></div>`;
     document.body.appendChild(wrapper);
 
     const form = wrapper.querySelector('form');
@@ -1703,7 +1856,7 @@ function renderTreatments() {
             <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
             <h3>${escapeHtml(treatment.name)}</h3>
             <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"></button>` : ''}<button type="button" class="recipe-button" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
+            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit ui-action-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button ui-action-view" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"><span class="material-symbols-outlined" aria-hidden="true">info</span></button>` : ''}<button type="button" class="recipe-button ui-action-edit" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
         </article>`;
     }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
 
@@ -1754,7 +1907,7 @@ function openRecipeChecklist(treatment) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
     wrapper.innerHTML = `<div class="modal-box recipe-modal">
-        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
         <form>
             <label class="recipe-product-search">Cari produk<input type="search" id="recipe-product-search" placeholder="Nama atau kategori produk..."></label>
             <div class="recipe-checklist">${products.map((product) => {
@@ -1829,7 +1982,7 @@ function renderEmployees() {
         <span>${escapeHtml(employee.specialty || '-')}</span>
         <em class="pill">${Number(employee.is_service_provider ?? 0) === 1 ? 'Therapist' : 'Non-layanan'}</em>
         <em class="pill">${Number(employee.active ?? employee.is_active ?? 1) === 1 ? 'Aktif' : 'Nonaktif'}</em>
-        <button class="link employee-edit" data-id="${Number(employee.id)}">Edit</button>
+        <button type="button" class="link employee-edit ui-action-edit" data-id="${Number(employee.id)}">Edit</button>
     </div>`).join('') || '<p class="empty-state">Belum ada pegawai.</p>'}`;
 
     document.querySelectorAll('.employee-edit').forEach((button) => {
@@ -1874,7 +2027,7 @@ function renderMembers() {
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
             <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')}</small></span>
             <span>${Number(member.visit_count || 0)} kunjungan</span><em>Aktif</em>
-            ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
+            ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit ui-action-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
         </div>`).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
 
@@ -1882,7 +2035,7 @@ function renderMembers() {
     const meta = memberPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${members.length} dari ${Number(meta.total).toLocaleString('id-ID')} member</small><div><button type="button" class="member-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="member-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${members.length} dari ${Number(meta.total).toLocaleString('id-ID')} member</small><div><button type="button" class="member-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="member-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} member</small>` : '');
         pagination.querySelectorAll('.member-page').forEach((button) => {
             button.onclick = () => loadMembersPage(Number(button.dataset.page));
@@ -1896,7 +2049,7 @@ function renderMembers() {
 
             return `<article class="membership-event ${active ? '' : 'inactive'}">
                 <div><small>${active ? 'AKTIF' : 'NONAKTIF'}</small><h3>${escapeHtml(promotion.name)}</h3><p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p><span>${period}</span></div>
-                <div class="membership-actions"><button type="button" class="membership-edit-promotion" data-id="${Number(promotion.id)}">Edit</button><button type="button" class="membership-delete-promotion" data-id="${Number(promotion.id)}">Hapus</button></div>
+                <div class="membership-actions"><button type="button" class="membership-edit-promotion ui-action-edit" data-id="${Number(promotion.id)}">Edit</button><button type="button" class="membership-delete-promotion ui-action-delete" data-id="${Number(promotion.id)}">Hapus</button></div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada event membership.</p>';
     }
@@ -1940,18 +2093,18 @@ function renderStock() {
     if (count) count.textContent = Number(meta?.total ?? products.length);
 
     if (box) {
-        box.innerHTML = products.length ? `<div class="tr th"><span>PRODUK</span><span>STOK TERSEDIA</span><span>MINIMUM</span><span>HARGA JUAL</span><span>HPP / SATUAN</span><span>PERKIRAAN</span><span>STATUS</span><span>AKSI</span></div>${products.map((product) => {
+        box.innerHTML = products.length ? `<div class="tr th"><span>Produk</span><span>Stok tersedia</span><span>Stok minimum</span><span>Harga jual</span><span>HPP / satuan</span><span>Aksi</span></div>${products.map((product) => {
             const stock = productStock(product);
             const minimum = productMinimum(product);
             const unit = productUnit(product);
+            const unitLabel = String(unit || 'unit').toLowerCase();
             return `<div class="tr">
                 <span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || '-')}</small></span>
-                <span><b>${stock} ${escapeHtml(unit)}</b></span><span>${minimum} ${escapeHtml(unit)}</span>
+                <span class="stock-amount"><b>${formatStockQuantity(stock)} <small>${escapeHtml(unitLabel)}</small></b></span>
+                <span class="stock-amount"><b>${formatStockQuantity(minimum)} <small>${escapeHtml(unitLabel)}</small></b></span>
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
-                <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unit)}</small></span>
-                <span><div class="progress"><i style="width:${Math.min(100, stock / Math.max(1, minimum) * 50)}%"></i></div></span>
-                <em class="pill">${stock <= minimum ? 'Menipis' : 'Aman'}</em>
-                <span class="product-row-actions"><button type="button" class="product-edit" data-id="${Number(product.id)}" aria-label="Edit produk ${escapeHtml(product.name)}" title="Edit produk"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit produk</span></button></span>
+                <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unitLabel)}</small></span>
+                <span class="product-row-actions"><button type="button" class="product-edit ui-action-edit" data-id="${Number(product.id)}" aria-label="Edit produk ${escapeHtml(product.name)}" title="Edit produk"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit</span></button></span>
             </div>`;
         }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
     }
@@ -1970,7 +2123,7 @@ function renderStock() {
     const historyPagination = document.getElementById('stock-history-pagination');
     if (historyPagination) {
         historyPagination.innerHTML = historyMeta && historyMeta.last_page > 1
-            ? `<small>Menampilkan ${movements.length} dari ${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small><div><button type="button" class="stock-history-page" data-page="${historyMeta.current_page - 1}" ${historyMeta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${historyMeta.current_page} / ${historyMeta.last_page}</span><button type="button" class="stock-history-page" data-page="${historyMeta.current_page + 1}" ${historyMeta.current_page >= historyMeta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${movements.length} dari ${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small><div><button type="button" class="stock-history-page ui-pagination-button" data-page="${historyMeta.current_page - 1}" ${historyMeta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${historyMeta.current_page} / ${historyMeta.last_page}</span><button type="button" class="stock-history-page ui-pagination-button" data-page="${historyMeta.current_page + 1}" ${historyMeta.current_page >= historyMeta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (historyMeta ? `<small>${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small>` : '');
         historyPagination.querySelectorAll('.stock-history-page').forEach((button) => {
             button.onclick = () => loadStockHistoryPage(Number(button.dataset.page));
@@ -1980,7 +2133,7 @@ function renderStock() {
     const pagination = document.getElementById('product-pagination');
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${products.length} dari ${Number(meta.total).toLocaleString('id-ID')} produk</small><div><button type="button" class="product-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="product-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${products.length} dari ${Number(meta.total).toLocaleString('id-ID')} produk</small><div><button type="button" class="product-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="product-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} produk</small>` : '');
         pagination.querySelectorAll('.product-page').forEach((button) => {
             button.onclick = () => loadProductsPage(Number(button.dataset.page));
@@ -2230,8 +2383,6 @@ function renderFinancePeriodControls() {
             title: 'Rentang arus kas',
             description: 'Menyaring ringkasan, rekening pembayaran, dan riwayat kas.',
             fields: '<label>Dari<input id="cash-flow-from" type="date" aria-label="Tanggal awal arus kas"></label><label>Sampai<input id="cash-flow-to" type="date" aria-label="Tanggal akhir arus kas"></label>',
-            button: 'Terapkan',
-            icon: 'filter_alt',
             scope: 'cash',
         },
         {
@@ -2240,8 +2391,6 @@ function renderFinancePeriodControls() {
             title: 'Rentang laba-rugi',
             description: 'Pendapatan, HPP, retur, dan biaya dihitung pada periode yang dipilih.',
             fields: '<label>Dari<input id="profit-loss-from" type="date" aria-label="Tanggal awal laba-rugi"></label><label>Sampai<input id="profit-loss-to" type="date" aria-label="Tanggal akhir laba-rugi"></label>',
-            button: 'Terapkan',
-            icon: 'filter_alt',
             scope: 'profit-loss',
         },
         {
@@ -2250,8 +2399,6 @@ function renderFinancePeriodControls() {
             title: 'Tanggal neraca',
             description: 'Neraca adalah posisi saldo per satu tanggal, bukan akumulasi rentang.',
             fields: '<label>Per tanggal<input id="balance-sheet-as-of" type="date" aria-label="Tanggal neraca"></label>',
-            button: 'Tampilkan',
-            icon: 'event',
             scope: 'balance-sheet',
         },
     ];
@@ -2260,10 +2407,17 @@ function renderFinancePeriodControls() {
         const page = document.getElementById(control.page);
         if (!page) return;
         if (!document.getElementById(control.id)) {
-            page.insertAdjacentHTML('afterbegin', `<div class="finance-period-toolbar" id="${control.id}"><div><b>${control.title}</b><small>${control.description}</small></div>${control.fields}<button type="button" class="secondary" data-finance-period="${control.scope}"><span class="material-symbols-outlined" aria-hidden="true">${control.icon}</span>${control.button}</button></div>`);
+            page.insertAdjacentHTML('afterbegin', `<div class="finance-period-toolbar" id="${control.id}"><div><b>${control.title}</b><small>${control.description}</small></div>${control.fields}</div>`);
         }
-        const button = document.querySelector(`#${control.id} [data-finance-period]`);
-        if (button) button.onclick = () => loadFinanceReport(control.scope).catch((error) => toast(error.message, true));
+        const inputs = document.querySelectorAll(`#${control.id} input[type="date"]`);
+        inputs.forEach((input) => {
+            input.onchange = () => {
+                const values = [...inputs].map((field) => field.value);
+                if (values.some((value) => !value)) return;
+                if (values.length === 2 && values[0] > values[1]) return;
+                loadFinanceReport(control.scope).catch((error) => toast(error.message, true));
+            };
+        });
     });
 }
 
@@ -2559,7 +2713,7 @@ function renderSalesSnapshot() {
             <span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span>
             <span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span>
             <b class="align-right">${money(transaction.total)}</b>
-            <button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button>
+            <button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button>
         </div>`;
     }).join('');
 
@@ -2623,7 +2777,7 @@ function renderSales() {
         const returnStatus = refundedAmount > 0
             ? `<em class="sales-return-status">${refundedAmount >= Number(transaction.total) ? 'Retur penuh' : 'Retur sebagian'}</em>`
             : '';
-        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
+        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
@@ -2638,7 +2792,7 @@ function renderSales() {
     const meta = salesPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} transaksi</small>` : '');
         pagination.querySelectorAll('.sales-page').forEach((button) => {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
@@ -2665,7 +2819,7 @@ function renderSalesReturns() {
         const itemNames = items.map((item) => item.product_name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
         const itemQuantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
-        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
+        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt ui-action-view" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>PRODUK & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
     box.querySelectorAll('.sales-return-receipt').forEach((button) => {
@@ -2675,7 +2829,7 @@ function renderSalesReturns() {
     const meta = salesReturnsPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${returns.length} dari ${Number(meta.total).toLocaleString('id-ID')} retur</small><div><button type="button" class="sales-page" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${returns.length} dari ${Number(meta.total).toLocaleString('id-ID')} retur</small><div><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} retur</small>` : '');
         pagination.querySelectorAll('.sales-page').forEach((button) => {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
@@ -2892,7 +3046,7 @@ function legacyRenderPayroll() {
         <span>${Number(payroll.late_duration_minutes || 0)} menit<small>-${money(payroll.late_deduction)}</small></span>
         <span>${money(payroll.commission)}</span>
         <b>${money(payroll.net_salary ?? (Number(payroll.base_salary) + Number(payroll.bonus) + Number(payroll.overtime || 0) + Number(payroll.commission) - Number(payroll.late_deduction) - Number(payroll.other_deduction || 0)))}</b>
-        <button class="link payroll-edit" data-id="${Number(payroll.id)}">Edit</button>
+        <button type="button" class="link payroll-edit ui-action-edit" data-id="${Number(payroll.id)}">Edit</button>
     </div>`).join('')}`;
 
     document.querySelectorAll('.payroll-edit').forEach((button) => {
@@ -3153,8 +3307,8 @@ function renderPayroll() {
             ? '<em class="remuneration-input-state ready">Data terisi</em>'
             : '<em class="remuneration-input-state">Belum diinput</em>';
         const action = hasPayrollInput
-            ? `<button type="button" class="remuneration-action edit payroll-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
-            : `<button type="button" class="remuneration-action input payroll-input" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
+            ? `<button type="button" class="remuneration-action edit payroll-edit ui-action-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
+            : `<button type="button" class="remuneration-action input payroll-input ui-action-success" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
         return `<div class="tr"><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${escapeHtml(payrollPeriod)}</small>${payrollState}</span>
             <span><b>${money(employee.base_salary)}</b><small>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(employee.daily_rate)}/hari</small></span>
             <span><b>${money(employee.commission)}</b><small>${money(employee.overtime)} lembur</small></span>
@@ -3231,16 +3385,6 @@ function legacyRenderRemuneration() {
     }
 
     const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
-    const finalizeButton = document.getElementById('finalize-remuneration');
-    if (finalizeButton) {
-        const filledPayrolls = Number(summary.payroll_input_count || 0);
-        const employees = Number(summary.employee_count || 0);
-        const isComplete = employees > 0 && filledPayrolls === employees;
-        finalizeButton.disabled = !isComplete;
-        finalizeButton.title = isComplete
-            ? 'Simpan hasil periode ini ke Arsip Remunerasi'
-            : `Lengkapi data penggajian seluruh karyawan terlebih dahulu (${filledPayrolls}/${employees}).`;
-    }
     note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)} · Input gaji ${escapeHtml(String(period.payroll_period || '-'))}</small></span>`;
     const summaries = [
         ['groups', 'Karyawan', Number(summary.employee_count || 0).toLocaleString('id-ID'), 'Aktif'],
@@ -3264,7 +3408,7 @@ function legacyRenderRemuneration() {
             <span><b>${money(employee.base_salary)}</b><small>Bonus ${money(employee.bonus)} · Lembur ${money(employee.overtime)}</small></span>
             <span><b>${Number(employee.late_minutes || 0)} menit</b><small>-${money(employee.late_deduction)}</small></span>
             <span>${statusControl}${employee.archived ? '<small class="remuneration-archived">Arsip tersimpan</small>' : ''}</span>
-            <button type="button" class="link remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}">Detail</button>
+            <button type="button" class="link remuneration-detail ui-action-view" data-remuneration-detail="${Number(employee.employee_id)}">Detail</button>
         </div>`;
     }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
 
@@ -3342,6 +3486,7 @@ function renderRemuneration() {
     const summaryBox = document.getElementById('remuneration-summary');
     const table = document.getElementById('remuneration-table');
     const note = document.getElementById('remuneration-period-note');
+    const finalizeButton = document.getElementById('finalize-remuneration');
     if (!summaryBox || !table || !note) return;
 
     initializeRemunerationFilters();
@@ -3349,11 +3494,27 @@ function renderRemuneration() {
         summaryBox.innerHTML = '';
         table.innerHTML = '<p class="empty-state">Pilih rentang periode untuk melihat rekap.</p>';
         note.textContent = '';
+        if (finalizeButton) {
+            finalizeButton.disabled = true;
+            finalizeButton.title = 'Muat rekap periode terlebih dahulu.';
+            finalizeButton.removeAttribute('aria-describedby');
+        }
         return;
     }
 
     const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
-    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Data manual menggunakan periode ${escapeHtml(String(period.payroll_period || '-'))} · Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)}</small></span>`;
+    const filledPayrolls = Number(summary.payroll_input_count || 0);
+    const employeeCount = Number(summary.employee_count || 0);
+    const isComplete = employeeCount > 0 && filledPayrolls === employeeCount;
+    const finalizationHint = isComplete
+        ? 'Data gaji lengkap. Periksa nominal dan periode sebelum finalisasi.'
+        : `Finalisasi tersedia setelah data gaji seluruh karyawan terisi (${filledPayrolls}/${employeeCount}).`;
+    if (finalizeButton) {
+        finalizeButton.disabled = !isComplete;
+        finalizeButton.title = finalizationHint;
+        finalizeButton.setAttribute('aria-describedby', 'remuneration-validation-note');
+    }
+    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Data manual menggunakan periode ${escapeHtml(String(period.payroll_period || '-'))} · Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)}</small>${finalizeButton ? `<small id="remuneration-validation-note" class="remuneration-validation-note ${isComplete ? 'is-complete' : 'is-pending'}">${escapeHtml(finalizationHint)}</small>` : ''}</span>`;
     const summaries = [
         ['groups', 'Data karyawan', `${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)}`, 'Sudah diinput'],
         ['paid', 'Komisi layanan', money(summary.commission), 'Otomatis dari kasir'],
@@ -3370,7 +3531,7 @@ function renderRemuneration() {
         // Rekap is read-only: all manual changes belong in Input & Edit
         // Remunerasi. Keeping one Detail action here avoids two competing
         // routes for JHK, GP, bonus, and deductions.
-        const action = `<button type="button" class="remuneration-action detail remuneration-detail" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>`;
+        const action = `<button type="button" class="remuneration-action detail remuneration-detail ui-action-view" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>`;
         return `<div class="tr">
             <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${payrollState}</small></span>
             <span><b>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari</b><small>${money(employee.daily_rate)}/hari · GP ${money(employee.base_salary)}</small></span>
@@ -3404,7 +3565,7 @@ async function loadRemunerationArchives() {
     const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     grid.innerHTML = monthNames.map((name, index) => {
         const archive = byMonth.get(index + 1);
-        return `<article class="remuneration-archive-card ${archive ? 'is-saved' : ''}"><div class="remuneration-archive-card-top"><span class="material-symbols-outlined" aria-hidden="true">${archive ? 'inventory_2' : 'calendar_month'}</span><em>${archive ? 'Tersimpan' : 'Belum ada arsip'}</em></div><h3>${name} ${year}</h3><p>${archive ? `${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}` : 'Belum difinalisasi'}</p>${archive ? `<button type="button" class="secondary" data-archive-id="${Number(archive.id)}">Lihat hasil</button>` : ''}</article>`;
+        return `<article class="remuneration-archive-card ${archive ? 'is-saved' : ''}"><div class="remuneration-archive-card-top"><span class="material-symbols-outlined" aria-hidden="true">${archive ? 'inventory_2' : 'calendar_month'}</span><em>${archive ? 'Tersimpan' : 'Belum ada arsip'}</em></div><h3>${name} ${year}</h3><p>${archive ? `${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}` : 'Belum difinalisasi'}</p>${archive ? `<button type="button" class="secondary ui-action-view" data-archive-id="${Number(archive.id)}">Lihat hasil</button>` : ''}</article>`;
     }).join('');
     grid.querySelectorAll('[data-archive-id]').forEach((button) => {
         button.addEventListener('click', async () => {
@@ -3730,16 +3891,11 @@ function renderDashboard() {
             const outflow = Number(payment.outflow || 0);
             const net = Number(payment.net ?? payment.total ?? 0);
             const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
-            const meta = paymentTypeMeta[key] || { name: String(key || 'Lainnya'), icon: 'payments' };
-            const account = [payment.account_name, payment.account_number].filter(Boolean).join(' · ');
+            const meta = paymentTypeMeta[key] || { icon: 'payments' };
             const percent = totalInflow > 0 ? Math.round((inflow / totalInflow) * 100) : 0;
-            payment.icon = meta.icon;
-            payment.activeCount = true;
-            payment.name = [payment.name, meta.name, account, outflow > 0 ? `Refund ${money(outflow)}` : null]
-                .filter(Boolean)
-                .join(' · ');
+            const methodName = payment.name || 'Metode pembayaran';
             return `<article class="payment-revenue-item">
-                <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${payment.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${payment.activeCount ? `${percent}% dari pendapatan hari ini` : 'Kategori nonaktif · riwayat tetap tercatat'}</small></span></div>
+                <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(methodName)}</b><small>${percent}% dari pendapatan hari ini</small></span></div>
                 <strong>${money(net)}</strong>
                 <div class="payment-revenue-track" aria-label="Dana masuk ${money(inflow)}"><i style="width:${percent}%"></i></div>
             </article>`;
@@ -3747,6 +3903,8 @@ function renderDashboard() {
     }
 
     const low = Number(dashboard.low_stock_count || 0);
+    set('dashboard-welcome-date', new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()));
+    set('dashboard-welcome-summary', `Hari ini ada ${Number(dashboard.reservations_today || 0)} reservasi${canViewProducts ? ` dan ${low} produk dengan stok menipis` : ''}.`);
     set('metric-low-stock', `${low} produk`);
     set('metric-stock-note', low ? 'Perlu ditambah' : 'Stok aman');
     const badge = document.querySelector('.bell sup');
@@ -3866,7 +4024,7 @@ function renderDashboard() {
                 const [label, tone] = quality(therapist.average);
                 const score = Math.max(0, Math.min(100, (Number(therapist.average || 0) / 5) * 100));
                 const reviewCount = Number(therapist.review_count || 0);
-                return `<article class="therapist-rating-summary"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
+                return `<article class="therapist-rating-summary"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews ui-action-view" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
             }).join('')
             : '<p class="empty-state">Belum ada rating therapist pada bulan ini.</p>';
         therapistRatingList.querySelectorAll('[data-therapist-review-index]').forEach((button) => {
@@ -3962,7 +4120,7 @@ function addStaffRow(container, role = 'primary') {
     row.className = 'staff-row';
     row.innerHTML = `<label class="therapist-picker-label">Therapist<select class="item-employee" aria-hidden="true" tabindex="-1"><option value="">Pilih therapist</option>${employeeOptions()}</select><button type="button" class="therapist-picker" aria-haspopup="listbox" aria-expanded="false"><span>Pilih therapist</span><i class="material-symbols-outlined" aria-hidden="true">expand_more</i></button><div class="therapist-picker-menu" role="listbox" hidden></div></label>
         <label>Peran<select class="item-staff-role"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
-        <button type="button" class="icon-button remove-staff" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
+        <button type="button" class="icon-button remove-staff ui-action-delete" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.item-employee').addEventListener('change', () => {
         renderReservationTherapistPicker(row, container.closest('.reservation-item-card')?._therapistAvailability || []);
@@ -4063,8 +4221,7 @@ function renderReservationTherapistPicker(row, availability) {
     const employees = array(availability).length ? array(availability) : serviceProviders().map((employee) => ({ ...employee, available: true, conflicts: [] }));
     let selectedId = Number(select.value || 0);
     const selectedEmployee = employees.find((employee) => Number(employee.id) === selectedId);
-    const selectedConflict = reservationTherapistConflict(row, selectedEmployee);
-    if (selectedEmployee && ((selectedConflict && !selectedEmployee.available) || selectedEmployee.attendance_status === 'off')) {
+    if (selectedEmployee && selectedEmployee.attendance_status === 'off') {
         select.value = '';
         selectedId = 0;
     }
@@ -4074,17 +4231,12 @@ function renderReservationTherapistPicker(row, availability) {
         ? `${selected.name}${selected.specialty ? ` · ${selected.specialty}` : ''}`
         : 'Pilih therapist';
     menu.innerHTML = employees.map((employee) => {
-        const conflict = reservationTherapistConflict(row, employee);
-        const busy = !employee.available && Boolean(conflict);
         const off = employee.attendance_status === 'off';
-        const unavailable = busy || off;
-        const detail = busy
-            ? `<small><i class="material-symbols-outlined" aria-hidden="true">schedule</i> Siap ${escapeHtml(conflict.readyAt)}${conflict.remainingLabel}</small>`
-            : off
-                ? '<small>Libur hari ini</small>'
-                : `<small>${escapeHtml(employee.specialty || employee.position || 'Therapist')}</small>`;
+        const detail = off
+            ? '<small>Libur hari ini</small>'
+            : `<small>${escapeHtml(employee.specialty || employee.position || 'Therapist')}</small>`;
 
-        return `<button type="button" role="option" class="therapist-picker-option${unavailable ? ' unavailable' : ''}${Number(employee.id) === selectedId ? ' selected' : ''}" data-employee-id="${Number(employee.id)}" aria-selected="${Number(employee.id) === selectedId}" ${unavailable ? 'disabled' : ''}><span><b>${escapeHtml(employee.name)}</b>${detail}</span>${busy ? '<i class="material-symbols-outlined" aria-hidden="true">schedule</i>' : ''}</button>`;
+        return `<button type="button" role="option" class="therapist-picker-option${off ? ' unavailable' : ''}${Number(employee.id) === selectedId ? ' selected' : ''}" data-employee-id="${Number(employee.id)}" aria-selected="${Number(employee.id) === selectedId}" ${off ? 'disabled' : ''}><span><b>${escapeHtml(employee.name)}</b>${detail}</span></button>`;
     }).join('') || '<p class="therapist-picker-empty">Tidak ada therapist tersedia.</p>';
 }
 
@@ -4131,7 +4283,7 @@ function addReservationItem(values = {}) {
     const card = document.createElement('article');
     card.className = 'reservation-item-card';
     const itemNumber = container.children.length + 1;
-    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div>
+    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div>
         <div class="reservation-item-grid">
             <label class="treatment-picker-label">Treatment<select class="item-treatment" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results" role="listbox" hidden></div></label>
             <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
@@ -4163,6 +4315,7 @@ function addReservationItem(values = {}) {
         }
         card.remove();
         renumberReservationItems();
+        syncReservationDeposit();
     };
     card.querySelector('.item-treatment').onchange = (event) => {
         const treatment = array(state.treatments).find((item) => Number(item.id) === Number(event.target.value));
@@ -4170,8 +4323,10 @@ function addReservationItem(values = {}) {
         const priceInput = card.querySelector('.item-price');
         if (treatment && priceInput && !priceInput.value) priceInput.placeholder = String(treatmentPrice(treatment));
         refreshReservationTherapistAvailability(card);
+        syncReservationDeposit();
     };
     card.querySelector('.item-time').addEventListener('change', () => refreshReservationTherapistAvailability(card));
+    card.querySelector('.item-price')?.addEventListener('input', () => syncReservationDeposit());
 }
 
 function renumberReservationItems() {
@@ -4183,6 +4338,8 @@ function renumberReservationItems() {
 function resetReservationForm() {
     const form = document.getElementById('reservation-form');
     form?.reset();
+    const depositAmount = form?.querySelector('[name="deposit_amount"]');
+    if (depositAmount) depositAmount.dataset.autoDefault = 'true';
     syncReservationCustomerType();
     const date = document.getElementById('reservation-date');
     if (date) date.value = localDate();
@@ -4199,6 +4356,7 @@ function syncReservationDeposit() {
     const fields = document.getElementById('reservation-deposit-fields');
     const method = document.querySelector('#reservation-form [name="deposit_payment_method_id"]');
     const amount = document.querySelector('#reservation-form [name="deposit_amount"]');
+    const hint = document.getElementById('reservation-deposit-hint');
     const active = canProcessCashier && choice === 'deposit';
 
     if (fields) fields.hidden = !active;
@@ -4208,7 +4366,25 @@ function syncReservationDeposit() {
         method.value = [...method.options].some((option) => option.value === selected) ? selected : '';
         method.required = active;
     }
-    if (amount) amount.required = active;
+    if (amount) {
+        amount.required = active;
+        if (!active) {
+            amount.dataset.autoDefault = 'true';
+        } else if (amount.dataset.autoDefault !== 'false') {
+            const total = [...document.querySelectorAll('#reservation-items .reservation-item-card')]
+                .reduce((sum, card) => {
+                    const price = card.querySelector('.item-price')?.value;
+                    const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
+                    return sum + (price !== null && price !== '' && price !== undefined ? Number(price) : treatmentPrice(treatment));
+                }, 0);
+            const deposit = total > 0 ? Math.ceil(total / 2) : 0;
+            amount.value = deposit || '';
+            amount.dataset.autoDefault = 'true';
+            if (hint) hint.textContent = deposit
+                ? `Otomatis 50% dari total ${money(total)}. Sisa pembayaran ${money(Math.max(0, total - deposit))}. Nominal tetap dapat diubah.`
+                : 'Pilih treatment untuk menghitung DP 50%.';
+        }
+    }
 }
 
 function setReservationLaunchContext(context = 'reservation') {
@@ -4478,6 +4654,8 @@ function paymentMethods() {
     return array(state.payment_methods).filter((method) => method.is_active !== false);
 }
 
+const CASHIER_CHARGE_OPTIONS = [0, 2, 3.5];
+
 function paymentModeOptions() {
     const methods = paymentMethods();
     return [
@@ -4493,14 +4671,13 @@ function paymentSourceDetails(option) {
 
     const method = option.methods.find((item) => Number(item.id) === Number(selectedPaymentMethodId)) || option.methods[0];
     const sourceLabel = option.key === 'card' ? 'Mesin EDC' : option.key === 'bank_transfer' ? 'Bank tujuan' : 'QRIS tujuan';
-    const heading = option.key === 'card' ? 'Informasi kartu' : `Informasi ${sourceLabel.toLowerCase()}`;
     const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
 
     if (option.key === 'card') {
-        return `<section class="payment-source-details card-source-details"><h4>${heading}</h4><div class="payment-source-fields">${sourceSelect}<label>Nomor kartu<input class="payment-card-number" inputmode="numeric" maxlength="32" placeholder="Nomor kartu"></label><label>Nomor transaksi<input class="payment-card-reference" maxlength="100" placeholder="Nomor transaksi"></label></div></section>`;
+        return `<section class="payment-source-details card-source-details"><div class="payment-source-fields">${sourceSelect}<label>Nomor kartu<input class="payment-card-number" inputmode="numeric" maxlength="32" placeholder="Opsional"></label><label>Nomor transaksi<input class="payment-card-reference" maxlength="100" placeholder="Opsional"></label></div></section>`;
     }
 
-    return `<section class="payment-source-details"><h4>${heading}</h4><div class="payment-source-fields">${sourceSelect}<div class="payment-destination"><span><small>Nama pemilik rekening</small><b>${escapeHtml(method.account_name || '-')}</b></span><span><small>No. rekening tujuan</small><b>${escapeHtml(method.account_number || '-')}</b></span></div></div></section>`;
+    return `<section class="payment-source-details"><div class="payment-source-fields payment-source-fields-single">${sourceSelect}</div></section>`;
 }
 
 function renderPaymentModeChoices() {
@@ -4520,7 +4697,7 @@ function renderPaymentModeChoices() {
     const choices = document.createElement('div');
     choices.id = 'payment-method-choices';
     choices.className = 'payment-method-choices';
-    choices.innerHTML = `<div class="payment-mode-list">${options.map((option) => `<button type="button" class="payment-mode${paymentMode === option.key ? ' active' : ''}" data-mode="${option.key}"><i></i>${escapeHtml(option.label)}</button>`).join('')}${canSplit ? `<button type="button" class="payment-mode${paymentMode === 'split' ? ' active' : ''}" data-mode="split"><i></i>Split</button>` : ''}</div>${paymentSourceDetails(activeOption)}`;
+    choices.innerHTML = `<div class="payment-mode-list">${options.map((option) => `<button type="button" class="payment-mode${paymentMode === option.key ? ' active' : ''}" data-mode="${option.key}" aria-pressed="${paymentMode === option.key}"><i aria-hidden="true"></i>${escapeHtml(option.label)}</button>`).join('')}${canSplit ? `<button type="button" class="payment-mode${paymentMode === 'split' ? ' active' : ''}" data-mode="split" aria-pressed="${paymentMode === 'split'}"><i aria-hidden="true"></i>Split</button>` : ''}</div>${paymentSourceDetails(activeOption)}`;
     container.before(choices);
     choices.querySelectorAll('.payment-mode').forEach((button) => {
         button.onclick = () => {
@@ -4543,22 +4720,25 @@ function paymentChargeMeta(row) {
     const methodId = Number(row.querySelector('.payment-method')?.value || 0);
     const method = paymentMethods().find((item) => Number(item.id) === methodId);
     const baseAmount = Number(row.querySelector('.payment-amount')?.value || 0);
-    const percent = Number(method?.charge_percent || 0);
+    const percent = Number(row.querySelector('.payment-charge-percent')?.value ?? method?.charge_percent ?? 0);
     const enabled = row.dataset.chargeEnabled === 'true' && !Boolean(Number(method?.is_cash ?? 0)) && percent > 0;
-    const amount = enabled ? Math.round(baseAmount * percent / 100) : 0;
+    const chargeBaseAmount = paymentMode === 'split' ? baseAmount : selectedInvoiceTotal();
+    const amount = enabled ? Math.round(chargeBaseAmount * percent / 100) : 0;
 
-    return { method, baseAmount, percent, enabled, amount, total: baseAmount + amount };
+    return { method, baseAmount, chargeBaseAmount, percent, enabled, amount, total: baseAmount + amount };
 }
 
 function syncPaymentCharge(row, resetToDefault = false) {
     const methodId = Number(row.querySelector('.payment-method')?.value || 0);
     const method = paymentMethods().find((item) => Number(item.id) === methodId);
     const control = row.querySelector('.payment-charge-control');
-    const toggle = row.querySelector('.payment-charge-toggle');
+    const percentSelect = row.querySelector('.payment-charge-percent');
     const summary = row.querySelector('.payment-charge-summary');
-    const percent = Number(method?.charge_percent || 0);
-    const chargeable = !Boolean(Number(method?.is_cash ?? 0)) && percent > 0;
-    const defaultEnabled = ![false, 0, '0'].includes(method?.charge_default_enabled);
+    const configuredPercent = Number(method?.charge_percent || 0);
+    const defaultPercent = CASHIER_CHARGE_OPTIONS.includes(configuredPercent) && ![false, 0, '0'].includes(method?.charge_default_enabled)
+        ? configuredPercent
+        : 0;
+    const chargeable = !Boolean(Number(method?.is_cash ?? 0));
 
     if (!chargeable) {
         row.dataset.chargeEnabled = 'false';
@@ -4566,20 +4746,15 @@ function syncPaymentCharge(row, resetToDefault = false) {
         return paymentChargeMeta(row);
     }
 
-    if (resetToDefault || row.dataset.chargeEnabled === undefined || row.dataset.chargeEnabled === '') {
-        row.dataset.chargeEnabled = String(defaultEnabled);
+    if (percentSelect && (resetToDefault || row.dataset.chargeEnabled === undefined || row.dataset.chargeEnabled === '')) {
+        percentSelect.value = String(defaultPercent);
     }
+    row.dataset.chargeEnabled = String(Number(percentSelect?.value || 0) > 0);
     const charge = paymentChargeMeta(row);
     if (control) control.hidden = false;
-    if (toggle) {
-        toggle.setAttribute('aria-pressed', String(charge.enabled));
-        toggle.classList.toggle('active', charge.enabled);
-    toggle.setAttribute('aria-label', `${charge.enabled ? 'Nonaktifkan' : 'Aktifkan'} charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}%`);
-    toggle.innerHTML = '<span class="payment-charge-knob" aria-hidden="true"></span>';
-}
-const label = row.querySelector('.payment-charge-label');
-if (label) label.textContent = `Charge ${percent.toLocaleString('id-ID', { maximumFractionDigits: 4 })}%`;
-if (summary) summary.textContent = charge.enabled ? `Biaya ${money(charge.amount)} · Total ${money(charge.total)}` : 'Tanpa biaya tambahan';
+    if (summary) summary.textContent = charge.enabled
+        ? `${charge.percent.toLocaleString('id-ID', { maximumFractionDigits: 1 })}% dari ${money(charge.chargeBaseAmount)} = ${money(charge.amount)}`
+        : 'Tidak ada charge';
 
     return charge;
 }
@@ -4594,12 +4769,12 @@ function addPaymentRow(values = {}) {
     row.dataset.autoBalance = values.auto_balance ? 'true' : 'false';
     row.dataset.autoTendered = 'true';
     row.dataset.chargeEnabled = values.charge_enabled === undefined ? '' : String(Boolean(values.charge_enabled));
-    row.innerHTML = `<div class="payment-row-head"><strong>Detail pembayaran</strong><button type="button" class="remove-payment" aria-label="Hapus pembayaran" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span> Hapus</button></div>
+    row.innerHTML = `<div class="payment-row-head"><strong>Pembayaran</strong><button type="button" class="remove-payment ui-action-delete" aria-label="Hapus pembayaran" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span> Hapus</button></div>
         <label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
         <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
         <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
         <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
-        <div class="payment-charge-control" hidden><span class="payment-charge-label">Biaya metode pembayaran</span><button type="button" class="payment-charge-toggle" aria-pressed="false"></button><small class="payment-charge-summary"></small></div>`;
+        <div class="payment-charge-control" hidden><span class="payment-charge-label">Charge</span><label class="payment-charge-choice">Pilih charge<select class="payment-charge-percent" aria-label="Pilihan charge"><option value="0">Tidak ada</option><option value="2">2%</option><option value="3.5">3,5%</option></select></label><small class="payment-charge-summary"></small></div>`;
     container.appendChild(row);
     syncPaymentRowHeaders();
     row.querySelector('.payment-amount').addEventListener('input', () => {
@@ -4618,8 +4793,7 @@ function addPaymentRow(values = {}) {
         syncPaymentReference(row, true);
         updatePaymentReconciliation();
     });
-    row.querySelector('.payment-charge-toggle').addEventListener('click', () => {
-        row.dataset.chargeEnabled = String(row.dataset.chargeEnabled !== 'true');
+    row.querySelector('.payment-charge-percent').addEventListener('change', () => {
         syncPaymentCharge(row);
         syncCashTendered(row);
         updatePaymentReconciliation();
@@ -4644,7 +4818,7 @@ function syncPaymentRowHeaders() {
     rows.forEach((row, index) => {
         row.querySelector('.payment-row-head strong').textContent = rows.length > 1
             ? `Pembayaran ${index + 1}`
-            : 'Detail pembayaran';
+            : 'Pembayaran';
         row.querySelector('.remove-payment').hidden = rows.length <= 1;
     });
 }
@@ -4757,11 +4931,11 @@ function updatePaymentReconciliation() {
 function quickForm(title, fields, submit) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select name="${escapeHtml(name)}">${array(options).map((option) => {
+    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select name="${escapeHtml(name)}">${array(options).map((option) => {
         const parts = String(option).split('|');
         const optionValue = parts.length > 1 ? parts[0] : option;
         return `<option value="${escapeHtml(optionValue)}" ${String(optionValue) === String(value ?? '') ? 'selected' : ''}>${escapeHtml(parts[1] || parts[0])}</option>`;
-    }).join('')}</select>` : `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${String(label).includes('(opsional)') ? '' : 'required'}>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan</button></footer></form></div>`;
+    }).join('')}</select>` : `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${String(label).includes('(opsional)') ? '' : 'required'}>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
@@ -4903,13 +5077,13 @@ function renderTherapistOvertimeCalendar() {
             ? `${day} ${monthLabel}: ${names.join(', ')} lembur`
             : `${day} ${monthLabel}`;
         const tooltip = names.length
-            ? `<span class="therapist-attendance-calendar-tooltip" role="tooltip"><b>Terapis lembur</b>${overtimeTherapists.map((therapist) => `<span>${escapeHtml(therapist.name)} · ${money(therapist.overtime_amount)}</span>`).join('')}</span>`
+            ? `<span class="therapist-attendance-calendar-tooltip" role="tooltip"><b>Terapis lembur</b>${overtimeTherapists.map((therapist) => `<span>${escapeHtml(therapist.name)}</span>`).join('')}</span>`
             : '';
 
         return `<button type="button" class="therapist-attendance-calendar-day${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${names.length ? ' has-overtime' : ''}" data-attendance-date="${date}" aria-label="${escapeHtml(label)}"><span class="therapist-attendance-calendar-day-value">${names.length ? escapeHtml(marker) : day}</span>${tooltip}</button>`;
     }).join('');
 
-    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender lembur</h3><p>Penanda tanggal dan nominal lembur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis lembur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
+    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender lembur</h3><p>Penanda tanggal therapist yang lembur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis lembur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
 
     box.querySelectorAll('[data-attendance-date]').forEach((button) => {
         button.addEventListener('click', () => loadTherapistAttendance(button.dataset.attendanceDate));
@@ -4934,15 +5108,9 @@ function renderTherapistAttendance() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const editable = canManageTherapistAttendance;
-    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)}</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS KEHADIRAN</span><span>NOMINAL LEMBUR</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><fieldset class="therapist-status-options" data-status-options="${Number(therapist.employee_id)}"><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="present" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'present' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Hadir</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="off" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Libur</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="overtime" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'overtime' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Lembur</label></fieldset><label class="therapist-overtime-field${therapist.status === 'overtime' ? '' : ' is-hidden'}"><span>Rp</span><input type="number" min="0" step="1" placeholder="Isi nominal" data-overtime-employee-id="${Number(therapist.employee_id)}" value="${escapeHtml(therapist.overtime_amount || '')}" ${editable ? '' : 'disabled'}></label></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)} · Nominal lembur diisi dari Penggajian.</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS KEHADIRAN</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><fieldset class="therapist-status-options" data-status-options="${Number(therapist.employee_id)}"><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="present" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'present' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Hadir</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="off" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Libur</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="overtime" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'overtime' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Lembur</label></fieldset></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
     box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
         loadTherapistAttendance(event.currentTarget.value);
-    });
-    box.querySelectorAll('[data-attendance-status]').forEach((input) => {
-        input.addEventListener('change', () => {
-            const field = box.querySelector(`[data-overtime-employee-id="${input.dataset.attendanceStatus}"]`)?.closest('.therapist-overtime-field');
-            field?.classList.toggle('is-hidden', input.value !== 'overtime');
-        });
     });
     box.querySelector('#therapist-attendance-form')?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -4954,26 +5122,20 @@ function renderTherapistAttendance() {
             return {
                 employeeId,
                 status: selected?.value || 'present',
-                overtimeAmount: Number(box.querySelector(`[data-overtime-employee-id="${employeeId}"]`)?.value || 0),
             };
         });
         const changes = statuses.filter((item) => therapistAttendance.some((therapist) => (
-            Number(therapist.employee_id) === item.employeeId && (therapist.status !== item.status || Number(therapist.overtime_amount || 0) !== item.overtimeAmount)
+            Number(therapist.employee_id) === item.employeeId && therapist.status !== item.status
         )));
         if (!changes.length) {
             toast('Tidak ada perubahan kehadiran.');
-            return;
-        }
-        const overtimeWithoutAmount = changes.find((item) => item.status === 'overtime' && item.overtimeAmount <= 0);
-        if (overtimeWithoutAmount) {
-            toast('Isi nominal lembur terlebih dahulu.', true);
             return;
         }
         submit.disabled = true;
         try {
             await Promise.all(changes.map((item) => api(`/operasional/therapist-kehadiran/${item.employeeId}`, {
                 method: 'PUT',
-                body: JSON.stringify({ date: therapistAttendanceDate, status: item.status, overtime_amount: item.overtimeAmount }),
+                body: JSON.stringify({ date: therapistAttendanceDate, status: item.status }),
             })));
             toast('Kehadiran terapis diperbarui.');
             await loadTherapistAttendance(therapistAttendanceDate);
@@ -5116,6 +5278,38 @@ document.querySelectorAll('.go-therapist-attendance').forEach((button) => {
 document.querySelectorAll('.go-stock').forEach((button) => {
     button.onclick = () => openPage('stok');
 });
+document.getElementById('notification-toggle')?.addEventListener('click', () => {
+    const panel = document.getElementById('notification-panel');
+    const toggle = document.getElementById('notification-toggle');
+    if (!panel || !toggle) return;
+    const willOpen = panel.hidden;
+    panel.hidden = !willOpen;
+    toggle.setAttribute('aria-expanded', String(willOpen));
+    if (willOpen) {
+        notificationItems = notificationItems.map((item) => ({ ...item, read: true }));
+        renderNotificationCenter();
+    }
+});
+document.getElementById('notification-clear')?.addEventListener('click', () => {
+    notificationItems = [];
+    renderNotificationCenter();
+});
+document.addEventListener('click', (event) => {
+    const menu = event.target.closest('.notification-menu');
+    if (menu) return;
+    const panel = document.getElementById('notification-panel');
+    const toggle = document.getElementById('notification-toggle');
+    if (panel && !panel.hidden) panel.hidden = true;
+    toggle?.setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const panel = document.getElementById('notification-panel');
+    if (!panel || panel.hidden) return;
+    panel.hidden = true;
+    document.getElementById('notification-toggle')?.setAttribute('aria-expanded', 'false');
+});
+renderNotificationCenter();
 document.querySelectorAll('.remuneration-guide-go').forEach((button) => {
     button.onclick = () => openPage(button.dataset.remunerationPage);
 });
@@ -5264,6 +5458,20 @@ document.querySelectorAll('#reservation-form [name="customer_type"]').forEach((i
 document.querySelectorAll('#reservation-form [name="payment_stage"]').forEach((input) => {
     input.addEventListener('change', syncReservationDeposit);
 });
+document.querySelector('#reservation-form [name="deposit_amount"]')?.addEventListener('input', (event) => {
+    const amount = event.currentTarget;
+    amount.dataset.autoDefault = 'false';
+    const hint = document.getElementById('reservation-deposit-hint');
+    const total = [...document.querySelectorAll('#reservation-items .reservation-item-card')]
+        .reduce((sum, card) => {
+            const price = card.querySelector('.item-price')?.value;
+            const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
+            return sum + (price !== null && price !== '' && price !== undefined ? Number(price) : treatmentPrice(treatment));
+        }, 0);
+    if (hint && total > 0) {
+        hint.textContent = `Sisa pembayaran ${money(Math.max(0, total - Number(amount.value || 0)))}. Nominal DP dapat diubah.`;
+    }
+});
 document.getElementById('reservation-member-id')?.addEventListener('change', syncReservationCustomerType);
 function syncReservationMemberSearch() {
     const search = document.getElementById('reservation-member-search');
@@ -5296,6 +5504,12 @@ document.getElementById('reservation-member-results')?.addEventListener('click',
 document.addEventListener('click', (event) => {
     if (!event.target.closest('.reservation-member-combobox')) closeReservationMemberSearch();
 });
+
+window.setInterval(() => {
+    const queuePage = document.getElementById('reservasi-antrean');
+    if (document.visibilityState !== 'visible' || !queuePage?.classList.contains('active')) return;
+    refresh().catch(() => null);
+}, 60 * 1000);
 
 document.getElementById('product-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();

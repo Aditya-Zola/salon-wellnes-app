@@ -1065,7 +1065,6 @@ class SalonController extends Controller
                 'employee.name',
                 'employee.specialty',
                 'attendance.status',
-                'attendance.overtime_amount',
                 'attendance.notes',
             ])
             ->map(fn (object $employee): array => [
@@ -1075,7 +1074,6 @@ class SalonController extends Controller
                 // Belum diatur berarti dianggap masuk, sehingga tidak mengubah
                 // alur reservasi yang sudah berjalan.
                 'status' => $employee->status ?: 'present',
-                'overtime_amount' => (int) ($employee->overtime_amount ?? 0),
                 'notes' => $employee->notes,
             ])
             ->values();
@@ -1112,13 +1110,11 @@ class SalonController extends Controller
                 'attendance.attendance_date',
                 'employee.id as employee_id',
                 'employee.name',
-                'attendance.overtime_amount',
             ])
             ->groupBy('attendance_date')
             ->map(fn ($attendances) => $attendances->map(fn (object $attendance): array => [
                 'employee_id' => (int) $attendance->employee_id,
                 'name' => $attendance->name,
-                'overtime_amount' => (int) $attendance->overtime_amount,
             ])->values())
             ->all();
 
@@ -1138,7 +1134,6 @@ class SalonController extends Controller
         $data = $request->validate([
             'date' => ['required', 'date_format:Y-m-d'],
             'status' => ['required', Rule::in(['present', 'off', 'overtime'])],
-            'overtime_amount' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
         $therapist = DB::table('employees')
@@ -1165,7 +1160,9 @@ class SalonController extends Controller
             ['employee_id' => $employee, 'attendance_date' => $data['date']],
             [
                 'status' => $data['status'],
-                'overtime_amount' => $data['status'] === 'overtime' ? (int) ($data['overtime_amount'] ?? 0) : 0,
+                // Kehadiran mencatat tanggal lembur; nominal hanya ditetapkan
+                // dari Penggajian agar tidak ada dua sumber nilai.
+                'overtime_amount' => 0,
                 'notes' => ($data['notes'] ?? null) ? trim($data['notes']) : null,
                 'updated_by' => $request->user()?->id,
                 'updated_at' => $now,
@@ -1182,7 +1179,7 @@ class SalonController extends Controller
                 'overtime' => 'lembur',
                 default => 'masuk',
             },
-            ['date' => $data['date'], 'status' => $data['status'], 'overtime_amount' => (int) ($data['overtime_amount'] ?? 0)],
+            ['date' => $data['date'], 'status' => $data['status']],
         );
 
         return response()->json(['message' => 'Status kehadiran therapist diperbarui.']);

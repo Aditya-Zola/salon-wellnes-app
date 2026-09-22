@@ -9,8 +9,7 @@ class StoreReservationRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return ! $this->boolean('override_conflict')
-            || (bool) $this->user()?->can('reservations.override_conflict');
+        return true;
     }
 
     protected function prepareForValidation(): void
@@ -81,8 +80,6 @@ class StoreReservationRequest extends FormRequest
             'items.*.staff' => ['required', 'array', 'min:1', 'max:10'],
             'items.*.staff.*.employee_id' => ['required', 'integer', 'exists:employees,id'],
             'items.*.staff.*.role' => ['required', Rule::in(['primary', 'assistant'])],
-            'override_conflict' => ['sometimes', 'boolean'],
-            'override_reason' => ['nullable', 'required_if:override_conflict,true', 'string', 'max:500'],
             'deposit' => ['nullable', 'array'],
             'deposit.payment_method_id' => ['required_with:deposit', 'integer', 'exists:payment_methods,id'],
             'deposit.amount' => ['required_with:deposit', 'integer', 'min:1', 'max:999999999999'],

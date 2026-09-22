@@ -85,7 +85,6 @@ class RemunerationReportService
                 'employee.name as employee_name',
                 'attendance.attendance_date',
                 'attendance.status',
-                'attendance.overtime_amount',
                 'attendance.notes',
             ])
             ->map(fn (object $item): array => [
@@ -93,7 +92,6 @@ class RemunerationReportService
                 'employee_name' => $item->employee_name,
                 'date' => $item->attendance_date,
                 'status' => $item->status,
-                'overtime_amount' => (int) $item->overtime_amount,
                 'notes' => $item->notes,
             ])
             ->values();
@@ -105,7 +103,6 @@ class RemunerationReportService
             ->where('status', 'overtime')
             ->groupBy('employee_id')
             ->map(fn ($items): array => [
-                'amount' => (int) $items->sum('overtime_amount'),
                 'days' => $items->count(),
             ]);
 
@@ -144,17 +141,10 @@ class RemunerationReportService
             $commission = $commissionByEmployee->get($employee->id, ['commission' => 0, 'treatment_count' => 0]);
             $payroll = $payrolls->get($employee->id);
             $values = $this->payrollValues($payroll, (int) $commission['commission']);
-            $overtime = $overtimeByEmployee->get($employee->id, ['amount' => 0, 'days' => 0]);
-            // Lembur harian dari kehadiran adalah sumber tunggal untuk KOM-LEM.
-            // Jika sudah ada, ia menggantikan angka lembur bulanan lama agar tidak
-            // dihitung dua kali.
-            if ($overtime['amount'] > 0) {
-                $difference = $overtime['amount'] - $values['overtime'];
-                $values['overtime'] = $overtime['amount'];
-                $values['overtime_days'] = $overtime['days'];
-                $values['gross_income'] += $difference;
-                $values['net_salary'] += $difference;
-            }
+            $overtime = $overtimeByEmployee->get($employee->id, ['days' => 0]);
+            // Kehadiran menentukan jumlah hari lembur. Nominal tetap dari
+            // Penggajian, sehingga hanya ada satu sumber nilai uang lembur.
+            $values['overtime_days'] = $overtime['days'];
 
             return [
                 'payroll_id' => $payroll?->id ? (int) $payroll->id : null,

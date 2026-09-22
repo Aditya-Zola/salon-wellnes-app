@@ -125,6 +125,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/{section}', [SettingsController::class, 'storePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.store');
         Route::patch('/{section}/{paymentMethod}', [SettingsController::class, 'updatePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.update');
         Route::patch('/{section}/{paymentMethod}/status', [SettingsController::class, 'togglePaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.toggle');
+        Route::delete('/{section}/{paymentMethod}', [SettingsController::class, 'destroyPaymentMethod'])->whereIn('section', ['edc', 'bank', 'qris'])->name('payment-methods.destroy');
     });
 
     Route::post('/logout', [AuthController::class, 'destroy'])->name('logout');

@@ -202,6 +202,54 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_final_charge_uses_total_bill_before_deposit_and_cashier_can_choose_its_rate(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $depositMethod = $this->paymentMethod('CASH');
+        $bank = $this->paymentMethod('BANK-001');
+        $deposit = 40000;
+        $baseTotal = (int) $treatment->normal_price;
+        $charge = (int) round($baseTotal * 0.035);
+
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '14:00', [
+                ['employee_id' => $therapist->id, 'role' => 'primary'],
+            ]),
+        ], [
+            'phone' => '081290000013',
+            'deposit' => [
+                'payment_method_id' => $depositMethod->id,
+                'amount' => $deposit,
+            ],
+        ])->assertCreated();
+
+        $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => (int) $reservation->json('id'),
+                'payments' => [[
+                    'payment_method_id' => $bank->id,
+                    'amount' => $baseTotal - $deposit,
+                    'charge_enabled' => true,
+                    'charge_percent' => '3.5',
+                    'tendered_amount' => $baseTotal - $deposit + $charge,
+                ]],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('base_total', $baseTotal)
+            ->assertJsonPath('deposit_amount', $deposit)
+            ->assertJsonPath('payment_charge_amount', $charge)
+            ->assertJsonPath('total', $baseTotal + $charge);
+
+        $this->assertDatabaseHas('transaction_payments', [
+            'payment_method_id' => $bank->id,
+            'base_amount' => $baseTotal - $deposit,
+            'charge_percent' => '3.5000',
+            'charge_amount' => $charge,
+            'amount' => $baseTotal - $deposit + $charge,
+        ]);
+    }
+
     public function test_payroll_can_be_created_for_a_registered_employee(): void
     {
         $employee = $this->employee('EMP-SARI');
@@ -685,7 +733,7 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
-    public function test_conflict_requires_permission_and_reason_before_it_can_be_overridden(): void
+    public function test_overlapping_reservations_are_allowed_without_override(): void
     {
         $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
         $employee = $this->employee('EMP-MAYA');
@@ -700,62 +748,25 @@ class SalonOperationsTest extends TestCase
             'phone' => '081290000010',
         ])->assertCreated();
 
-        $conflictPayload = $this->reservationPayload($items, [
+        $overlappingPayload = $this->reservationPayload($items, [
             'date' => $date,
             'name' => 'Jadwal Bentrok',
             'phone' => '081290000011',
         ]);
 
-        $this->actingAs($this->marketing)
-            ->postJson('/operasional/reservasi', $conflictPayload)
-            ->assertStatus(409)
-            ->assertJsonPath('code', 'schedule_conflict')
-            ->assertJsonPath('can_override', false)
-            ->assertJsonPath('requires_reason', true)
-            ->assertJsonCount(1, 'conflicts');
-
-        $this->actingAs($this->marketing)
-            ->postJson('/operasional/reservasi', [
-                ...$conflictPayload,
-                'override_conflict' => true,
-                'override_reason' => 'Permintaan pelanggan',
-            ])
-            ->assertForbidden();
-
-        $override = $this->actingAs($this->admin)
-            ->postJson('/operasional/reservasi', [
-                ...$conflictPayload,
-                'override_conflict' => true,
-                'override_reason' => 'Disetujui supervisor untuk demo',
-            ])
+        $overlapping = $this->actingAs($this->marketing)
+            ->postJson('/operasional/reservasi', $overlappingPayload)
             ->assertCreated();
 
-        $reservationId = (int) $override->json('id');
+        $reservationId = (int) $overlapping->json('id');
         $itemId = (int) \DB::table('reservation_items')->where('reservation_id', $reservationId)->value('id');
 
         $this->assertDatabaseHas('reservation_item_staff', [
             'reservation_item_id' => $itemId,
             'employee_id' => $employee->id,
-            'conflict_override_reason' => 'Disetujui supervisor untuk demo',
-            'conflict_overridden_by' => $this->admin->id,
+            'conflict_override_reason' => null,
+            'conflict_overridden_by' => null,
         ]);
-        $this->assertNotNull(
-            \DB::table('reservation_item_staff')
-                ->where('reservation_item_id', $itemId)
-                ->value('conflict_overridden_at'),
-        );
-
-        $activity = \DB::table('activity_logs')
-            ->where('action', 'reservation.created')
-            ->where('subject_type', 'reservation')
-            ->where('subject_id', $reservationId)
-            ->first();
-
-        $this->assertNotNull($activity);
-        $metadata = json_decode($activity->metadata, true, flags: JSON_THROW_ON_ERROR);
-        $this->assertTrue($metadata['conflict_overridden']);
-        $this->assertSame('Disetujui supervisor untuk demo', $metadata['override_reason']);
-        $this->assertNotEmpty($metadata['conflicts']);
     }
 
     public function test_item_work_status_transitions_set_timestamps_and_synchronize_header(): void
@@ -780,39 +791,15 @@ class SalonOperationsTest extends TestCase
             ->orderBy('sort_order')
             ->get();
 
-        $this->updateItemStatus($reservationId, $items[0]->id, 'finished')
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('status');
-        $this->assertNull(\DB::table('reservation_items')->where('id', $items[0]->id)->value('finished_at'));
-
         Carbon::setTestNow(Carbon::parse('2026-08-20 08:00:00', config('app.timezone')));
-        $this->updateItemStatus($reservationId, $items[0]->id, 'in_progress')
-            ->assertOk()
-            ->assertJsonPath('work_status', 'in_progress')
-            ->assertJsonPath('reservation_status', 'in_service');
-
-        Carbon::setTestNow(now()->addMinutes(60));
-        $this->updateItemStatus($reservationId, $items[0]->id, 'overtime')->assertOk();
-
-        Carbon::setTestNow(now()->addMinutes(10));
-        $this->updateItemStatus($reservationId, $items[0]->id, 'continue')->assertOk();
-
-        Carbon::setTestNow(now()->addMinutes(10));
-        $this->updateItemStatus($reservationId, $items[0]->id, 'ready')->assertOk();
-
-        Carbon::setTestNow(now()->addMinutes(10));
         $this->updateItemStatus($reservationId, $items[0]->id, 'finished')
             ->assertOk()
+            ->assertJsonPath('work_status', 'finished')
             ->assertJsonPath('reservation_status', 'in_service');
 
         $firstItem = \DB::table('reservation_items')->find($items[0]->id);
-        $this->assertNotNull($firstItem->started_at);
-        $this->assertNotNull($firstItem->overtime_at);
-        $this->assertNotNull($firstItem->continued_at);
-        $this->assertNotNull($firstItem->ready_at);
         $this->assertNotNull($firstItem->finished_at);
 
-        $this->updateItemStatus($reservationId, $items[1]->id, 'in_progress')->assertOk();
         $this->updateItemStatus($reservationId, $items[1]->id, 'finished')
             ->assertOk()
             ->assertJsonPath('reservation_status', 'completed');
@@ -830,6 +817,34 @@ class SalonOperationsTest extends TestCase
             'subject_type' => 'reservation_item',
             'subject_id' => $items[0]->id,
         ]);
+    }
+
+    public function test_reservation_item_is_completed_automatically_after_estimate_and_grace_period(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 08:00:00', config('app.timezone')));
+        try {
+            $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+            $therapist = $this->employee('EMP-SARI');
+            $date = now()->toDateString();
+            $reservation = $this->createReservation($this->admin, [
+                $this->item($treatment->id, '09:00', [
+                    ['employee_id' => $therapist->id, 'role' => 'primary'],
+                ]),
+            ], ['date' => $date, 'phone' => '081290000021'])->assertCreated();
+
+            $reservationId = (int) $reservation->json('id');
+            $item = \DB::table('reservation_items')->where('reservation_id', $reservationId)->first();
+            Carbon::setTestNow(Carbon::parse($item->scheduled_end_at, config('app.timezone'))->addMinutes(16));
+
+            $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+            $snapshotReservation = collect($snapshot['reservations'])->firstWhere('id', $reservationId);
+
+            $this->assertSame('completed', $snapshotReservation['status']);
+            $this->assertSame('finished', $snapshotReservation['items'][0]['work_status']);
+            $this->assertNotNull($snapshotReservation['items'][0]['finished_at']);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_checkout_allows_scheduled_reservation_and_service_can_continue_after_payment(): void
@@ -2253,6 +2268,41 @@ class SalonOperationsTest extends TestCase
         $this->assertSame('SLS20260813001', $response->json('number'));
     }
 
+    public function test_used_payment_method_can_be_removed_from_choices_without_losing_transaction_history(): void
+    {
+        $method = $this->paymentMethod('BANK-001');
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000079');
+        $transaction = $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'payments' => [[
+                'payment_method_id' => $method->id,
+                'amount' => $total,
+            ]],
+        ])->assertCreated();
+
+        $this->actingAs($this->admin)
+            ->delete(route('settings.payment-methods.destroy', ['section' => 'bank', 'paymentMethod' => $method->id]))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('payment_methods', [
+            'id' => $method->id,
+            'name' => 'BCA',
+            'is_active' => false,
+        ]);
+        $this->assertNotNull(DB::table('payment_methods')->where('id', $method->id)->value('archived_at'));
+        $this->assertDatabaseHas('transaction_payments', [
+            'transaction_id' => $transaction->json('id'),
+            'payment_method_id' => $method->id,
+        ]);
+
+        $this->actingAs($this->admin)->get('/pengaturan/bank')
+            ->assertOk()
+            ->assertDontSee('data-method-name="BCA"', false);
+        $snapshot = $this->actingAs($this->admin)->getJson('/operasional/data')->assertOk()->json();
+        $this->assertFalse(collect($snapshot['payment_methods'])->contains('id', $method->id));
+        $this->assertFalse(collect($snapshot['dashboard']['revenue_by_payment_method_today'])->contains('id', $method->id));
+    }
+
     public function test_members_and_membership_events_can_be_managed_without_losing_history(): void
     {
         $member = $this->actingAs($this->admin)
@@ -2368,7 +2418,7 @@ class SalonOperationsTest extends TestCase
 
         $this->createReservation($this->admin, [
             $this->item($treatment->id, $expectedEnd->copy()->addMinutes(30)->format('H:i'), [['employee_id' => $therapist->id, 'role' => 'primary']]),
-        ], ['date' => $date, 'phone' => '081290000302'])->assertStatus(409);
+        ], ['date' => $date, 'phone' => '081290000302'])->assertCreated();
     }
 
     public function test_therapist_off_day_blocks_new_reservations_and_manual_cashier_discount_is_allowed(): void
@@ -2439,7 +2489,7 @@ class SalonOperationsTest extends TestCase
         $this->assertSame(['Rani', 'Sari'], collect($response->json("off_by_date.{$multipleOffDate}"))->pluck('name')->all());
     }
 
-    public function test_therapist_overtime_is_saved_per_date_and_becomes_remuneration_source(): void
+    public function test_therapist_overtime_date_is_recorded_while_payroll_remains_the_money_source(): void
     {
         $therapist = $this->employee('EMP-DITA');
         $date = today()->toDateString();
@@ -2448,6 +2498,7 @@ class SalonOperationsTest extends TestCase
             ->putJson("/operasional/therapist-kehadiran/{$therapist->id}", [
                 'date' => $date,
                 'status' => 'overtime',
+                // Nilai ini sengaja diabaikan: nominal hanya berasal dari payroll.
                 'overtime_amount' => 15000,
             ])
             ->assertOk();
@@ -2456,21 +2507,21 @@ class SalonOperationsTest extends TestCase
             'employee_id' => $therapist->id,
             'attendance_date' => $date,
             'status' => 'overtime',
-            'overtime_amount' => 15000,
+            'overtime_amount' => 0,
         ]);
 
         $this->actingAs($this->admin)
             ->getJson('/operasional/therapist-kehadiran?date='.$date.'&month='.substr($date, 0, 7))
             ->assertOk()
-            ->assertJsonPath("overtime_by_date.{$date}.0.name", 'Dita')
-            ->assertJsonPath("overtime_by_date.{$date}.0.overtime_amount", 15000);
+            ->assertJsonPath("overtime_by_date.{$date}.0.name", 'Dita');
 
         $report = $this->actingAs($this->admin)
             ->getJson('/operasional/penggajian/rekap?from='.$date.'&to='.$date)
             ->assertOk();
         $row = collect($report->json('employees'))->firstWhere('employee_id', $therapist->id);
 
-        $this->assertSame(15000, $row['overtime']);
+        $this->assertSame(0, $row['overtime']);
+        $this->assertSame(1, $row['overtime_days']);
     }
 
     public function test_dashboard_summarizes_present_and_off_therapists_for_today(): void
@@ -2518,7 +2569,7 @@ class SalonOperationsTest extends TestCase
         $this->assertStringContainsString('Customer Log Aktivitas', $activity['description']);
     }
 
-    public function test_therapist_availability_reports_when_a_busy_therapist_is_ready_again(): void
+    public function test_therapist_availability_keeps_active_therapists_selectable_when_scheduled(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');
         $therapist = $this->employee('EMP-DITA');
@@ -2533,8 +2584,8 @@ class SalonOperationsTest extends TestCase
             ->json('employees');
         $dita = collect($availability)->firstWhere('id', $therapist->id);
 
-        $this->assertFalse($dita['available']);
-        $this->assertSame($date.' 12:00:00', $dita['conflicts'][0]['ready_at']);
+        $this->assertTrue($dita['available']);
+        $this->assertSame([], $dita['conflicts']);
     }
 
     private function createReservation(User $actor, array $items, array $overrides = []): TestResponse
