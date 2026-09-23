@@ -797,7 +797,7 @@ class SalonSnapshotService
         ];
     }
 
-    public function productsPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null): array
+    public function productsPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $stockSort = null): array
     {
         abort_unless($this->can($user, 'products.view'), 403);
 
@@ -813,7 +813,9 @@ class SalonSnapshotService
                         ->orWhere('product.category', 'like', $like);
                 });
             })
-            ->orderBy('product.name')
+            ->when($stockSort === 'lowest', fn ($builder) => $builder->orderBy('product.current_stock'))
+            ->when($stockSort === 'highest', fn ($builder) => $builder->orderByDesc('product.current_stock'))
+            ->when(! in_array($stockSort, ['lowest', 'highest'], true), fn ($builder) => $builder->orderBy('product.name'))
             ->orderBy('product.id');
         $paginator = $query->paginate(min(max($perPage, 10), 50), [
             'product.id',

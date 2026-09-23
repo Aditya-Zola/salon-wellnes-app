@@ -1414,7 +1414,7 @@ class SalonOperationsTest extends TestCase
             'purchase_unit_id' => $unitId,
             'usage_unit_id' => $unitId,
             'purchase_to_usage_factor' => 1,
-            'current_stock' => 10,
+            'current_stock' => $number,
             'minimum_stock' => 2,
             'selling_price' => 10000,
             'is_active' => true,
@@ -1438,6 +1438,16 @@ class SalonOperationsTest extends TestCase
             ->assertJsonCount(5, 'data')
             ->assertJsonPath('meta.current_page', 2)
             ->assertJsonPath('data.0.code', 'PAG-021');
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk?search=Barang%20Pagination&stock_sort=highest&per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.0.code', 'PAG-025');
+
+        $this->actingAs($this->admin)
+            ->getJson('/operasional/produk?search=Barang%20Pagination&stock_sort=lowest&per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonPath('data.0.code', 'PAG-001');
     }
 
     public function test_stock_history_page_and_export_controls_use_a_date_range(): void

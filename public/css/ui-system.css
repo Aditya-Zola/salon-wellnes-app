@@ -56,6 +56,10 @@
 .ui-shell main > header { height: auto; min-height: 96px; gap: 20px; margin: 0 -30px 26px; padding: 22px 30px; background: #fff; }
 .ui-shell main > header h1 { font-size: clamp(23px, 2vw, 28px); font-weight: 700; letter-spacing: -.045em; line-height: 1.2; }
 .ui-shell main > header p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
+.ui-shell .header-actions { align-items: center; }
+.ui-shell .jakarta-clock { display: grid; min-width: 150px; gap: 3px; color: var(--ui-muted); text-align: right; font-style: normal; font-variant-numeric: tabular-nums; }
+.ui-shell .jakarta-clock span { font-size: 10px; font-weight: 500; letter-spacing: .02em; }
+.ui-shell .jakarta-clock strong { color: var(--ui-ink); font-size: 13px; font-weight: 650; letter-spacing: .035em; }
 .ui-shell .page, .ui-shell .access-content { max-width: 1600px; margin-inline: auto; }
 .ui-shell .sidebar { z-index: 40; width: var(--ui-sidebar-width); padding: 28px 16px 16px; }
 .ui-shell .dashboard-brand { width: 160px; padding: 4px 8px 34px; }
@@ -113,6 +117,9 @@
 .ui-shell .access-grid { grid-template-columns: minmax(0,1fr); }
 .ui-shell :is(.access-card, .card, .analytics-card, .treatment-card, .stocktake-filters) { min-width: 0; }
 .ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions, .table-actions, .ui-header-actions) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions, .sales-filters) > :is(button, select, input:not([type="checkbox"]):not([type="radio"]), .page-search) { height: 44px; min-height: 44px; box-sizing: border-box; }
+.ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions) > .page-search { padding-block: 0; }
+.ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions) > .page-search input { height: 42px; min-height: 0 !important; }
 .ui-shell .empty-state { padding: 44px 22px !important; color: var(--ui-muted) !important; font-size: 13px; line-height: 1.7; }
 
 /* Buttons: one geometry, with role-based color rather than page-based color. */
@@ -382,6 +389,15 @@
 .ui-shell #stok-opname .stocktake-card { padding: 0; }
 .ui-shell #stok > .stock-list-toolbar { padding: 0; border: 0; background: transparent; box-shadow: none; }
 .ui-shell #stok > .stock-list-toolbar .stock-toolbar-actions { width: 100%; justify-content: flex-end; }
+.ui-shell #stok > .stock-list-toolbar .stock-toolbar-actions > :is(.page-search, .stock-sort-control, .secondary, .primary) { height: 56px !important; min-height: 56px !important; box-sizing: border-box; font-family: var(--font-sans); font-size: 13px; line-height: 1.3; }
+.ui-shell #stok > .stock-list-toolbar .page-search { flex: 0 0 308px; width: 308px; padding: 0 14px !important; }
+.ui-shell #stok > .stock-list-toolbar .page-search > .material-symbols-outlined { font-size: 18px; }
+.ui-shell #stok > .stock-list-toolbar .page-search input { height: auto !important; min-height: 0 !important; padding: 0 !important; font-family: var(--font-sans); font-size: 13px; font-weight: 400; line-height: 1.3; }
+.ui-shell #stok .stock-sort-control { display: flex; flex: 0 0 220px; align-items: center; gap: 9px; width: 220px; padding: 0 13px; border: 1px solid #d9cec5; border-radius: var(--ui-control-radius); background: #fff; color: var(--ui-brand); transition: border-color .16s ease, box-shadow .16s ease; }
+.ui-shell #stok .stock-sort-control:focus-within { border-color: #a37b5e; box-shadow: var(--ui-ring); }
+.ui-shell #stok .stock-sort-control img { width: 18px; height: 18px; opacity: .82; }
+.ui-shell #stok .stock-sort { min-width: 0; height: 54px; min-height: 0; flex: 1; padding: 0 28px 0 0; border: 0; border-radius: 0; background-color: transparent; color: var(--ui-text); font-family: var(--font-sans); font-size: 13px; font-weight: 400; line-height: 1.3; cursor: pointer; box-shadow: none; }
+.ui-shell #stok .stock-sort:focus { outline: 0; border: 0 !important; box-shadow: none !important; }
 .ui-shell .stocktake-overview article { border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); }
 .ui-shell .stocktake-card-head { padding: 22px; }
 .ui-shell .stocktake-card-head p { font-size: 12px; line-height: 1.6; }
@@ -394,10 +410,54 @@
 .ui-shell #stok .stock-table .tr.th span { white-space: nowrap; }
 .ui-shell #stok .stock-amount b { font-variant-numeric: tabular-nums; }
 .ui-shell #stok .stock-amount small { display: inline; margin: 0 0 0 3px; color: var(--ui-muted); font-size: 11px; font-weight: 600; text-transform: lowercase; }
+.ui-shell #stok .stock-amount { display: flex; align-items: center; gap: 7px; }
+.ui-shell #stok .stock-low-warning { flex: none; color: #c33434; font-size: 17px; line-height: 1; animation: stock-low-pulse 4s ease-in-out infinite; }
+.ui-shell #stok .stock-table .tr.stock-low-row { animation: stock-row-low-pulse 4s ease-in-out infinite; }
+.ui-shell #stok .stock-table .tr.stock-out-row { animation: stock-row-out-pulse 4s ease-in-out infinite; }
+.ui-shell #stok .stock-table .tr.stock-out-row .stock-amount:first-of-type b { color: #b52f2a; }
+@keyframes stock-low-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes stock-row-low-pulse { 0%, 100% { background: #fffaf9; } 50% { background: #fff0ee; } }
+@keyframes stock-row-out-pulse { 0%, 100% { background: #fff5f3; } 50% { background: #ffe4e1; } }
+@media (prefers-reduced-motion: reduce) {
+    .ui-shell #stok .stock-low-warning,
+    .ui-shell #stok .stock-table .tr.stock-low-row,
+    .ui-shell #stok .stock-table .tr.stock-out-row { animation: none; }
+    .ui-shell #stok .stock-table .tr.stock-low-row { background: #fff0ee; }
+    .ui-shell #stok .stock-table .tr.stock-out-row { background: #ffe4e1; }
+}
 .ui-shell #stok .product-row-actions .product-edit { min-width: 88px; }
 .ui-shell .calendar-event.status-scheduled { border-color: #decaba; border-left-color: var(--ui-brand); background: #f6ede5; }
 .ui-shell .calendar-event.status-scheduled :is(time,b,small) { color: #6e4e39; }
 .ui-shell .therapist-day-event.status-scheduled { --service-bg: #f6ede5; }
+.ui-shell .therapist-day-calendar { --calendar-slot-height: 42px; }
+.ui-shell .therapist-create-slot { position: relative; justify-self: start; width: calc(var(--slot-width) - 2px); min-height: 42px; margin-left: calc(var(--slot-left) + 1px); }
+.ui-shell .therapist-day-calendar .therapist-create-slot::after { opacity: 0; }
+.ui-shell .therapist-day-calendar .therapist-create-slot:hover::after,
+.ui-shell .therapist-day-calendar .therapist-create-slot:focus-visible::after { opacity: 1; transform: scale(1); }
+.ui-shell .therapist-day-event.is-therapist-slot { justify-self: start; width: calc(var(--event-width) - 5px); margin-right: 0; margin-left: calc(var(--event-left) + 3px); padding-inline: 4px; }
+.ui-shell .therapist-day-event.is-therapist-slot .calendar-event-treatment,
+.ui-shell .therapist-day-event.is-therapist-slot .calendar-event-main b,
+.ui-shell .therapist-day-event.is-therapist-slot .calendar-rest-label { display: none; }
+.ui-shell .therapist-day-event.is-therapist-slot .calendar-event-main time { padding-top: 2px; font-size: 10px; text-align: center; }
+.ui-shell .therapist-day-overflow { z-index: 4; align-self: stretch; justify-self: stretch; display: grid; place-content: center; gap: 2px; min-width: 0; margin: 3px 4px; border: 1px dashed #a997e9; border-radius: 7px; background: #f4f1ff; color: #563cc3; text-align: center; }
+.ui-shell .therapist-day-overflow strong { font-size: 13px; font-weight: 700; }
+.ui-shell .therapist-day-overflow small { font-size: 9px; font-weight: 600; }
+.ui-shell .reservation-detail-modal .modal-head { padding: 20px 26px; }
+.ui-shell .reservation-detail-modal .quick-info { padding: 12px 26px 8px; }
+.ui-shell .reservation-detail-modal .quick-info p { padding: 10px 0; font-size: 13px; }
+.ui-shell .reservation-detail-modal .reservation-detail-items { gap: 10px; padding: 0 26px 14px; }
+.ui-shell .reservation-detail-modal .reservation-item-card { padding: 13px 14px; border-radius: 10px; }
+.ui-shell .reservation-detail-modal .reservation-item-title { min-height: 24px; margin-bottom: 10px; }
+.ui-shell .reservation-detail-modal .reservation-item-title strong,
+.ui-shell .reservation-detail-modal .reservation-item-title > b { font-size: 13px; }
+.ui-shell .reservation-detail-modal .reservation-detail-meta { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin-bottom: 8px; }
+.ui-shell .reservation-detail-modal .reservation-detail-meta span { padding: 8px 10px; font-size: 10px; }
+.ui-shell .reservation-detail-modal .reservation-detail-meta b { margin-top: 2px; font-size: 12px; }
+.ui-shell .reservation-detail-modal .reservation-work-status { gap: 14px; padding: 8px 10px; }
+.ui-shell .reservation-detail-modal .reservation-work-status > span { min-width: 150px; }
+.ui-shell .reservation-detail-modal .reservation-work-status small { font-size: 10px; line-height: 1.45; }
+.ui-shell .reservation-detail-modal .reservation-work-status b { font-size: 12px; }
+.ui-shell .reservation-detail-modal footer { padding: 14px 26px; }
 .ui-shell :is(.calendar-week-hint, .calendar-day-head.is-today) { background: #f7f2ec; color: var(--ui-brand); }
 .ui-shell .calendar-nav { width: 36px; height: 40px; border-radius: 10px; }
 .ui-shell .calendar-period { flex-wrap: wrap; }
@@ -472,6 +532,24 @@
 .ui-shell .transaction-success-meta { display: grid; gap: 6px; margin-top: 8px; color: var(--ui-muted); font-size: 12px; }
 .ui-shell .transaction-success-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 24px 26px; }
 
+/* Dialog transaksi tetap potret, tetapi diringkas agar muat tanpa scrollbar. */
+@media (min-width: 701px) {
+    .ui-shell .transaction-success-modal { width: min(440px,calc(100vw - 48px)); max-height: none; overflow: visible; }
+    .ui-shell .transaction-success-body { min-height: 0; padding: 26px 22px 16px; }
+    .ui-shell .transaction-success-emblem { width: 60px; height: 60px; margin: 0 0 12px; }
+    .ui-shell .transaction-success-emblem svg { width: 40px; height: 40px; }
+    .ui-shell .transaction-success-body h2 { font-size: 20px; }
+    .ui-shell .transaction-success-body > p { margin: 6px 0; }
+    .ui-shell .transaction-success-meta { gap: 3px; margin-top: 3px; }
+    .ui-shell .transaction-success-body > .therapist-rating-panel { margin-top: 12px; padding: 10px; }
+    .ui-shell .therapist-rating-fields { gap: 6px; margin-top: 7px; }
+    .ui-shell .therapist-rating-field { padding: 7px; }
+    .ui-shell .therapist-rating-review textarea { min-height: 54px; }
+    .ui-shell .save-therapist-ratings { min-height: 34px; margin-top: 8px; }
+    .ui-shell .transaction-success-actions { gap: 10px; padding: 0 22px 18px; }
+    .ui-shell .success-print-button { min-height: 44px; }
+}
+
 /* Responsive rules stay centralized. Table content scrolls, the page does not. */
 @media (max-width: 1350px) {
     .ui-shell .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -497,6 +575,9 @@
     .ui-shell main > header { min-height: 84px; margin: 0 -16px 20px; padding: 19px 16px 19px 68px; }
     .ui-shell main > header h1 { font-size: 21px; }
     .ui-shell main > header p { font-size: 11px; }
+    .ui-shell .jakarta-clock { min-width: 0; }
+    .ui-shell .jakarta-clock span { display: none; }
+    .ui-shell .jakarta-clock strong { font-size: 11px; }
     .ui-shell .access-header { flex-wrap: wrap; }
     .ui-shell .sidebar, .ui-shell.sidebar-is-collapsed .sidebar { width: 272px; max-width: calc(100vw - 54px); padding: 26px 16px 16px; transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility .2s; z-index: 80; }
     .ui-shell.sidebar-mobile-open .sidebar { transform: translateX(0); visibility: visible; }
@@ -520,6 +601,10 @@
     .ui-shell .metrics strong { font-size: 22px; }
     .ui-shell :is(.page > .toolbar, .remuneration-toolbar) { padding: 18px; }
     .ui-shell :is(.page-toolbar-actions, .stock-toolbar-actions, .payroll-toolbar-actions, .stock-history-controls, .sales-filters) { width: 100%; }
+    .ui-shell #stok > .stock-list-toolbar .stock-toolbar-actions { align-items: stretch; flex-direction: column; }
+    .ui-shell #stok > .stock-list-toolbar .page-search,
+    .ui-shell #stok > .stock-list-toolbar .stock-sort-control,
+    .ui-shell #stok > .stock-list-toolbar .stock-sort { width: 100%; min-width: 0; flex-basis: auto; }
     .ui-shell .page-toolbar-actions > :is(label,button), .ui-shell .stock-toolbar-actions > button { flex: 1 1 auto; }
     .ui-shell .page-toolbar-actions .page-search { flex-basis: 100%; width: 100%; }
     .ui-shell :is(.filters, .finance-history-filters) > :is(input,select,label) { width: 100%; flex: 1 1 160px; }
