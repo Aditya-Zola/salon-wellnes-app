@@ -1216,6 +1216,7 @@ function resetCashier() {
     document.getElementById('subtotal').textContent = money(0);
     document.getElementById('discount-value').textContent = money(0);
     document.getElementById('grand-total').textContent = money(0);
+    document.getElementById('deposit-summary')?.setAttribute('hidden', '');
     document.getElementById('payment-total').textContent = money(0);
     document.getElementById('payment-description').textContent = 'Pilih transaksi';
     const customerName = document.getElementById('cashier-customer-name');
@@ -1338,6 +1339,16 @@ function selectCashier(id) {
     document.getElementById('subtotal').textContent = money(subtotal);
     document.getElementById('discount-value').textContent = `-${money(discountAmount)}`;
     document.getElementById('grand-total').textContent = money(total);
+    let depositSummary = document.getElementById('deposit-summary');
+    if (!depositSummary) {
+        depositSummary = document.createElement('p');
+        depositSummary.id = 'deposit-summary';
+        depositSummary.className = 'deposit-summary';
+        document.getElementById('grand-total')?.closest('p')?.after(depositSummary);
+    }
+    const depositPercent = total > 0 ? (depositAmount / total) * 100 : 0;
+    depositSummary.hidden = depositAmount <= 0;
+    depositSummary.innerHTML = `<span>Sudah DP <b>${depositPercent.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%</b></span><strong>${money(depositAmount)}</strong>`;
     document.getElementById('payment-total').textContent = money(remainingTotal);
     document.getElementById('payment-description').textContent = depositAmount > 0
         ? `${reservation.queue_number || reservation.booking_code} · DP ${money(depositAmount)} · Sisa ${money(remainingTotal)}`

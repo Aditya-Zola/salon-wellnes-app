@@ -276,6 +276,10 @@
 .ui-shell .totals hr { border: 0; border-top: 1px solid var(--ui-line); }
 .ui-shell .totals .grand { align-items: center; padding-top: 8px; }
 .ui-shell .totals .grand b { font-size: 28px; font-weight: 650; }
+.ui-shell .totals .deposit-summary { align-items: center; margin-top: 5px; padding: 9px 11px; border-radius: 8px; background: #eef8f1; color: #267550; font-size: 12px; }
+.ui-shell .totals .deposit-summary span { display: flex; gap: 4px; align-items: baseline; }
+.ui-shell .totals .deposit-summary b,
+.ui-shell .totals .deposit-summary strong { color: #176642; font-weight: 750; }
 .ui-shell #kasir .payment-row { padding: 18px; border-color: var(--ui-line); border-radius: 12px; }
 .ui-shell #kasir .payment-row-head { padding-bottom: 12px; }
 .ui-shell #kasir .payment-row label { font-size: 12px; }
