@@ -1071,7 +1071,7 @@ class SalonSnapshotService
                 'balance' => $income - $expense,
                 'entry_count' => $count,
                 'expense_categories' => $expenseCategories,
-                'payment_flows' => $this->paymentFlows($from, $to)->values()->all(),
+                'payment_flows' => $this->paymentFlows($from, $to, true)->values()->all(),
                 'cash_entries' => $this->cashEntries($from, $to, null)->all(),
             ],
             'profit_loss' => $this->profitLoss($from, $to),
@@ -1470,7 +1470,7 @@ class SalonSnapshotService
     private function balanceSheet(CarbonImmutable $to): array
     {
         $from = CarbonImmutable::parse('2000-01-01', config('app.timezone'));
-        $paymentFlows = $this->paymentFlows($from, $to);
+        $paymentFlows = $this->paymentFlows($from, $to, true);
         $manualEntries = DB::table('cash_entries')
             ->where('status', 'posted')
             ->whereNull('transaction_payment_id')
@@ -1547,7 +1547,7 @@ class SalonSnapshotService
      * dana yang keluar saat refund. Metode aktif tetap ditampilkan meski belum
      * ada transaksi agar nama rekening yang baru diatur langsung terlihat.
      */
-    private function paymentFlows(CarbonImmutable $from, CarbonImmutable $to): Collection
+    private function paymentFlows(CarbonImmutable $from, CarbonImmutable $to, bool $includeHistoricalMethods = false): Collection
     {
         $inflows = DB::table('transaction_payments as payment')
             ->join('transactions as transaction', 'transaction.id', '=', 'payment.transaction_id')
@@ -1574,9 +1574,20 @@ class SalonSnapshotService
             ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
             ->groupBy('refund_payment_method_id')
             ->pluck('total', 'refund_payment_method_id');
+        $usedMethodIds = $inflows->keys()
+            ->merge($outflows->keys())
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
         $methods = DB::table('payment_methods')
-            ->where('is_active', true)
-            ->whereNull('archived_at')
+            ->where(function ($query) use ($includeHistoricalMethods, $usedMethodIds): void {
+                $query->where(function ($active): void {
+                    $active->where('is_active', true)->whereNull('archived_at');
+                });
+                if ($includeHistoricalMethods && $usedMethodIds->isNotEmpty()) {
+                    $query->orWhereIn('id', $usedMethodIds->all());
+                }
+            })
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get([

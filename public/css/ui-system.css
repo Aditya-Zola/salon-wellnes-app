@@ -223,6 +223,15 @@
 .ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) small { font-size: 12px; }
 .ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) strong { font-size: 23px; font-weight: 600; }
 .ui-shell :is(.payment-revenue-item, .finance-payment-flow-row) span { font-size: 11px; }
+.ui-shell .finance-payment-flow-row { grid-template-columns:minmax(0,1fr); align-items:stretch; gap:16px; }
+.ui-shell .finance-payment-method b { color:var(--ui-text); font-size:13px; white-space:normal; }
+.ui-shell .finance-payment-method small { margin-top:4px; font-size:10px; line-height:1.45; white-space:normal; }
+.ui-shell .finance-payment-amounts { grid-template-columns:repeat(3,minmax(0,1fr)); width:100%; gap:12px; padding-top:13px; border-top:1px solid var(--ui-line); text-align:left; }
+.ui-shell .finance-payment-amounts > span { min-width:0; }
+.ui-shell .finance-payment-amounts small { font-size:10px; }
+.ui-shell .finance-payment-amounts :is(b,strong) { display:block; margin-top:4px; font-size:13px; font-weight:650; white-space:nowrap; }
+.ui-shell .finance-payment-amounts .finance-payment-net { text-align:right; }
+.ui-shell .finance-payment-amounts .finance-payment-net strong { color:var(--ui-brand); }
 .ui-shell .analytics-period { padding: 5px 8px; background: var(--ui-soft); border-radius: 6px; color: #84715f; font-size: 10px; letter-spacing: .06em; }
 .ui-shell #dashboard .analytics-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .ui-shell #dashboard .revenue-analytics { grid-column: 1 / -1; }
@@ -371,6 +380,8 @@
 .ui-shell .therapist-attendance-calendar-day:nth-child(7n + 1) .therapist-attendance-calendar-tooltip,
 .ui-shell .therapist-attendance-calendar-day:nth-child(7n + 2) .therapist-attendance-calendar-tooltip { left: 0; transform: translate(0,0); }
 .ui-shell #stok-opname .stocktake-card { padding: 0; }
+.ui-shell #stok > .stock-list-toolbar { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.ui-shell #stok > .stock-list-toolbar .stock-toolbar-actions { width: 100%; justify-content: flex-end; }
 .ui-shell .stocktake-overview article { border-radius: var(--ui-radius); box-shadow: var(--ui-shadow); }
 .ui-shell .stocktake-card-head { padding: 22px; }
 .ui-shell .stocktake-card-head p { font-size: 12px; line-height: 1.6; }
