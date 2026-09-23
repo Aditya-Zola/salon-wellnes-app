@@ -690,6 +690,7 @@ class SalonController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
             'search' => ['nullable', 'string', 'max:100'],
+            'stock_sort' => ['nullable', 'in:lowest,highest'],
         ]);
 
         return response()->json($this->snapshots->productsPage(
@@ -697,6 +698,7 @@ class SalonController extends Controller
             (int) ($data['page'] ?? 1),
             (int) ($data['per_page'] ?? 20),
             $data['search'] ?? null,
+            $data['stock_sort'] ?? null,
         ));
     }
 

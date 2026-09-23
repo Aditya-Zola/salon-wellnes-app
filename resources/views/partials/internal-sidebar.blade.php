@@ -48,6 +48,7 @@
                 ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
                 ['page' => 'penggajian', 'label' => 'Penggajian'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
+                ['page' => 'penilaian-terapis', 'label' => 'Penilaian Terapis', 'permission' => 'employees.view'],
             ],
         ],
     ];
@@ -70,10 +71,12 @@
                         </summary>
                         <div class="access-submenu">
                             @foreach ($module['children'] as $child)
+                                @if (empty($child['permission']) || $user->can($child['permission']))
                                 @if ($isDashboard)
                                     <button type="button" data-page="{{ $child['page'] }}">{{ $child['label'] }}</button>
                                 @else
                                     <a href="{{ route('dashboard') }}#{{ $child['page'] }}">{{ $child['label'] }}</a>
+                                @endif
                                 @endif
                             @endforeach
                         </div>

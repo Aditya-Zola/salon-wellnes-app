@@ -34,6 +34,8 @@ const canRefundSales = Boolean(capabilities.refund_sales);
 const canViewMemberships = Boolean(capabilities.view_memberships);
 const canManageTherapistAttendance = Boolean(capabilities.manage_therapist_attendance);
 const canProcessCashier = Boolean(capabilities.process_cashier);
+const canStocktakeProducts = Boolean(capabilities.stocktake_products);
+const canUpdateProducts = Boolean(capabilities.update_products);
 const headerStatusLabels = {
     paid: 'Lunas',
     scheduled: 'Terjadwal',
@@ -120,6 +122,7 @@ const copy = {
     penggajian: ['Penggajian', 'Komponen gaji per karyawan dan periode'],
     remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
     'arsip-remunerasi': ['Arsip Remunerasi', 'Riwayat hasil final per tahun dan bulan'],
+    'penilaian-terapis': ['Penilaian Terapis', 'Peringkat dan ulasan pelanggan terbaru untuk setiap terapis'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
@@ -190,7 +193,7 @@ function confirmAction({
                 <p id="action-confirm-message">${escapeHtml(message)}</p>
             </div>
             <div class="action-confirm-actions">
-                <button type="button" class="secondary action-confirm-cancel">Kembali</button>
+                <button type="button" class="secondary action-confirm-cancel">Batal</button>
                 <button type="button" class="primary action-confirm-submit"><span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(icon)}</span>${escapeHtml(confirmLabel)}</button>
             </div>
         </section>`;
@@ -930,6 +933,7 @@ function renderReservations() {
                 ? serviceProviders().filter((employee) => Number(employee.id) === selectedEmployee)
                 : serviceProviders();
             const dailyTherapists = therapists.length ? therapists : serviceProviders();
+            const therapistSlotCapacity = 3;
             const dayRows = calendarReservations.filter((entry) => reservationItemDate(entry.item, entry.reservation) === selectedDate);
             const offTherapistIds = therapistAttendanceDate === selectedDate
                 ? therapistAttendance.filter((therapist) => therapist.status === 'off').map((therapist) => Number(therapist.employee_id))
@@ -959,37 +963,73 @@ function renderReservations() {
                 const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
                 return `<div class="therapist-day-time" style="grid-column:1;grid-row:${slot + 2}">${slot % 2 === 0 ? time.replace(':', '.') : ''}</div>`;
             }).join('');
-            const dailySlots = dailyTherapists.flatMap((employee, index) => slots.map((slot) => {
+            const dailySlots = dailyTherapists.flatMap((employee, index) => slots.flatMap((slot) => {
                 const minutes = openingMinutes + (slot * 30);
                 const time = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
                 const isOff = offTherapistIds.includes(Number(employee.id));
                 if (isOff) return `<div class="therapist-off-slot" aria-hidden="true" style="grid-column:${index + 2};grid-row:${slot + 2}"></div>`;
                 if (!canCreateReservations) return `<div class="therapist-grid-slot" aria-hidden="true" style="grid-column:${index + 2};grid-row:${slot + 2}"></div>`;
-                return `<button type="button" class="therapist-create-slot" data-date="${selectedDate}" data-time="${time}" data-employee-id="${Number(employee.id)}" aria-label="Tambah reservasi ${escapeHtml(employee.name)}, ${time}" style="grid-column:${index + 2};grid-row:${slot + 2}"></button>`;
+                return Array.from({ length: therapistSlotCapacity }, (_, lane) => `<button type="button" class="therapist-create-slot" data-date="${selectedDate}" data-time="${time}" data-employee-id="${Number(employee.id)}" aria-label="Tambah reservasi ${escapeHtml(employee.name)}, ${time}, jalur ${lane + 1}" style="grid-column:${index + 2};grid-row:${slot + 2};--slot-left:${(lane / therapistSlotCapacity) * 100}%;--slot-width:${100 / therapistSlotCapacity}%"></button>`).join('');
             })).join('');
             const offColumnShades = dailyTherapists.map((employee, index) => (
                 offTherapistIds.includes(Number(employee.id))
                     ? `<div class="therapist-off-column" aria-hidden="true" style="grid-column:${index + 2};grid-row:2 / -1"></div>`
                     : ''
             )).join('');
-            const dailyEvents = dayRows.flatMap(({ reservation, item, itemIndex, timing, start, end }) => {
-                const staff = itemStaff(item);
-                return staff.map((assignment) => {
+            const therapistEvents = new Map(dailyTherapists.map((employee, index) => [Number(employee.id), { index, items: [] }]));
+            dayRows.forEach(({ reservation, item, itemIndex, timing, start, end }) => {
+                itemStaff(item).forEach((assignment) => {
                     const employeeId = Number(assignment.employee_id ?? assignment.employee?.id ?? assignment.id);
-                    const therapistIndex = dailyTherapists.findIndex((employee) => Number(employee.id) === employeeId);
-                    if (therapistIndex < 0) return '';
-                    const status = reservationCalendarStatus(reservation);
-                    const startRow = Math.max(2, Math.floor((start - openingMinutes) / 30) + 2);
-                    const span = Math.max(1, Math.ceil((end - start) / 30));
-                    const serviceRatio = 100;
-                    const staffName = employeeName(assignment);
-                    const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staffName}`;
-                    return `<button type="button" class="calendar-event therapist-day-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--service-ratio:${serviceRatio}%"><span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(timing.endLabel)}</span></button>`;
+                    const bucket = therapistEvents.get(employeeId);
+                    if (!bucket) return;
+                    bucket.items.push({ reservation, item, itemIndex, timing, start, end, assignment });
+                });
+            });
+            const renderTherapistEvent = (entry, therapistIndex, lane = 0, laneCount = 1) => {
+                const status = reservationCalendarStatus(entry.reservation);
+                const startRow = Math.max(2, Math.floor((entry.start - openingMinutes) / 30) + 2);
+                const span = Math.max(1, Math.ceil((entry.end - entry.start) / 30));
+                const staffName = employeeName(entry.assignment);
+                const ariaLabel = `${entry.timing.startLabel} sampai ${entry.timing.endLabel}, ${reservationCustomerName(entry.reservation)}, ${itemTreatmentName(entry.item)}, therapist ${staffName}`;
+                const concurrentClass = ' is-therapist-slot';
+                const eventLeft = (lane / laneCount) * 100;
+                const eventWidth = 100 / laneCount;
+                return `<button type="button" class="calendar-event therapist-day-event${concurrentClass} ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(entry.reservation.id)}" data-item-index="${entry.itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--event-left:${eventLeft}%;--event-width:${eventWidth}%;--service-ratio:100%"><span class="calendar-event-main"><time>${escapeHtml(entry.timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(entry.reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(entry.item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(entry.timing.endLabel)}</span></button>`;
+            };
+            const dailyEvents = Array.from(therapistEvents.values()).flatMap(({ index, items }) => {
+                const ordered = items.slice().sort((first, second) => first.start - second.start || first.end - second.end);
+                const groups = [];
+                ordered.forEach((entry) => {
+                    const current = groups.at(-1);
+                    if (!current || entry.start >= current.end) {
+                        groups.push({ end: entry.end, entries: [entry] });
+                        return;
+                    }
+                    current.end = Math.max(current.end, entry.end);
+                    current.entries.push(entry);
+                });
+                return groups.flatMap((group) => {
+                    const laneEnds = [];
+                    const laidOut = group.entries.map((entry) => {
+                        let lane = laneEnds.findIndex((laneEnd) => laneEnd <= entry.start);
+                        if (lane < 0) lane = laneEnds.length;
+                        laneEnds[lane] = entry.end;
+                        return { entry, lane };
+                    });
+                    const laneCount = laneEnds.length;
+                    if (laneCount > therapistSlotCapacity) {
+                        const start = Math.min(...group.entries.map((entry) => entry.start));
+                        const end = Math.max(...group.entries.map((entry) => entry.end));
+                        const startRow = Math.max(2, Math.floor((start - openingMinutes) / 30) + 2);
+                        const span = Math.max(1, Math.ceil((end - start) / 30));
+                        return `<div class="therapist-day-overflow" role="status" aria-label="${laneCount} treatment bersamaan" style="grid-column:${index + 2};grid-row:${startRow} / span ${span}"><strong>${laneCount} terapi</strong><small>bersamaan</small></div>`;
+                    }
+                    return laidOut.map(({ entry, lane }) => renderTherapistEvent(entry, index, lane, therapistSlotCapacity));
                 });
             }).join('');
             const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty">Belum ada therapist aktif untuk ditampilkan.</p>';
             calendar.setAttribute('aria-label', 'Kalender harian per therapist');
-            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik <strong>+</strong> pada slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${offColumnShades}${dailyEvents}</div>`;
+            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${offColumnShades}${dailyEvents}</div>`;
         }
         bindReservationCalendarTooltips(calendar, all);
         bindReservationCalendarCreateSlots(calendar);
@@ -1125,7 +1165,7 @@ function openReservationDetail(reservation) {
     const paid = isAlreadyPaid(reservation);
     const serviceStatus = reservationQueueStatus(reservation);
     const paymentStatus = reservationPaymentLabel(reservation);
-    wrapper.innerHTML = `<div class="modal-box reservation-modal-box">
+    wrapper.innerHTML = `<div class="modal-box reservation-modal-box reservation-detail-modal">
         <div class="modal-head">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
             <button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
@@ -1681,8 +1721,10 @@ function openReceiptPrintChoice(receipt, options = {}) {
         wrapper.querySelector('.transaction-success-body')?.insertAdjacentHTML('beforeend', ratingPanel);
     }
     wrapper.querySelectorAll('.therapist-rating-field').forEach((field) => {
-        const syncStars = (animate = false) => {
-            const selected = Number(field.querySelector('input:checked')?.value || 0);
+        const syncStars = (animate = false, selectedValue = null) => {
+            const selected = selectedValue === null
+                ? Number(field.querySelector('input:checked')?.value || 0)
+                : Number(selectedValue);
             field.querySelectorAll('.therapist-rating-choice').forEach((choice) => {
                 const value = Number(choice.querySelector('input')?.value || 0);
                 choice.classList.toggle('is-filled', value > 0 && value <= selected);
@@ -1696,7 +1738,7 @@ function openReceiptPrintChoice(receipt, options = {}) {
 
         syncStars();
         field.querySelectorAll('input[type="radio"]').forEach((input) => {
-            input.addEventListener('change', () => syncStars(true));
+            input.addEventListener('change', () => syncStars(true, input.value));
         });
     });
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
@@ -1734,17 +1776,18 @@ function openReceiptPrintChoice(receipt, options = {}) {
 function openTherapistReviews(therapist) {
     const reviews = array(therapist.reviews);
     const stars = (value) => Array.from({ length: 5 }, (_, index) => `<i class="material-symbols-outlined${index < Number(value || 0) ? ' filled' : ''}" aria-hidden="true">star</i>`).join('');
-    const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal therapist-review-overlay';
-    wrapper.innerHTML = `<section class="modal-box small therapist-review-modal" role="dialog" aria-modal="true" aria-labelledby="therapist-review-title">
-        <div class="modal-head"><div><h2 id="therapist-review-title">Review ${escapeHtml(therapist.name)}</h2><p>Ulasan rating pada bulan berjalan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-        <div class="therapist-review-list">${reviews.length ? reviews.map((review) => `<article class="therapist-review-item"><div><span class="therapist-review-stars">${stars(review.stars)}</span><time>${escapeHtml(formatTransactionDate(review.rated_at))}</time></div><p>${escapeHtml(review.review)}</p></article>`).join('') : '<p class="empty-state">Belum ada review tertulis untuk therapist ini pada bulan berjalan.</p>'}</div>
-    </section>`;
-    document.body.appendChild(wrapper);
-    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
-    wrapper.addEventListener('click', (event) => {
-        if (event.target === wrapper) wrapper.remove();
-    });
+    const title = document.getElementById('therapist-review-panel-title');
+    const subtitle = document.getElementById('therapist-review-panel-subtitle');
+    const list = document.getElementById('therapist-live-review-list');
+    if (!list) return;
+
+    openPage('penilaian-terapis');
+    if (title) title.textContent = `Review ${therapist.name || 'terapis'}`;
+    if (subtitle) subtitle.textContent = `${reviews.length} ulasan tertulis pada bulan berjalan.`;
+    list.innerHTML = reviews.length
+        ? reviews.map((review) => `<article class="therapist-selected-review"><header><span class="therapist-review-stars">${stars(review.stars)}</span><time>${escapeHtml(formatTransactionDate(review.rated_at))}</time></header><p>${escapeHtml(review.review)}</p><small>${Number(review.stars || 0)} dari 5 bintang</small></article>`).join('')
+        : '<p class="empty-state">Belum ada review tertulis untuk terapis ini pada bulan berjalan.</p>';
+    list.scrollTop = 0;
 }
 
 function commissionPercentValue(value) {
@@ -2102,13 +2145,20 @@ async function loadMembersPage(page = 1) {
 
 function renderStock() {
     const query = document.getElementById('stock-search')?.value.trim().toLowerCase() || '';
-    const products = productPageState
+    const stockSort = document.getElementById('stock-sort')?.value || '';
+    const products = (productPageState
         ? array(productPageState.data)
         : array(state.products).filter((product) => !query || [
             product.name,
             product.category,
             product.code,
-        ].some((value) => String(value || '').toLowerCase().includes(query)));
+        ].some((value) => String(value || '').toLowerCase().includes(query))))
+        .slice()
+        .sort((first, second) => {
+            if (stockSort === 'lowest') return productStock(first) - productStock(second);
+            if (stockSort === 'highest') return productStock(second) - productStock(first);
+            return 0;
+        });
     const movements = stockHistoryPageState
         ? array(stockHistoryPageState.data)
         : array(state.stock_movements);
@@ -2125,13 +2175,18 @@ function renderStock() {
             const minimum = productMinimum(product);
             const unit = productUnit(product);
             const unitLabel = String(unit || 'unit').toLowerCase();
-            return `<div class="tr">
+            const stockWarningLabel = stock <= 0 ? 'Stok habis' : 'Stok menipis';
+            const stockWarning = stock <= minimum
+                ? `<span class="material-symbols-outlined stock-low-warning" role="img" aria-label="${stockWarningLabel}" title="${stockWarningLabel}">warning</span>`
+                : '';
+            const stockRowClass = stock <= 0 ? ' stock-out-row' : (stock <= minimum ? ' stock-low-row' : '');
+            return `<div class="tr${stockRowClass}">
                 <span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || '-')}</small></span>
-                <span class="stock-amount"><b>${formatStockQuantity(stock)} <small>${escapeHtml(unitLabel)}</small></b></span>
+                <span class="stock-amount"><b>${formatStockQuantity(stock)} <small>${escapeHtml(unitLabel)}</small></b>${stockWarning}</span>
                 <span class="stock-amount"><b>${formatStockQuantity(minimum)} <small>${escapeHtml(unitLabel)}</small></b></span>
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
                 <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unitLabel)}</small></span>
-                <span class="product-row-actions"><button type="button" class="product-edit ui-action-edit" data-id="${Number(product.id)}" aria-label="Edit produk ${escapeHtml(product.name)}" title="Edit produk"><span class="material-symbols-outlined" aria-hidden="true">edit</span><span>Edit</span></button></span>
+                <span class="product-row-actions">${canUpdateProducts || canStocktakeProducts ? `<button type="button" class="product-action-trigger" data-id="${Number(product.id)}" aria-haspopup="menu" aria-expanded="false"><span>Aksi</span><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button><span class="product-action-menu" role="menu" hidden>${canUpdateProducts ? `<button type="button" class="product-edit" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit produk</button>` : ''}${canStocktakeProducts ? `<button type="button" class="product-stock-in product-stock-action" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">add_box</span>Stok masuk</button><button type="button" class="product-stock-out product-stock-action" data-id="${Number(product.id)}" role="menuitem" ${stock > 0 ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">remove_shopping_cart</span>Stok keluar</button>` : ''}</span>` : '<span>-</span>'}</span>
             </div>`;
         }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
     }
@@ -2172,14 +2227,36 @@ function renderStock() {
         if (!product) return;
         button.onclick = () => openProductEdit(product);
     });
+    document.querySelectorAll('.product-action-trigger').forEach((button) => {
+        button.onclick = (event) => {
+            event.stopPropagation();
+            const menu = button.nextElementSibling;
+            const willOpen = menu?.hidden;
+            document.querySelectorAll('.product-action-menu').forEach((item) => { item.hidden = true; });
+            document.querySelectorAll('.product-action-trigger').forEach((item) => item.setAttribute('aria-expanded', 'false'));
+            if (menu && willOpen) {
+                menu.hidden = false;
+                button.setAttribute('aria-expanded', 'true');
+            }
+        };
+    });
+    document.querySelectorAll('.product-stock-in,.product-stock-out').forEach((button) => {
+        const product = products.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (!product) return;
+        button.onclick = () => (button.classList.contains('product-stock-in')
+            ? openProductStocktakeForm(product)
+            : openStockReductionForm(product));
+    });
 }
 
 async function loadProductsPage(page = 1) {
     if (!canViewProducts) return;
 
     const search = document.getElementById('stock-search')?.value.trim() || '';
+    const stockSort = document.getElementById('stock-sort')?.value || '';
     const params = new URLSearchParams({ page: String(page), per_page: '20' });
     if (search) params.set('search', search);
+    if (stockSort) params.set('stock_sort', stockSort);
     productPageState = await api(`/operasional/produk?${params.toString()}`);
     renderStock();
 }
@@ -2340,18 +2417,34 @@ async function submitStocktake(event) {
     }
 }
 
-function openStockReductionForm() {
+function openProductStocktakeForm(product) {
+    if (!product) return;
+    quickForm(`Stok masuk: ${product.name}`, [
+        ['quantity', `Jumlah masuk (${productUnit(product)})`, 'number', null, ''],
+        ['notes', 'Catatan (opsional)', 'text', null, ''],
+    ], (data) => api(`/operasional/produk/${Number(product.id)}/stok`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+            type: 'masuk',
+            quantity: String(data.quantity || '').trim(),
+            source: 'Stok masuk',
+            notes: String(data.notes || '').trim() || null,
+        }),
+    }));
+}
+
+function openStockReductionForm(selectedProduct = null) {
     const products = stocktakeProducts()
         .filter((product) => productStock(product) > 0)
         .sort((first, second) => String(first.name).localeCompare(String(second.name), 'id'));
-    if (!products.length) {
+    const product = selectedProduct || products[0];
+    if (!product || productStock(product) <= 0) {
         toast('Tidak ada produk dengan stok yang dapat dikurangi.', true);
         return;
     }
 
-    quickForm('Pengurangan stok', [
-        ['product_id', 'Produk', 'select', products.map((product) => `${product.id}|${product.name} · tersedia ${formatStockQuantity(productStock(product))} ${productUnit(product)}`)],
-        ['quantity', 'Jumlah keluar', 'number', null, ''],
+    quickForm(`Stok keluar: ${product.name}`, [
+        ['quantity', `Jumlah keluar (${productUnit(product)})`, 'number', null, ''],
         ['source', 'Alasan', 'select', ['Rusak / kedaluwarsa', 'Hilang', 'Pemakaian internal', 'Sampel / tester', 'Lainnya']],
         ['notes', 'Deskripsi alasan', 'text', null, ''],
     ], async (data) => {
@@ -2359,7 +2452,7 @@ function openStockReductionForm() {
             throw new Error('Deskripsi alasan minimal 3 karakter.');
         }
 
-        return api(`/operasional/produk/${Number(data.product_id)}/stok`, {
+        return api(`/operasional/produk/${Number(product.id)}/stok`, {
             method: 'PATCH',
             body: JSON.stringify({
                 type: 'keluar',
@@ -4037,8 +4130,11 @@ function renderDashboard() {
         </div><div class="therapist-attendance-status present"><div><i class="material-symbols-outlined" aria-hidden="true">check</i><b>Hadir</b></div><p>${names(present)}</p></div><div class="therapist-attendance-status off"><div><i class="material-symbols-outlined" aria-hidden="true">hotel</i><b>Libur</b></div><p>${names(off)}</p></div>`;
     }
 
-    const therapistRatingList = document.getElementById('therapist-rating-list');
-    if (therapistRatingList) {
+    const therapistRatingLists = [
+        document.getElementById('therapist-rating-list'),
+        document.getElementById('therapist-rating-page-list'),
+    ].filter(Boolean);
+    if (therapistRatingLists.length) {
         const ratings = array(dashboard.therapist_rating_summary_current_month);
         const quality = (average) => {
             if (Number(average) >= 4.5) return ['Sangat baik', 'professional'];
@@ -4046,7 +4142,7 @@ function renderDashboard() {
             return ['Perlu evaluasi', 'poor'];
         };
         const stars = (average) => Array.from({ length: 5 }, (_, index) => `<i class="material-symbols-outlined${index < Math.round(Number(average || 0)) ? ' filled' : ''}" aria-hidden="true">star</i>`).join('');
-        therapistRatingList.innerHTML = ratings.length
+        const markup = ratings.length
             ? ratings.map((therapist, index) => {
                 const [label, tone] = quality(therapist.average);
                 const score = Math.max(0, Math.min(100, (Number(therapist.average || 0) / 5) * 100));
@@ -4054,9 +4150,13 @@ function renderDashboard() {
                 return `<article class="therapist-rating-summary"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews ui-action-view" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
             }).join('')
             : '<p class="empty-state">Belum ada rating therapist pada bulan ini.</p>';
-        therapistRatingList.querySelectorAll('[data-therapist-review-index]').forEach((button) => {
-            button.addEventListener('click', () => openTherapistReviews(ratings[Number(button.dataset.therapistReviewIndex)]));
+        therapistRatingLists.forEach((list) => {
+            list.innerHTML = markup;
+            list.querySelectorAll('[data-therapist-review-index]').forEach((button) => {
+                button.addEventListener('click', () => openTherapistReviews(ratings[Number(button.dataset.therapistReviewIndex)]));
+            });
         });
+
     }
 }
 
@@ -4642,6 +4742,16 @@ async function submitReservation(payload) {
     const form = document.getElementById('reservation-form');
     const submit = form?.querySelector('button[type="submit"], footer .primary');
     const openInCashier = reservationLaunchContext === 'cashier';
+    const missingTherapistIndex = array(payload.items).findIndex((item) => (
+        !array(item.staff).length || array(item.staff).some((staff) => Number(staff.employee_id) <= 0)
+    ));
+    if (missingTherapistIndex >= 0) {
+        const therapistSelect = document.querySelectorAll('#reservation-items .item-employee')[missingTherapistIndex];
+        toast('Pilih terapis terlebih dahulu untuk setiap treatment.', true);
+        therapistSelect?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        therapistSelect?.focus({ preventScroll: true });
+        return;
+    }
     if (submit) submit.disabled = true;
     try {
         const result = await api(openInCashier ? '/operasional/kasir/transaksi' : '/operasional/reservasi', {
@@ -4665,7 +4775,11 @@ async function submitReservation(payload) {
             pendingReservationPayload = payload;
             showConflictPanel(error);
         } else {
-            toast(error.message, true);
+            const hasTherapistValidationError = Object.keys(error.data?.errors || {})
+                .some((key) => /items\.\d+\.staff\.\d+\.employee_id/.test(key));
+            toast(hasTherapistValidationError
+                ? 'Terapis yang dipilih tidak tersedia. Silakan pilih terapis kembali.'
+                : error.message, true);
         }
     } finally {
         if (submit) submit.disabled = false;
@@ -5386,6 +5500,7 @@ document.getElementById('product-import-file')?.addEventListener('change', (even
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
 document.getElementById('open-remuneration-archives')?.addEventListener('click', () => openPage('arsip-remunerasi'));
+document.querySelector('.open-therapist-ratings')?.addEventListener('click', () => openPage('penilaian-terapis'));
 document.getElementById('back-to-remuneration')?.addEventListener('click', () => openPage('remunerasi'));
 document.getElementById('remuneration-archive-year')?.addEventListener('change', () => loadRemunerationArchives().catch((error) => toast(error.message, true)));
 document.getElementById('finalize-remuneration')?.addEventListener('click', confirmRemunerationArchive);
@@ -5819,12 +5934,6 @@ document.addEventListener('click', async (event) => {
     }
 });
 
-document.getElementById('open-stocktake')?.addEventListener('click', () => {
-    renderStocktake();
-    openPage('stok-opname');
-    requestAnimationFrame(() => document.getElementById('stocktake-search')?.focus());
-});
-document.getElementById('open-stock-reduction')?.addEventListener('click', openStockReductionForm);
 document.getElementById('stocktake-back')?.addEventListener('click', () => openPage('stok'));
 document.getElementById('stocktake-reset')?.addEventListener('click', () => {
     stocktakeDraft.clear();
@@ -5837,6 +5946,10 @@ document.getElementById('stocktake-category')?.addEventListener('change', render
 
 document.addEventListener('click', (event) => {
     if (event.target.closest('.go-stock-alerts')) openPage('stok');
+    if (!event.target.closest('.product-row-actions')) {
+        document.querySelectorAll('.product-action-menu').forEach((menu) => { menu.hidden = true; });
+        document.querySelectorAll('.product-action-trigger').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+    }
 });
 
 document.getElementById('treatment-search')?.addEventListener('input', renderTreatments);
@@ -5844,6 +5957,36 @@ document.getElementById('stock-search')?.addEventListener('input', () => {
     clearTimeout(productSearchTimer);
     productSearchTimer = setTimeout(() => loadProductsPage(1).catch((error) => toast(error.message, true)), 250);
 });
+document.getElementById('stock-sort')?.addEventListener('change', () => {
+    loadProductsPage(1).catch((error) => toast(error.message, true));
+});
+
+function updateJakartaClock() {
+    const clock = document.getElementById('jakarta-clock');
+    const dateBox = document.getElementById('jakarta-clock-date');
+    const timeBox = document.getElementById('jakarta-clock-time');
+    if (!clock || !dateBox || !timeBox) return;
+
+    const now = new Date();
+    dateBox.textContent = new Intl.DateTimeFormat('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    }).format(now);
+    timeBox.textContent = `${new Intl.DateTimeFormat('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).format(now).replaceAll('.', ':')} WIB`;
+    clock.dateTime = now.toISOString();
+}
+
+updateJakartaClock();
+window.setInterval(updateJakartaClock, 1000);
 
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') document.querySelector('.modal.open')?.classList.remove('open');

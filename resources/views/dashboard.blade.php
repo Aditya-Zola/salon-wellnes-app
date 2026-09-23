@@ -33,7 +33,7 @@
         @cannot('treatments.create') #treatment .toolbar>.primary{display:none!important} @endcannot
         @cannot('memberships.manage') #membership .membership-manage{display:none!important} @endcannot
         @cannot('products.create') #open-product,#open-product-import{display:none!important} @endcannot
-        @cannot('products.stocktake') #open-stocktake,#stok-opname{display:none!important} @endcannot
+        @cannot('products.stocktake') #stok-opname,.product-stock-action{display:none!important} @endcannot
         @cannot('payroll.manage') #open-payroll,#remuneration-schedule,.remuneration-status{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
         @cannot('treatments.update') .recipe-button,.commission-edit{display:none!important} @endcannot
@@ -47,7 +47,7 @@
     @include('partials.internal-sidebar')
 
     <main>
-        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div></div></header>
+        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><time class="jakarta-clock" id="jakarta-clock" aria-label="Waktu Jakarta"><span id="jakarta-clock-date">--</span><strong id="jakarta-clock-time">--.--.-- WIB</strong></time><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div></div></header>
 
         <section class="page active" id="dashboard">
             <div class="welcome"><div><small id="dashboard-welcome-date">OPERASIONAL HARI INI</small><h2>Selamat datang, {{ auth()->user()->name }}.</h2><p id="dashboard-welcome-summary">Ringkasan aktivitas dan layanan salon hari ini.</p></div></div>
@@ -72,7 +72,7 @@
                 <section class="dashboard-operational-item dashboard-therapist-attendance"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
             </div>
             @can('employees.view')
-                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Penilaian therapist</h3><p>Rekap bulan berjalan dari rating setelah transaksi kasir.</p></div><span class="analytics-period">BULAN INI</span></div><div class="therapist-rating-list" id="therapist-rating-list"></div></article>
+                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Penilaian terapis</h3><p>Rekap bulan berjalan dari rating setelah transaksi kasir.</p></div><button type="button" class="link open-therapist-ratings">Lihat semua →</button></div><div class="therapist-rating-list" id="therapist-rating-list"></div></article>
             @endcan
         </section>
 
@@ -168,8 +168,7 @@
                 <div class="stock-toolbar-actions">
                     <div id="stock-list-actions" class="stock-action-group">
                         <label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stock-search" type="search" placeholder="Cari produk..." aria-label="Cari produk"></label>
-                        <button class="secondary" id="open-stocktake"><span class="material-symbols-outlined" aria-hidden="true">inventory</span> Stok opname</button>
-                        <button class="secondary" id="open-stock-reduction"><span class="material-symbols-outlined" aria-hidden="true">remove_shopping_cart</span> Pengurangan stok</button>
+                        <label class="stock-sort-control"><img src="/icons/filter-rectangle.svg" alt="" aria-hidden="true"><select id="stock-sort" class="stock-sort" aria-label="Filter produk berdasarkan jumlah stok"><option value="">Filter produk</option><option value="lowest">Stok terendah</option><option value="highest">Stok terbanyak</option></select></label>
                         <button class="secondary" id="open-product-import"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> Import Excel</button>
                         <button class="primary" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
                     </div>
@@ -262,6 +261,21 @@
             <div class="notice">ⓘ Tanggal gajian dan cutoff hanya penanda periode. Sistem tidak menghapus atau mereset gaji, komisi, bonus, maupun keterlambatan.</div>
         </section>
 
+        @can('employees.view')
+        <section class="page therapist-rating-page" id="penilaian-terapis">
+            <div class="therapist-rating-page-grid">
+                <article class="card therapist-rating-board">
+                    <div class="card-head"><div><h3>Rating terapis</h3><p>Peringkat berdasarkan penilaian pelanggan bulan berjalan.</p></div><span class="analytics-period">BULAN INI</span></div>
+                    <div class="therapist-rating-list" id="therapist-rating-page-list"></div>
+                </article>
+                <aside class="card therapist-live-reviews">
+                    <div class="card-head"><div><h3 id="therapist-review-panel-title">Detail review</h3><p id="therapist-review-panel-subtitle">Pilih terapis di sebelah kiri untuk melihat ulasannya.</p></div></div>
+                    <div class="therapist-live-window" aria-live="polite"><div id="therapist-live-review-list"><p class="empty-state">Belum ada terapis yang dipilih.</p></div></div>
+                </aside>
+            </div>
+        </section>
+        @endcan
+
         <section class="page remuneration-archive-page" id="arsip-remunerasi">
             <div class="remuneration-archive-toolbar card">
                 <div><h3>Arsip Remunerasi</h3><p>Hasil final tersimpan dan tidak dihitung ulang dari data sumber.</p></div>
@@ -334,6 +348,8 @@
         'manage_therapist_attendance' => auth()->user()->can('therapist_attendance.manage'),
         'manage_payroll' => auth()->user()->can('payroll.manage'),
         'process_cashier' => auth()->user()->can('cashier.process'),
+        'stocktake_products' => auth()->user()->can('products.stocktake'),
+        'update_products' => auth()->user()->can('products.update'),
     ];
 @endphp
 <div id="toast"></div>
