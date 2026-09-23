@@ -26,7 +26,6 @@
                     <tr>
                         <th scope="col">{{ $config['source_label'] }}</th>
                         @if($withAccount)<th scope="col">Akun tujuan</th>@endif
-                        <th scope="col">Charge</th>
                         <th scope="col">Status</th>
                         <th scope="col" class="align-right">Aksi</th>
                     </tr>
@@ -38,7 +37,6 @@
                         @if($withAccount)
                             <td><strong>{{ $method->account_name ?: '-' }}</strong><small>{{ $method->account_number ?: '-' }}</small></td>
                         @endif
-                        <td><strong>{{ rtrim(rtrim(number_format((float) $method->charge_percent, 4, '.', ''), '0'), '.') ?: '0' }}%</strong><small>{{ $method->charge_default_enabled ? 'Default aktif' : 'Default nonaktif' }}</small></td>
                         <td><span class="role-badge {{ $method->is_active ? 'ui-status-success' : 'ui-status-neutral' }}">{{ $method->is_active ? 'Aktif' : 'Nonaktif' }}</span></td>
                         <td class="align-right">
                             <div class="table-actions">
@@ -55,7 +53,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td class="empty-state" colspan="{{ $withAccount ? 5 : 4 }}">Belum ada {{ $config['title'] }}. Tambahkan metode pertama melalui tombol di atas.</td></tr>
+                    <tr><td class="empty-state" colspan="{{ $withAccount ? 4 : 3 }}">Belum ada {{ $config['title'] }}. Tambahkan metode pertama melalui tombol di atas.</td></tr>
                 @endforelse
                 </tbody>
             </table>
@@ -81,8 +79,6 @@
                         <label>Nama akun<input name="account_name" value="{{ old('account_name', $editMethod->account_name ?? '') }}" maxlength="150" required placeholder="Contoh: Selesa Salon"></label>
                         <label>Nomor rekening / ID merchant<input name="account_number" value="{{ old('account_number', $editMethod->account_number ?? '') }}" maxlength="100" required placeholder="Masukkan nomor tujuan"></label>
                     @endif
-                    <label>Charge (%)<input name="charge_percent" type="number" min="0" max="100" step="0.0001" inputmode="decimal" value="{{ old('charge_percent', $editMethod->charge_percent ?? '0') }}"><small>Contoh: 2 untuk charge 2%.</small></label>
-                    <label>Charge default<select name="charge_default_enabled"><option value="1" @selected(old('charge_default_enabled', $editMethod->charge_default_enabled ?? true))>Aktif</option><option value="0" @selected(! old('charge_default_enabled', $editMethod->charge_default_enabled ?? true))>Nonaktif</option></select></label>
                     <label>Status metode<select name="is_active"><option value="1" @selected(old('is_active', $editMethod->is_active ?? true))>Aktif</option><option value="0" @selected(! old('is_active', $editMethod->is_active ?? true))>Nonaktif</option></select></label>
                 </div>
                 <footer>

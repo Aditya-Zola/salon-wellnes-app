@@ -3,12 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Http\Services\ActivityLogger;
-use App\Http\Support\FixedPoint;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class SettingsController extends Controller
@@ -92,8 +90,8 @@ class SettingsController extends Controller
             'type' => $config['type'],
             'is_cash' => false,
             'requires_reference' => true,
-            'charge_percent' => $data['charge_percent'],
-            'charge_default_enabled' => $data['charge_default_enabled'],
+            'charge_percent' => '0.0000',
+            'charge_default_enabled' => false,
             'is_active' => $data['is_active'],
             'sort_order' => 0,
             'created_at' => $now,
@@ -115,8 +113,6 @@ class SettingsController extends Controller
             'name' => $this->paymentName($data['source_name']),
             'account_name' => $data['account_name'],
             'account_number' => $data['account_number'],
-            'charge_percent' => $data['charge_percent'],
-            'charge_default_enabled' => $data['charge_default_enabled'],
             'is_active' => $data['is_active'],
             'updated_at' => now(),
         ]);
@@ -171,23 +167,14 @@ class SettingsController extends Controller
             'source_name' => ['required', 'string', 'max:100'],
             'account_name' => [$withAccount ? 'required' : 'nullable', 'string', 'max:150'],
             'account_number' => [$withAccount ? 'required' : 'nullable', 'string', 'max:100'],
-            'charge_percent' => ['nullable', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
-            'charge_default_enabled' => ['nullable', 'boolean'],
             'is_active' => ['required', 'boolean'],
         ]);
-
-        $chargePercent = $data['charge_percent'] ?? '0';
-        if (FixedPoint::parse((string) $chargePercent, FixedPoint::PERCENT_SCALE) > 100 * (10 ** FixedPoint::PERCENT_SCALE)) {
-            throw ValidationException::withMessages(['charge_percent' => ['Persentase charge tidak boleh lebih dari 100.']]);
-        }
 
         return [
             ...$data,
             'source_name' => trim($data['source_name']),
             'account_name' => $withAccount ? trim((string) $data['account_name']) : null,
             'account_number' => $withAccount ? trim((string) $data['account_number']) : null,
-            'charge_percent' => FixedPoint::normalizePercent((string) $chargePercent),
-            'charge_default_enabled' => $request->boolean('charge_default_enabled', true),
             'is_active' => (bool) $data['is_active'],
         ];
     }

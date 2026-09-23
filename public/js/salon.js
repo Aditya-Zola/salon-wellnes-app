@@ -667,8 +667,6 @@ function bindReservationCalendarCreateSlots(calendar) {
 function isAlreadyPaid(reservation) {
     return Boolean(
         reservation?.is_paid
-        || reservation?.transaction_id
-        || reservation?.transaction?.id
         || reservation?.transaction_status === 'paid',
     );
 }
@@ -1019,10 +1017,13 @@ function renderReservations() {
         const payment = reservationPaymentLabel(reservation);
         const method = reservation.deposit?.payment_method_name;
         const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
+        const cancelAction = canCancelReservation(reservation)
+            ? `<button type="button" class="queue-cancel-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">cancel</span>Batalkan</button>`
+            : '';
         const completeAction = canUpdateReservations && unfinishedItems.length
             ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Selesai</button>`
             : '';
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${completeAction}</article>`;
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction ? `<div class="reservation-queue-actions">${cancelAction}${completeAction}</div>` : ''}</article>`;
     }).join('') || '<p class="empty-state">Belum ada reservasi pada tanggal ini.</p>';
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
@@ -1046,6 +1047,51 @@ function renderReservations() {
                 button.disabled = false;
             }
         };
+    });
+    document.querySelectorAll('.queue-cancel-reservation').forEach((button) => {
+        button.onclick = async () => {
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (!reservation) return;
+
+            button.disabled = true;
+            try {
+                await cancelReservation(reservation);
+            } catch (error) {
+                toast(error.message, true);
+            } finally {
+                button.disabled = false;
+            }
+        };
+    });
+}
+
+function canCancelReservation(reservation) {
+    if (!canUpdateReservations || isAlreadyPaid(reservation) || ['cancelled', 'completed'].includes(reservation.status)) return false;
+
+    return !reservationItems(reservation).some((item) => item.work_status === 'finished');
+}
+
+async function cancelReservation(reservation, detailModal = null) {
+    const depositAmount = reservationDepositAmount(reservation);
+    const confirmed = await confirmAction({
+        title: 'Batalkan reservasi?',
+        message: depositAmount > 0
+            ? `Reservasi memiliki DP ${money(depositAmount)}. Reservasi akan dibatalkan, tetapi pengembalian DP harus dicatat terpisah. Alasan pembatalan wajib diisi.`
+            : 'Reservasi akan dibatalkan. Alasan pembatalan wajib diisi.',
+        confirmLabel: 'Lanjutkan',
+        icon: 'cancel',
+    });
+    if (!confirmed) return;
+
+    quickForm('Alasan pembatalan', [
+        ['reason', 'Alasan pembatalan', 'text'],
+    ], async (data) => {
+        const result = await api(`/operasional/reservasi/${Number(reservation.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'cancelled', reason: data.reason }),
+        });
+        detailModal?.remove();
+        return result;
     });
 }
 
@@ -1106,7 +1152,7 @@ function openReservationDetail(reservation) {
                 <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small></div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
-        <footer>${canUpdateReservations && !paid && !['cancelled', 'completed'].includes(reservation.status)
+        <footer>${canCancelReservation(reservation)
             ? '<button type="button" class="secondary reservation-cancel ui-action-delete">Batalkan reservasi</button>'
             : ''}<button type="button" class="primary quick-close">Tutup</button></footer>
     </div>`;
@@ -1114,26 +1160,7 @@ function openReservationDetail(reservation) {
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
     });
-    wrapper.querySelector('.reservation-cancel')?.addEventListener('click', async () => {
-        const confirmed = await confirmAction({
-            title: 'Batalkan reservasi?',
-            message: 'Reservasi belum dibayar akan dibatalkan. Alasan pembatalan wajib dicatat.',
-            confirmLabel: 'Lanjutkan',
-            icon: 'cancel',
-        });
-        if (!confirmed) return;
-
-        quickForm('Alasan pembatalan', [
-            ['reason', 'Alasan pembatalan', 'text'],
-        ], async (data) => {
-            const result = await api(`/operasional/reservasi/${Number(reservation.id)}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ status: 'cancelled', reason: data.reason }),
-            });
-            wrapper.remove();
-            return result;
-        });
-    });
+    wrapper.querySelector('.reservation-cancel')?.addEventListener('click', () => cancelReservation(reservation, wrapper));
 }
 
 function resetCashier() {
@@ -1747,7 +1774,7 @@ function treatmentCommissionProfile(treatment, therapistCount, totalPercent) {
 function openTreatmentCommissionEditor(treatment) {
     const wrapper = document.createElement('div');
     const initialTotal = commissionPercentValue(treatment.default_commission_percent ?? treatment.commission_percent ?? 0);
-    const countOptions = Array.from({ length: 9 }, (_, index) => index + 2);
+    const countOptions = Array.from({ length: 10 }, (_, index) => index + 1);
     const drafts = new Map();
     array(treatment.commission_profiles).forEach((profile) => {
         const count = Number(profile.therapist_count);
@@ -1756,7 +1783,7 @@ function openTreatmentCommissionEditor(treatment) {
     });
 
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi: ${escapeHtml(treatment.name)}</h2><p>Komisi total dibagi ke therapist sesuai jumlah yang menangani treatment.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Komisi total untuk 1 therapist (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Profil jumlah therapist<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} therapist</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan profil</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi treatment</h2><p><strong>${escapeHtml(treatment.name)}</strong> · Tentukan komisi dan pembagiannya berdasarkan jumlah terapis.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Total komisi (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Jumlah terapis<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} terapis</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan profil</button></footer></form></div>`;
     document.body.appendChild(wrapper);
 
     const form = wrapper.querySelector('form');
@@ -1765,7 +1792,7 @@ function openTreatmentCommissionEditor(treatment) {
     const fields = wrapper.querySelector('.commission-profile-fields');
     const note = wrapper.querySelector('.commission-profile-note');
     let activeCount = Number(countInput.value);
-    const labelForPosition = (index) => index === 0 ? 'Therapist utama (%)' : `Therapist pendamping ${index} (%)`;
+    const labelForPosition = (index) => index === 0 ? 'Terapis utama (%)' : `Terapis pendamping ${index} (%)`;
     const currentCount = () => activeCount;
     const currentFields = () => [...fields.querySelectorAll('input')];
     const saveDraft = (count = currentCount()) => {
@@ -1784,8 +1811,8 @@ function openTreatmentCommissionEditor(treatment) {
         const valid = Number.isFinite(total) && total >= 0 && allocated === total;
         note.classList.toggle('is-invalid', !valid);
         note.textContent = valid
-            ? `Total pembagian ${commissionPercentValue(allocated / 10000)}% — sesuai komisi treatment.`
-            : `Total pembagian ${commissionPercentValue(allocated / 10000)}%; harus sama dengan ${commissionPercentValue(total / 10000)}%.`;
+            ? `Total alokasi: ${commissionPercentValue(allocated / 10000)}% — sudah sesuai.`
+            : `Total alokasi: ${commissionPercentValue(allocated / 10000)}% — harus sama dengan ${commissionPercentValue(total / 10000)}%.`;
     };
 
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
@@ -1820,7 +1847,7 @@ function openTreatmentCommissionEditor(treatment) {
                 method: 'PATCH',
                 body: JSON.stringify({
                     default_commission_percent: totalPercent,
-                    commission_profiles: [{
+                    commission_profiles: currentCount() === 1 ? [] : [{
                         therapist_count: currentCount(),
                         commission_percents: commissionPercents,
                     }],
@@ -2537,11 +2564,11 @@ function renderFinance() {
                 const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
                 const meta = typeMeta[key] || { name: String(key || 'Lainnya'), icon: 'payments' };
                 const account = [payment.account_name, payment.account_number].filter(Boolean).join(' · ');
-                const subtitle = [meta.name, account, payment.is_active === false ? 'Nonaktif · riwayat tetap ditampilkan' : null]
+                const subtitle = [meta.name, account, payment.is_active === false ? 'Diarsipkan · riwayat tetap ditampilkan' : null]
                     .filter(Boolean)
                     .join(' · ');
 
-                return `<article class="finance-payment-flow-row"><div class="finance-payment-method"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${escapeHtml(subtitle || 'Metode pembayaran')}</small></span></div><div class="finance-payment-amounts"><span><small>Masuk</small><b>${money(inflow)}</b></span><span><small>Refund</small><b class="expense">${money(outflow)}</b></span><strong>${money(net)}</strong></div></article>`;
+                return `<article class="finance-payment-flow-row"><div class="finance-payment-method"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${escapeHtml(subtitle || 'Metode pembayaran')}</small></span></div><div class="finance-payment-amounts"><span><small>Dana masuk</small><b>${money(inflow)}</b></span><span><small>Refund</small><b class="expense">${money(outflow)}</b></span><span class="finance-payment-net"><small>Arus bersih</small><strong>${money(net)}</strong></span></div></article>`;
             }).join('')
             : '<p class="empty-state">Belum ada metode pembayaran yang dapat ditampilkan.</p>';
     }
@@ -4654,8 +4681,6 @@ function paymentMethods() {
     return array(state.payment_methods).filter((method) => method.is_active !== false);
 }
 
-const CASHIER_CHARGE_OPTIONS = [0, 2, 3.5];
-
 function paymentModeOptions() {
     const methods = paymentMethods();
     return [
@@ -4720,7 +4745,7 @@ function paymentChargeMeta(row) {
     const methodId = Number(row.querySelector('.payment-method')?.value || 0);
     const method = paymentMethods().find((item) => Number(item.id) === methodId);
     const baseAmount = Number(row.querySelector('.payment-amount')?.value || 0);
-    const percent = Number(row.querySelector('.payment-charge-percent')?.value ?? method?.charge_percent ?? 0);
+    const percent = Number(row.querySelector('.payment-charge-percent')?.value || 0);
     const enabled = row.dataset.chargeEnabled === 'true' && !Boolean(Number(method?.is_cash ?? 0)) && percent > 0;
     const chargeBaseAmount = paymentMode === 'split' ? baseAmount : selectedInvoiceTotal();
     const amount = enabled ? Math.round(chargeBaseAmount * percent / 100) : 0;
@@ -4734,10 +4759,7 @@ function syncPaymentCharge(row, resetToDefault = false) {
     const control = row.querySelector('.payment-charge-control');
     const percentSelect = row.querySelector('.payment-charge-percent');
     const summary = row.querySelector('.payment-charge-summary');
-    const configuredPercent = Number(method?.charge_percent || 0);
-    const defaultPercent = CASHIER_CHARGE_OPTIONS.includes(configuredPercent) && ![false, 0, '0'].includes(method?.charge_default_enabled)
-        ? configuredPercent
-        : 0;
+    const defaultPercent = 0;
     const chargeable = !Boolean(Number(method?.is_cash ?? 0));
 
     if (!chargeable) {

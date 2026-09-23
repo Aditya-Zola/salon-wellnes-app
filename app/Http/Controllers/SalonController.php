@@ -1616,7 +1616,7 @@ class SalonController extends Controller
 
             if (count($percents) !== $therapistCount) {
                 throw ValidationException::withMessages([
-                    'commission_profiles' => ["Profil {$therapistCount} therapist harus memiliki {$therapistCount} bagian komisi."],
+                    'commission_profiles' => ["Profil {$therapistCount} terapis harus memiliki {$therapistCount} bagian komisi."],
                 ]);
             }
 
@@ -1627,7 +1627,7 @@ class SalonController extends Controller
 
             if (array_sum($scaledPercents) !== $commission) {
                 throw ValidationException::withMessages([
-                    'commission_profiles' => ["Total pembagian untuk {$therapistCount} therapist harus sama dengan komisi treatment."],
+                    'commission_profiles' => ["Total pembagian untuk {$therapistCount} terapis harus sama dengan komisi treatment."],
                 ]);
             }
 
@@ -1642,7 +1642,7 @@ class SalonController extends Controller
 
         if ($profiles->pluck('therapist_count')->unique()->count() !== $profiles->count()) {
             throw ValidationException::withMessages([
-                'commission_profiles' => ['Setiap jumlah therapist hanya boleh memiliki satu profil pembagian.'],
+                'commission_profiles' => ['Setiap jumlah terapis hanya boleh memiliki satu profil pembagian.'],
             ]);
         }
 
