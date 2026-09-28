@@ -506,7 +506,7 @@ class SalonSnapshotService
             ->where('is_member', true)
             ->where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'code', 'name', 'phone', 'email', 'member_since', 'visit_count', 'notes']);
+            ->get(['id', 'code', 'name', 'phone', 'email', 'member_since', 'member_expires_at', 'visit_count', 'notes']);
     }
 
     private function products(): mixed
@@ -1136,6 +1136,10 @@ class SalonSnapshotService
                 $today->startOfMonth(),
                 $today,
             );
+            $data['customer_survey_summary_current_month'] = $this->customerSurveySummary(
+                $today->startOfMonth(),
+                $today,
+            );
         }
 
         if ($this->canAny($user, ['cashier.view', 'finance.view'])) {
@@ -1400,6 +1404,40 @@ class SalonSnapshotService
             })
             ->values()
             ->all();
+    }
+
+    private function customerSurveySummary(CarbonImmutable $from, CarbonImmutable $to): array
+    {
+        $surveys = DB::table('customer_surveys')
+            ->whereBetween('submitted_at', [$from->startOfDay(), $to->endOfDay()])
+            ->orderByDesc('submitted_at')
+            ->get(['id', 'customer_name', 'facility_rating', 'reception_rating', 'return_intent', 'price_rating', 'feedback', 'submitted_at']);
+        $therapists = DB::table('customer_survey_therapist_ratings as rating')
+            ->join('customer_surveys as survey', 'survey.id', '=', 'rating.customer_survey_id')
+            ->whereBetween('survey.submitted_at', [$from->startOfDay(), $to->endOfDay()])
+            ->orderBy('rating.employee_name')
+            ->get(['rating.employee_name', 'rating.rating']);
+
+        return [
+            'total' => $surveys->count(),
+            'facility' => $surveys->countBy('facility_rating')->all(),
+            'reception' => $surveys->countBy('reception_rating')->all(),
+            'return_intent' => $surveys->countBy('return_intent')->all(),
+            'price' => $surveys->countBy('price_rating')->all(),
+            'therapists' => $therapists->groupBy('employee_name')->map(fn (Collection $rows, string $name): array => [
+                'name' => $name,
+                'total' => $rows->count(),
+                'very_satisfied' => $rows->where('rating', 'very_satisfied')->count(),
+                'standard' => $rows->where('rating', 'standard')->count(),
+                'dissatisfied' => $rows->where('rating', 'dissatisfied')->count(),
+                'very_dissatisfied' => $rows->where('rating', 'very_dissatisfied')->count(),
+            ])->values()->all(),
+            'feedbacks' => $surveys->filter(fn (object $survey): bool => filled($survey->feedback))->take(12)->map(fn (object $survey): array => [
+                'customer_name' => $survey->customer_name,
+                'feedback' => trim($survey->feedback),
+                'submitted_at' => CarbonImmutable::parse($survey->submitted_at)->toIso8601String(),
+            ])->values()->all(),
+        ];
     }
 
     /**

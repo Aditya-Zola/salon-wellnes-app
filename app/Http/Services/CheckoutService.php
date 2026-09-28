@@ -408,8 +408,13 @@ class CheckoutService
             return [FixedPoint::normalizePercent(0), 0, null, 'none'];
         }
 
-        if ($promotion->members_only && ! $customer->is_member) {
-            throw ValidationException::withMessages(['promotion_id' => ['Promosi ini hanya berlaku untuk member.']]);
+        $memberExpired = filled($customer->member_expires_at ?? null)
+            && CarbonImmutable::parse($customer->member_expires_at)->lt(today());
+        if ($promotion->members_only && (! $customer->is_member || $memberExpired)) {
+            throw ValidationException::withMessages(['promotion_id' => [$memberExpired
+                ? 'Masa berlaku membership pelanggan ini sudah berakhir.'
+                : 'Promosi ini hanya berlaku untuk member.',
+            ]]);
         }
 
         if ($promotion->discount_type === 'percent') {

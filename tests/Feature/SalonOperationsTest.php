@@ -1837,6 +1837,70 @@ class SalonOperationsTest extends TestCase
         $this->assertSame(1, $summary[1]['average']);
     }
 
+    public function test_cashier_can_submit_one_customer_survey_per_paid_transaction(): void
+    {
+        Carbon::setTestNow('2033-06-14 11:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $dita = $this->employee('EMP-DITA');
+        $cash = $this->paymentMethod('CASH');
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $dita->id, 'role' => 'primary']]),
+        ], ['phone' => '081299900003'])->assertCreated();
+        $reservationId = (int) $reservation->json('id');
+        DB::table('reservation_items')->where('reservation_id', $reservationId)->update([
+            'work_status' => 'finished',
+            'finished_at' => now(),
+        ]);
+
+        $transactionId = (int) $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [['payment_method_id' => $cash->id, 'amount' => (int) $treatment->normal_price]],
+            ])
+            ->assertCreated()
+            ->json('id');
+
+        $payload = [
+            'therapist_ratings' => [['employee_id' => $dita->id, 'rating' => 'very_satisfied']],
+            'facility_rating' => 'very_suitable',
+            'reception_rating' => 'very_good',
+            'return_intent' => 'yes',
+            'price_rating' => 'fair',
+            'feedback' => 'Suasana nyaman dan pelayanan ramah.',
+        ];
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/penjualan/{$transactionId}/customer-survey", $payload)
+            ->assertOk()
+            ->assertJsonPath('message', 'Customer Survey berhasil disimpan.');
+        $this->assertDatabaseHas('customer_surveys', [
+            'transaction_id' => $transactionId,
+            'facility_rating' => 'very_suitable',
+            'return_intent' => 'yes',
+            'feedback' => 'Suasana nyaman dan pelayanan ramah.',
+        ]);
+        $surveyId = (int) DB::table('customer_surveys')->where('transaction_id', $transactionId)->value('id');
+        $this->assertDatabaseHas('customer_survey_therapist_ratings', [
+            'customer_survey_id' => $surveyId,
+            'employee_id' => $dita->id,
+            'employee_name' => 'Dita',
+            'rating' => 'very_satisfied',
+        ]);
+
+        $this->actingAs($this->cashier)
+            ->postJson("/operasional/penjualan/{$transactionId}/customer-survey", $payload)
+            ->assertStatus(409);
+
+        $summary = $this->actingAs($this->admin)
+            ->getJson('/operasional/data')
+            ->assertOk()
+            ->json('dashboard.customer_survey_summary_current_month');
+        $this->assertSame(1, $summary['total']);
+        $this->assertSame(1, $summary['return_intent']['yes']);
+        $this->assertSame('Dita', $summary['therapists'][0]['name']);
+        $this->assertSame('Suasana nyaman dan pelayanan ramah.', $summary['feedbacks'][0]['feedback']);
+    }
+
     public function test_admin_can_update_default_commission_for_a_treatment(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');
@@ -2320,6 +2384,7 @@ class SalonOperationsTest extends TestCase
                 'name' => 'Member Kelola',
                 'phone' => '081290000081',
                 'email' => 'member.kelola@example.test',
+                'member_expires_at' => today()->addYear()->toDateString(),
             ])
             ->assertCreated();
         $memberId = (int) $member->json('id');
@@ -2329,6 +2394,7 @@ class SalonOperationsTest extends TestCase
                 'name' => 'Member Diperbarui',
                 'phone' => '081290000082',
                 'email' => 'member.baru@example.test',
+                'member_expires_at' => today()->addYears(2)->toDateString(),
             ])
             ->assertOk();
         $this->assertDatabaseHas('customers', [
@@ -2379,6 +2445,7 @@ class SalonOperationsTest extends TestCase
             ->postJson('/operasional/member', [
                 'name' => 'Member Reservasi',
                 'phone' => '081290000091',
+                'member_expires_at' => today()->addYear()->toDateString(),
             ])
             ->assertCreated();
         $memberId = (int) $member->json('id');
