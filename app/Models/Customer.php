@@ -19,6 +19,7 @@ class Customer extends Model
         'address',
         'is_member',
         'member_since',
+        'member_expires_at',
         'visit_count',
         'notes',
         'is_active',
@@ -30,6 +31,7 @@ class Customer extends Model
             'birth_date' => 'date',
             'is_member' => 'boolean',
             'member_since' => 'date',
+            'member_expires_at' => 'date',
             'visit_count' => 'integer',
             'is_active' => 'boolean',
         ];

@@ -48,7 +48,7 @@
                 ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
                 ['page' => 'penggajian', 'label' => 'Penggajian'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
-                ['page' => 'penilaian-terapis', 'label' => 'Penilaian Terapis', 'permission' => 'employees.view'],
+                ['page' => 'penilaian-terapis', 'label' => 'Customer Survey', 'permission' => 'employees.view'],
             ],
         ],
     ];

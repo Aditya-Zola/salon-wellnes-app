@@ -34,7 +34,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/produk/riwayat-ekspor', [SalonController::class, 'exportStockHistory'])->middleware('permission:products.view')->name('stock.export');
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
         Route::post('/kasir/transaksi', [SalonController::class, 'storeReservation'])->middleware('permission:cashier.process')->name('cashier.transactions.store');
-        Route::post('/reservasi/{reservation}/item', [SalonController::class, 'storeReservationItem'])->middleware('permission:cashier.process')->name('reservations.items.store');
+        Route::post('/reservasi/{reservation}/item', [SalonController::class, 'storeReservationItem'])->middleware('permission:cashier.process|reservations.update')->name('reservations.items.store');
         Route::post('/reservasi/{reservation}/produk', [SalonController::class, 'storeReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.store');
         Route::delete('/reservasi/{reservation}/produk/{product}', [SalonController::class, 'destroyReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.destroy');
         Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view|reservations.create')->name('reservations.therapists');
@@ -60,6 +60,7 @@ Route::middleware('auth')->group(function () {
         Route::delete('/promo/{id}', [SalonController::class, 'destroyPromotion'])->middleware('permission:memberships.manage')->name('promotions.destroy');
         Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
         Route::post('/penjualan/{transaction}/penilaian-therapist', [SalonController::class, 'storeTherapistRatings'])->middleware('permission:cashier.process')->name('sales.therapist-ratings.store');
+        Route::post('/penjualan/{transaction}/customer-survey', [SalonController::class, 'storeCustomerSurvey'])->middleware('permission:cashier.process')->name('sales.customer-survey.store');
         Route::get('/penjualan/{transaction}/nota.pdf', [SalonController::class, 'invoicePdf'])->middleware('permission:cashier.process|sales.view')->name('sales.invoice.pdf');
         Route::post('/penjualan/{transaction}/retur', [SalonController::class, 'storeSalesReturn'])->middleware('permission:cashier.refund')->name('sales.returns.store');
         Route::get('/retur/{salesReturn}/struk.pdf', [SalonController::class, 'salesReturnPdf'])->middleware('permission:cashier.refund|sales.view')->name('sales.returns.receipt.pdf');

@@ -72,7 +72,7 @@
                 <section class="dashboard-operational-item dashboard-therapist-attendance"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
             </div>
             @can('employees.view')
-                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Penilaian terapis</h3><p>Rekap bulan berjalan dari rating setelah transaksi kasir.</p></div><button type="button" class="link open-therapist-ratings">Lihat semua →</button></div><div class="therapist-rating-list" id="therapist-rating-list"></div></article>
+                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Customer Survey</h3><p>Rekap kepuasan pelanggan dari transaksi bulan berjalan.</p></div><button type="button" class="link open-therapist-ratings">Lihat semua →</button></div><div id="customer-survey-overview"></div></article>
             @endcan
         </section>
 
@@ -265,12 +265,12 @@
         <section class="page therapist-rating-page" id="penilaian-terapis">
             <div class="therapist-rating-page-grid">
                 <article class="card therapist-rating-board">
-                    <div class="card-head"><div><h3>Rating terapis</h3><p>Peringkat berdasarkan penilaian pelanggan bulan berjalan.</p></div><span class="analytics-period">BULAN INI</span></div>
-                    <div class="therapist-rating-list" id="therapist-rating-page-list"></div>
+                    <div class="card-head"><div><h3>Customer Survey</h3><p>Rekap jawaban pelanggan bulan berjalan.</p></div><span class="analytics-period">BULAN INI</span></div>
+                    <div id="customer-survey-summary"></div>
                 </article>
                 <aside class="card therapist-live-reviews">
-                    <div class="card-head"><div><h3 id="therapist-review-panel-title">Detail review</h3><p id="therapist-review-panel-subtitle">Pilih terapis di sebelah kiri untuk melihat ulasannya.</p></div></div>
-                    <div class="therapist-live-window" aria-live="polite"><div id="therapist-live-review-list"><p class="empty-state">Belum ada terapis yang dipilih.</p></div></div>
+                    <div class="card-head"><div><h3>Masukan pelanggan</h3><p>Ulasan tertulis terbaru.</p></div></div>
+                    <div class="therapist-live-window" aria-live="polite"><div id="customer-survey-feedback"><p class="empty-state">Belum ada masukan pelanggan.</p></div></div>
                 </aside>
             </div>
         </section>

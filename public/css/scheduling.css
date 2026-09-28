@@ -278,6 +278,7 @@ main label,
     --rest-bg: #faf8f6;
     background: linear-gradient(to bottom, var(--service-bg) 0 var(--service-ratio), var(--rest-bg) var(--service-ratio) 100%);
 }
+.therapist-day-event.status-scheduled { --service-bg: #eaf6ff; }
 .therapist-day-event.status-arrived { --service-bg: #eaf6ff; }
 .therapist-day-event.status-in_service { --service-bg: #fff5df; }
 .therapist-day-event.status-completed,
