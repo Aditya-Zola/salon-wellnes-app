@@ -1742,6 +1742,7 @@ class SalonController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'phone' => ['required', 'string', 'max:30'],
             'email' => ['nullable', 'email', 'max:255'],
+            'member_expires_at' => ['required', 'date_format:Y-m-d', 'after_or_equal:today'],
         ]);
         $id = DB::transaction(function () use ($data, $request): int {
             if (! empty($data['email'])) {
@@ -1756,7 +1757,7 @@ class SalonController extends Controller
             }
 
             $now = now();
-            $updateColumns = ['name', 'is_member', 'is_active', 'updated_at'];
+            $updateColumns = ['name', 'is_member', 'is_active', 'member_expires_at', 'updated_at'];
             if (array_key_exists('email', $data)) {
                 $updateColumns[] = 'email';
             }
@@ -1767,6 +1768,7 @@ class SalonController extends Controller
                 'email' => $data['email'] ?? null,
                 'is_member' => true,
                 'member_since' => today(),
+                'member_expires_at' => $data['member_expires_at'],
                 'visit_count' => 0,
                 'is_active' => true,
                 'created_at' => $now,
@@ -1794,6 +1796,7 @@ class SalonController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'phone' => ['required', 'string', 'max:30', Rule::unique('customers', 'phone')->ignore($id)],
             'email' => ['nullable', 'email', 'max:255', Rule::unique('customers', 'email')->ignore($id)],
+            'member_expires_at' => ['required', 'date_format:Y-m-d'],
         ]);
 
         DB::table('customers')->where('id', $id)->update([
@@ -1961,6 +1964,81 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Penilaian therapist berhasil disimpan.']);
+    }
+
+    public function storeCustomerSurvey(Request $request, int $transaction): JsonResponse
+    {
+        $data = $request->validate([
+            'therapist_ratings' => ['required', 'array', 'max:30'],
+            'therapist_ratings.*.employee_id' => ['required', 'integer', 'distinct'],
+            'therapist_ratings.*.rating' => ['required', Rule::in(['very_satisfied', 'standard', 'dissatisfied', 'very_dissatisfied'])],
+            'facility_rating' => ['required', Rule::in(['very_suitable', 'standard', 'poor'])],
+            'reception_rating' => ['required', Rule::in(['very_good', 'good', 'neutral', 'bad'])],
+            'return_intent' => ['required', Rule::in(['yes', 'maybe', 'no'])],
+            'price_rating' => ['required', Rule::in(['fair', 'worth_it', 'expensive'])],
+            'feedback' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($data, $transaction, $request): void {
+            $sale = DB::table('transactions as transaction')
+                ->leftJoin('customers as customer', 'customer.id', '=', 'transaction.customer_id')
+                ->where('transaction.id', $transaction)
+                ->lockForUpdate()
+                ->first(['transaction.*', 'customer.name as customer_name']);
+            abort_unless($sale && $sale->status === 'paid', 404, 'Transaksi lunas tidak ditemukan.');
+            abort_if(DB::table('customer_surveys')->where('transaction_id', $transaction)->exists(), 409, 'Customer Survey untuk transaksi ini sudah tersimpan dan tidak dapat diubah.');
+
+            $therapists = DB::table('transaction_items as item')
+                ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+                ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+                ->where('item.transaction_id', $transaction)
+                ->orderBy('employee.id')
+                ->get(['employee.id', 'employee.name'])
+                ->unique('id')
+                ->values();
+            $expectedIds = $therapists->pluck('id')->map(fn ($id): int => (int) $id)->sort()->values();
+            $submittedIds = collect($data['therapist_ratings'])->pluck('employee_id')->map(fn ($id): int => (int) $id)->sort()->values();
+            abort_if($expectedIds->all() !== $submittedIds->all(), 422, 'Penilaian pelayanan harus diisi untuk setiap therapist pada transaksi ini.');
+
+            $now = now();
+            $surveyId = DB::table('customer_surveys')->insertGetId([
+                'transaction_id' => $transaction,
+                'reservation_id' => $sale->reservation_id,
+                'customer_id' => $sale->customer_id,
+                'transaction_number' => $sale->number,
+                'customer_name' => $sale->customer_name ?: 'Pelanggan',
+                'facility_rating' => $data['facility_rating'],
+                'reception_rating' => $data['reception_rating'],
+                'return_intent' => $data['return_intent'],
+                'price_rating' => $data['price_rating'],
+                'feedback' => filled($data['feedback'] ?? null) ? trim($data['feedback']) : null,
+                'submitted_by' => $request->user()?->id,
+                'submitted_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $ratings = collect($data['therapist_ratings'])->keyBy(fn (array $rating): int => (int) $rating['employee_id']);
+            if ($therapists->isNotEmpty()) {
+                DB::table('customer_survey_therapist_ratings')->insert($therapists->map(fn (object $therapist): array => [
+                    'customer_survey_id' => $surveyId,
+                    'employee_id' => (int) $therapist->id,
+                    'employee_name' => $therapist->name,
+                    'rating' => $ratings->get((int) $therapist->id)['rating'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])->all());
+            }
+
+            $this->logger->log($request, 'customer_survey.submitted', 'transaction', $transaction, "Mencatat Customer Survey untuk transaksi {$sale->number}", [
+                'therapist_ratings' => $data['therapist_ratings'],
+                'facility_rating' => $data['facility_rating'],
+                'reception_rating' => $data['reception_rating'],
+                'return_intent' => $data['return_intent'],
+                'price_rating' => $data['price_rating'],
+            ]);
+        }, 3);
+
+        return response()->json(['message' => 'Customer Survey berhasil disimpan.']);
     }
 
     public function invoicePdf(int $transaction): Response

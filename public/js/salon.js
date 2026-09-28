@@ -122,7 +122,7 @@ const copy = {
     penggajian: ['Penggajian', 'Komponen gaji per karyawan dan periode'],
     remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
     'arsip-remunerasi': ['Arsip Remunerasi', 'Riwayat hasil final per tahun dan bulan'],
-    'penilaian-terapis': ['Penilaian Terapis', 'Peringkat dan ulasan pelanggan terbaru untuk setiap terapis'],
+    'penilaian-terapis': ['Customer Survey', 'Rekap kepuasan pelanggan dan masukan setelah transaksi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
@@ -789,10 +789,21 @@ function renderReservations() {
         rows = rows.filter((reservation) => reservationStatus(reservation) === selectedStatus);
     }
 
-    const todayRows = all.filter((reservation) => (
-        reservationStatus(reservation) !== 'cancelled'
-        && reservationDate(reservation) === selectedDate
+    // Antrean operasional mengikuti urutan input terbaru agar reservasi baru
+    // langsung terlihat tanpa perlu menggulir daftar yang panjang.
+    const nextDate = new Date(`${selectedDate}T12:00:00`);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateKey = dateKey(nextDate);
+    const newestFirst = (reservations) => reservations.sort((left, right) => (
+        String(right.created_at || '').localeCompare(String(left.created_at || ''))
+        || Number(right.id) - Number(left.id)
     ));
+    const queueRowsForDate = (date) => newestFirst(all.filter((reservation) => (
+        reservationStatus(reservation) !== 'cancelled'
+        && reservationDate(reservation) === date
+    )));
+    const todayRows = queueRowsForDate(selectedDate);
+    const nextDayRows = queueRowsForDate(nextDateKey);
     const short = document.getElementById('queue-short');
     if (short) {
         short.innerHTML = todayRows.slice(0, 5).map((reservation) => {
@@ -1051,8 +1062,8 @@ function renderReservations() {
 
     const queue = document.getElementById('reservation-queue-list');
     const queueDate = document.getElementById('today-queue-date');
-    if (queueDate) queueDate.textContent = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
-    if (queue) queue.innerHTML = todayRows.map((reservation) => {
+    if (queueDate) queueDate.textContent = `${new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected)} · Input terbaru di atas`;
+    const renderQueueRows = (reservations) => reservations.map((reservation) => {
         const status = reservationQueueStatus(reservation);
         const payment = reservationPaymentLabel(reservation);
         const method = reservation.deposit?.payment_method_name;
@@ -1063,8 +1074,18 @@ function renderReservations() {
         const completeAction = canUpdateReservations && unfinishedItems.length
             ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Selesai</button>`
             : '';
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction ? `<div class="reservation-queue-actions">${cancelAction}${completeAction}</div>` : ''}</article>`;
-    }).join('') || '<p class="empty-state">Belum ada reservasi pada tanggal ini.</p>';
+        const addTreatmentAction = !isAlreadyPaid(reservation) && canUpdateReservations
+            ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Tambah treatment</button>`
+            : '';
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
+    }).join('');
+    if (queue) {
+        const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
+        const nextDayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(nextDate);
+        const dayPanel = (title, label, icon, reservations, emptyMessage) => `<section class="reservation-queue-day"><header><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><b>${title}</b><small>${escapeHtml(label)} · Input terbaru di atas</small></div></header>${renderQueueRows(reservations) || `<p class="empty-state">${emptyMessage}</p>`}</section>`;
+        queue.innerHTML = dayPanel('Antrean hari ini', todayLabel, 'today', todayRows, 'Belum ada reservasi pada tanggal ini.')
+            + dayPanel('Reservasi hari berikutnya', nextDayLabel, 'event_upcoming', nextDayRows, 'Belum ada reservasi untuk hari berikutnya.');
+    }
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
         button.onclick = () => {
@@ -1086,6 +1107,12 @@ function renderReservations() {
             } finally {
                 button.disabled = false;
             }
+        };
+    });
+    document.querySelectorAll('.queue-add-treatment').forEach((button) => {
+        button.onclick = () => {
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (reservation) openCashierTreatmentPicker(reservation);
         };
     });
     document.querySelectorAll('.queue-cancel-reservation').forEach((button) => {
@@ -1192,7 +1219,9 @@ function openReservationDetail(reservation) {
                 <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small></div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
-        <footer>${canCancelReservation(reservation)
+        <footer>${!paid && canUpdateReservations
+            ? '<button type="button" class="secondary reservation-add-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button>'
+            : ''}${canCancelReservation(reservation)
             ? '<button type="button" class="secondary reservation-cancel ui-action-delete">Batalkan reservasi</button>'
             : ''}<button type="button" class="primary quick-close">Tutup</button></footer>
     </div>`;
@@ -1201,6 +1230,10 @@ function openReservationDetail(reservation) {
         button.onclick = () => wrapper.remove();
     });
     wrapper.querySelector('.reservation-cancel')?.addEventListener('click', () => cancelReservation(reservation, wrapper));
+    wrapper.querySelector('.reservation-add-treatment')?.addEventListener('click', () => {
+        wrapper.remove();
+        openCashierTreatmentPicker(reservation);
+    });
 }
 
 function resetCashier() {
@@ -1447,8 +1480,8 @@ function openCashierAddPicker() {
     };
 }
 
-function openCashierTreatmentPicker() {
-    const reservation = array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+function openCashierTreatmentPicker(reservationOverride = null) {
+    const reservation = reservationOverride || array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
     const treatments = array(state.treatments).filter((treatment) => Number(treatment.is_active ?? 1) === 1);
     if (!reservation || !treatments.length) {
         toast('Tidak ada treatment aktif yang dapat ditambahkan.', true);
@@ -1516,7 +1549,7 @@ function openCashierTreatmentPicker() {
             wrapper.remove();
             toast(result.message);
             await refresh();
-            selectCashier(reservation.id);
+            if (Number(selectedReservation) === Number(reservation.id)) selectCashier(reservation.id);
         } catch (error) {
             submitButton.disabled = false;
             toast(error.message, true);
@@ -1708,6 +1741,27 @@ function openReceiptPrintChoice(receipt, options = {}) {
         .join('');
     const ratingTherapists = array(options.ratingTherapists);
     const starRatings = [1, 2, 3, 4, 5];
+    const surveyPanel = `<section class="customer-survey-panel" aria-label="Customer Survey">
+        <div class="customer-survey-head"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><div><b>Customer Survey</b><small>Masukan pelanggan untuk kunjungan ini.</small></div></div>
+        ${ratingTherapists.length ? `<div class="survey-question survey-therapist-question"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3>${ratingTherapists.map((therapist) => `<fieldset data-survey-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="survey-choice-grid four">${[
+            ['very_satisfied', 'sentiment_very_satisfied', 'Sangat baik'],
+            ['standard', 'sentiment_satisfied', 'Standar'],
+            ['dissatisfied', 'sentiment_dissatisfied', 'Kurang puas'],
+            ['very_dissatisfied', 'sentiment_very_dissatisfied', 'Sangat buruk'],
+        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-therapist-${Number(therapist.id)}" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></fieldset>`).join('')}</div>` : ''}
+        <div class="survey-question survey-facility-question"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3><div class="survey-choice-grid three">${[
+            ['very_suitable', 'sentiment_very_satisfied', 'Sangat sesuai'],
+            ['standard', 'sentiment_neutral', 'Standar'],
+            ['poor', 'sentiment_dissatisfied', 'Kurang bagus'],
+        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-facility" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-reception-question"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3><div class="survey-choice-grid four">${[
+            ['very_good', 'sentiment_very_satisfied', 'Sangat baik'], ['good', 'thumb_up', 'Baik'], ['neutral', 'sentiment_neutral', 'Biasa saja'], ['bad', 'thumb_down', 'Buruk'],
+        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-reception" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-return-question"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3><div class="survey-choice-grid three text-only">${[['yes', 'Sudah pasti, iya!'], ['maybe', 'Hmm, bingung'], ['no', 'Tidak dulu']].map(([value, label]) => `<label class="survey-choice"><input type="radio" name="survey-return" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-price-question"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3><div class="survey-choice-grid three text-only">${[['fair', 'Cocok dengan harganya'], ['worth_it', 'Agak mahal tapi worth it'], ['expensive', 'Mahal sih kak']].map(([value, label]) => `<label class="survey-choice"><input type="radio" name="survey-price" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
+        <label class="survey-feedback">Masukan untuk kami<textarea name="survey-feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
+        <button type="button" class="save-customer-survey">Simpan Customer Survey</button>
+    </section>`;
     const ratingPanel = ratingTherapists.length ? `<section class="therapist-rating-panel">
         <div class="therapist-rating-head"><span class="material-symbols-outlined" aria-hidden="true">star</span><div><b>Rating therapist</b><small>Pilih 1 sampai 5 bintang untuk setiap therapist.</small></div></div>
         <div class="therapist-rating-fields">${ratingTherapists.map((therapist) => `<fieldset class="therapist-rating-field" data-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="therapist-rating-stars-input">${starRatings.map((stars) => `<label class="therapist-rating-choice" title="${stars} bintang"><input type="radio" name="therapist-rating-${Number(therapist.id)}" value="${stars}" ${Number(therapist.stars) === stars ? 'checked' : ''}><span class="material-symbols-outlined" aria-label="${stars} bintang">star</span></label>`).join('')}</div><label class="therapist-rating-review">Deskripsi review <textarea name="therapist-review-${Number(therapist.id)}" maxlength="500" placeholder="Contoh: pelayanan ramah dan hasilnya memuaskan.">${escapeHtml(therapist.review || '')}</textarea><small>Opsional, maksimal 500 karakter.</small></label></fieldset>`).join('')}</div>
@@ -1715,22 +1769,33 @@ function openReceiptPrintChoice(receipt, options = {}) {
     </section>` : '';
     wrapper.innerHTML = showSuccessAnimation
         ? `<div class="modal-box transaction-success-modal" role="status">
-            <button type="button" class="quick-close transaction-success-close" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
-            <div class="transaction-success-body">
-                <span class="transaction-success-emblem" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
-                <h2>Transaksi berhasil</h2><p>${escapeHtml(description)}</p>
-                <div class="transaction-success-meta">${transactionMeta}</div>
+            <div class="transaction-success-left">
+                <button type="button" class="quick-close transaction-success-close" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+                <button type="button" class="customer-survey-toggle" aria-expanded="true" aria-label="Sembunyikan Customer Survey" title="Sembunyikan Customer Survey"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button>
+                <div class="transaction-success-body">
+                    <span class="transaction-success-emblem" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
+                    <h2>Transaksi berhasil</h2><p>${escapeHtml(description)}</p>
+                    <div class="transaction-success-meta">${transactionMeta}</div>
+                </div>
+                <div class="transaction-success-actions">
+                    <button type="button" class="primary success-print-button" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
+                    <button type="button" class="secondary success-print-button" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
+                </div>
             </div>
-            <div class="transaction-success-actions">
-                <button type="button" class="primary success-print-button" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
-                <button type="button" class="secondary success-print-button" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
-            </div>
+            ${surveyPanel}
         </div>`
         : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
-    if (showSuccessAnimation && ratingPanel) {
-        wrapper.querySelector('.transaction-success-body')?.insertAdjacentHTML('beforeend', ratingPanel);
-    }
+    wrapper.querySelector('.customer-survey-toggle')?.addEventListener('click', (event) => {
+        const button = event.currentTarget;
+        const modal = wrapper.querySelector('.transaction-success-modal');
+        const collapsed = modal?.classList.toggle('is-survey-collapsed');
+        button.setAttribute('aria-expanded', String(!collapsed));
+        button.setAttribute('aria-label', collapsed ? 'Tampilkan Customer Survey' : 'Sembunyikan Customer Survey');
+        button.setAttribute('title', collapsed ? 'Tampilkan Customer Survey' : 'Sembunyikan Customer Survey');
+        const icon = button.querySelector('.material-symbols-outlined');
+        if (icon) icon.textContent = collapsed ? 'chevron_right' : 'chevron_left';
+    });
     wrapper.querySelectorAll('.therapist-rating-field').forEach((field) => {
         const syncStars = (animate = false, selectedValue = null) => {
             const selected = selectedValue === null
@@ -1775,6 +1840,36 @@ function openReceiptPrintChoice(receipt, options = {}) {
                 body: JSON.stringify({ ratings }),
             });
             saveButton.textContent = 'Rating tersimpan';
+            toast(result.message);
+            await refresh();
+        } catch (error) {
+            saveButton.disabled = false;
+            toast(error.message, true);
+        }
+    });
+    wrapper.querySelector('.save-customer-survey')?.addEventListener('click', async (event) => {
+        const saveButton = event.currentTarget;
+        const therapistRatings = ratingTherapists.map((therapist) => ({
+            employee_id: Number(therapist.id),
+            rating: String(wrapper.querySelector(`input[name="survey-therapist-${Number(therapist.id)}"]:checked`)?.value || ''),
+        }));
+        const facilityRating = String(wrapper.querySelector('input[name="survey-facility"]:checked')?.value || '');
+        const receptionRating = String(wrapper.querySelector('input[name="survey-reception"]:checked')?.value || '');
+        const returnIntent = String(wrapper.querySelector('input[name="survey-return"]:checked')?.value || '');
+        const priceRating = String(wrapper.querySelector('input[name="survey-price"]:checked')?.value || '');
+        if (therapistRatings.some((rating) => !rating.rating) || !facilityRating || !receptionRating || !returnIntent || !priceRating) {
+            toast('Lengkapi seluruh pertanyaan Customer Survey terlebih dahulu.', true);
+            return;
+        }
+        saveButton.disabled = true;
+        try {
+            const result = await api(`/operasional/penjualan/${Number(receipt.transactionId)}/customer-survey`, {
+                method: 'POST',
+                body: JSON.stringify({ therapist_ratings: therapistRatings, facility_rating: facilityRating, reception_rating: receptionRating, return_intent: returnIntent, price_rating: priceRating, feedback: String(wrapper.querySelector('[name="survey-feedback"]')?.value || '').trim() }),
+            });
+            wrapper.querySelector('.customer-survey-panel')?.classList.add('is-saved');
+            wrapper.querySelectorAll('.customer-survey-panel input, .customer-survey-panel textarea').forEach((input) => { input.disabled = true; });
+            saveButton.textContent = 'Customer Survey tersimpan';
             toast(result.message);
             await refresh();
         } catch (error) {
@@ -2104,12 +2199,16 @@ function renderMembers() {
     set('member-transaction-percent', `${Number(dashboard.member_transaction_percent || 0)}%`);
 
     if (box) {
-        box.innerHTML = members.map((member) => `<div class="member-row">
+        box.innerHTML = members.map((member) => {
+            const expiresAt = member.member_expires_at ? new Date(`${member.member_expires_at}T00:00:00`) : null;
+            const expired = expiresAt && expiresAt < new Date(new Date().setHours(0, 0, 0, 0));
+            const expiryLabel = expiresAt ? `Berlaku sampai ${expiresAt.toLocaleDateString('id-ID')}` : 'Masa berlaku belum diatur';
+            return `<div class="member-row">
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
-            <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')}</small></span>
-            <span>${Number(member.visit_count || 0)} kunjungan</span><em>Aktif</em>
+            <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')} · ${escapeHtml(expiryLabel)}</small></span>
+            <span>${Number(member.visit_count || 0)} kunjungan</span><em class="${expired ? 'membership-expired' : ''}">${expired ? 'Expired' : 'Aktif'}</em>
             ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit ui-action-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
-        </div>`).join('') || '<p class="empty-state">Belum ada member.</p>';
+        </div>`; }).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
 
     const pagination = document.getElementById('member-pagination');
@@ -4169,6 +4268,28 @@ function renderDashboard() {
         });
 
     }
+
+    const surveySummaryTargets = [
+        document.getElementById('customer-survey-overview'),
+        document.getElementById('customer-survey-summary'),
+    ].filter(Boolean);
+    if (surveySummaryTargets.length) {
+        const survey = dashboard.customer_survey_summary_current_month || {};
+        const total = Number(survey.total || 0);
+        const label = (counts, key, fallback = 'Belum ada') => `${Number(counts?.[key] || 0)} ${fallback}`;
+        const miniSurveyChart = (title, items) => {
+            const highest = Math.max(1, ...items.map(([, count]) => Number(count || 0)));
+            return `<article class="customer-survey-mini-chart"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-bars">${items.map(([name, count]) => `<div title="${escapeHtml(name)}: ${Number(count || 0)}"><span style="height:${Math.max(5, (Number(count || 0) / highest) * 100)}%"></span><small>${escapeHtml(name)} <b>${Number(count || 0)}</b></small></div>`).join('')}</div></article>`;
+        };
+        const therapistRows = array(survey.therapists).map((therapist) => `<article class="customer-survey-therapist"><b>${escapeHtml(therapist.name)}</b><small>${Number(therapist.total)} penilaian · ${Number(therapist.very_satisfied)} sangat baik</small><div><span style="width:${Number(therapist.total) ? (Number(therapist.very_satisfied) / Number(therapist.total)) * 100 : 0}%"></span></div></article>`).join('') || '<p class="empty-state">Belum ada penilaian pelayanan therapist.</p>';
+        const summaryMarkup = total ? `<div class="customer-survey-metrics"><article><b>${total}</b><small>survey masuk</small></article><article><b>${label(survey.return_intent, 'yes', 'ingin kembali')}</b><small>niat kembali</small></article><article><b>${label(survey.facility, 'very_suitable', 'fasilitas sangat sesuai')}</b><small>fasilitas</small></article></div><div class="customer-survey-breakdown">${miniSurveyChart('Fasilitas', [['Sesuai', survey.facility?.very_suitable], ['Standar', survey.facility?.standard], ['Kurang', survey.facility?.poor]])}${miniSurveyChart('Resepsionis', [['Sangat baik', survey.reception?.very_good], ['Baik', survey.reception?.good], ['Biasa', survey.reception?.neutral], ['Buruk', survey.reception?.bad]])}${miniSurveyChart('Harga', [['Cocok', survey.price?.fair], ['Worth it', survey.price?.worth_it], ['Mahal', survey.price?.expensive]])}${miniSurveyChart('Kembali', [['Ya', survey.return_intent?.yes], ['Mungkin', survey.return_intent?.maybe], ['Tidak', survey.return_intent?.no]])}</div><h4>Pelayanan therapist</h4><div class="customer-survey-therapists">${therapistRows}</div>` : '<p class="empty-state">Belum ada Customer Survey pada bulan ini.</p>';
+        surveySummaryTargets.forEach((target) => { target.innerHTML = summaryMarkup; });
+        const feedbackTarget = document.getElementById('customer-survey-feedback');
+        if (feedbackTarget) {
+            const feedbacks = array(survey.feedbacks);
+            feedbackTarget.innerHTML = feedbacks.length ? feedbacks.map((feedback) => `<article class="customer-survey-feedback-item"><b>${escapeHtml(feedback.customer_name)}</b><time>${escapeHtml(formatTransactionDate(feedback.submitted_at))}</time><p>${escapeHtml(feedback.feedback)}</p></article>`).join('') : '<p class="empty-state">Belum ada masukan pelanggan.</p>';
+        }
+    }
 }
 
 function renderAll() {
@@ -5875,6 +5996,7 @@ if (memberAdd) {
         ['name', 'Nama pelanggan', 'text'],
         ['phone', 'Nomor telepon', 'text'],
         ['email', 'Email (opsional)', 'email'],
+        ['member_expires_at', 'Berlaku sampai', 'date'],
     ], (data) => api('/operasional/member', { method: 'POST', body: JSON.stringify(data) }));
 }
 
@@ -5902,6 +6024,7 @@ document.addEventListener('click', async (event) => {
             ['name', 'Nama pelanggan', 'text', [], member.name],
             ['phone', 'Nomor telepon', 'text', [], member.phone],
             ['email', 'Email (opsional)', 'email', [], member.email],
+            ['member_expires_at', 'Berlaku sampai', 'date', [], member.member_expires_at],
         ], (data) => api(`/operasional/member/${member.id}`, { method: 'PATCH', body: JSON.stringify(data) }));
     }
 
