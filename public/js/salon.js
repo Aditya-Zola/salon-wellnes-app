@@ -1065,8 +1065,14 @@ function renderReservations() {
     if (queueDate) queueDate.textContent = `${new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected)} · Input terbaru di atas`;
     const renderQueueRows = (reservations) => reservations.map((reservation) => {
         const status = reservationQueueStatus(reservation);
-        const payment = reservationPaymentLabel(reservation);
         const method = reservation.deposit?.payment_method_name;
+        const deposit = reservationDepositAmount(reservation);
+        const payment = isAlreadyPaid(reservation)
+            ? '<strong>Lunas</strong>'
+            : deposit > 0
+                ? `DP <strong>${money(deposit)}</strong> · Sisa <strong>${money(reservationRemainingAmount(reservation))}</strong>`
+                : 'Belum dibayar';
+        const therapists = reservationStaffSummary(reservation);
         const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
         const cancelAction = canCancelReservation(reservation)
             ? `<button type="button" class="queue-cancel-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">cancel</span>Batalkan</button>`
@@ -1077,7 +1083,7 @@ function renderReservations() {
         const addTreatmentAction = !isAlreadyPaid(reservation) && canUpdateReservations
             ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Tambah treatment</button>`
             : '';
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small>${escapeHtml(reservationStaffSummary(reservation))}</small><small class="queue-payment">${escapeHtml(payment)}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
     }).join('');
     if (queue) {
         const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
