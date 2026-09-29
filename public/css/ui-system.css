@@ -343,6 +343,7 @@
 .ui-shell .membership-event :is(p, small, div > span) { font-size: 12px; line-height: 1.6; }
 .ui-shell .member-row { padding: 16px 0; }
 .ui-shell .member-row small { margin-top: 4px; font-size: 11px; }
+.ui-shell .member-row .member-expiry-date { color: var(--ui-ink); font-size: inherit; font-weight: 800; }
 .ui-shell .cash-flow-head { font-size: 13px; }
 .ui-shell .cash-flow-head b { font-size: 15px; }
 .ui-shell .finance-statement { font-size: 14px; }
@@ -413,6 +414,12 @@
 .ui-shell .stocktake-input-wrap input { border: 0 !important; }
 .ui-shell #stok .stock-table .tr { grid-template-columns: minmax(250px,1.65fr) minmax(140px,.9fr) minmax(135px,.85fr) minmax(130px,.9fr) minmax(145px,.95fr) 112px; }
 .ui-shell #stok .stock-table .tr.th span { white-space: nowrap; }
+.ui-shell #stok .stock-table .tr { position: relative; z-index: 0; }
+.ui-shell #stok .stock-table .tr:has(.product-action-trigger[aria-expanded="true"]) { z-index: 12; }
+@media (min-width: 701px) {
+    .ui-shell #stok .stock-list-card,
+    .ui-shell #stok .stock-list-card > .stock-table { overflow: visible; }
+}
 .ui-shell #stok .stock-amount b { font-variant-numeric: tabular-nums; }
 .ui-shell #stok .stock-amount small { display: inline; margin: 0 0 0 3px; color: var(--ui-muted); font-size: 11px; font-weight: 600; text-transform: lowercase; }
 .ui-shell #stok .stock-amount { display: flex; align-items: center; gap: 7px; }
