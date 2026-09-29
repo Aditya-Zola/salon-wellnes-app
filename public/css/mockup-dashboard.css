@@ -282,7 +282,7 @@ main{margin-left:230px;padding:0 28px 36px}header{height:92px;margin:0 -28px 24p
 .reservation-queue-row:last-child{border-bottom:0}
 #reservation-queue-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:14px;padding:14px}
 .reservation-queue-day{overflow:hidden;border:1px solid var(--ui-line);border-radius:9px;background:#fff}
-.reservation-queue-day>header{display:flex;align-items:center;gap:9px;height:auto;min-height:0;margin:0;padding:12px 14px;border:0;border-bottom:1px solid var(--ui-line);background:#fcfaf8;color:#765039}
+.reservation-queue-day>header{display:flex;align-items:center;justify-content:flex-start;gap:9px;height:auto;min-height:0;margin:0;padding:12px 14px;border:0;border-bottom:1px solid var(--ui-line);background:#fcfaf8;color:#765039;text-align:left}
 .reservation-queue-day>header .material-symbols-outlined{font-size:19px;color:#765039}
 .reservation-queue-day>header b,.reservation-queue-day>header small{display:block}
 .reservation-queue-day>header b{font-size:14px}
@@ -297,10 +297,11 @@ main{margin-left:230px;padding:0 28px 36px}header{height:92px;margin:0 -28px 24p
 .reservation-queue-actions{display:flex;align-self:stretch;flex-direction:column;align-items:stretch;justify-content:center;gap:8px;margin:0;padding:12px}
 .reservation-queue-actions button{width:100%;min-width:0}
 .queue-complete-reservation,.queue-cancel-reservation,.queue-add-treatment{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:94px;min-height:44px;padding:0 13px;border:1px solid #b98d6a;border-radius:8px;background:#fffaf6;color:#805136;font:inherit;font-size:12px;font-weight:750;cursor:pointer;transition:.18s ease}
-.queue-add-treatment{border-color:#bbaaf0;background:#f6f3ff;color:#6042c7}
+.queue-add-treatment{border-color:#bbaaf0;background:#f1edff;color:#5b3ec5}
 .queue-add-treatment:hover{border-color:#6042c7;background:#6042c7;color:#fff;box-shadow:0 5px 13px rgba(96,66,199,.18)}
-.queue-complete-reservation:hover{border-color:#795039;background:#795039;color:#fff;box-shadow:0 5px 13px rgba(92,57,38,.18)}
-.queue-cancel-reservation{border-color:#efc0bb;background:#fff7f6;color:#b23b32}
+.queue-complete-reservation{border-color:#a4d9b7;background:#ecf9f0;color:#187345}
+.queue-complete-reservation:hover{border-color:#187345;background:#187345;color:#fff;box-shadow:0 5px 13px rgba(24,115,69,.18)}
+.queue-cancel-reservation{border-color:#efc0bb;background:#fff0ef;color:#bd3930}
 .queue-cancel-reservation:hover{border-color:#b23b32;background:#b23b32;color:#fff;box-shadow:0 5px 13px rgba(178,59,50,.16)}
 .queue-complete-reservation:focus-visible,.queue-cancel-reservation:focus-visible,.queue-add-treatment:focus-visible{outline:2px solid #6f50ec;outline-offset:2px}
 .queue-complete-reservation:disabled,.queue-cancel-reservation:disabled,.queue-add-treatment:disabled{cursor:wait;opacity:.62}

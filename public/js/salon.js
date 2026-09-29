@@ -1075,22 +1075,22 @@ function renderReservations() {
         const therapists = reservationStaffSummary(reservation);
         const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
         const cancelAction = canCancelReservation(reservation)
-            ? `<button type="button" class="queue-cancel-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">cancel</span>Batalkan</button>`
+            ? `<button type="button" class="queue-cancel-reservation" data-id="${Number(reservation.id)}">Batalkan</button>`
             : '';
         const completeAction = canUpdateReservations && unfinishedItems.length
-            ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Selesai</button>`
+            ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}">Selesaikan</button>`
             : '';
         const addTreatmentAction = !isAlreadyPaid(reservation) && canUpdateReservations
-            ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Tambah treatment</button>`
+            ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}">Tambah treatment</button>`
             : '';
         return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
     }).join('');
     if (queue) {
         const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
         const nextDayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(nextDate);
-        const dayPanel = (title, label, icon, reservations, emptyMessage) => `<section class="reservation-queue-day"><header><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><b>${title}</b><small>${escapeHtml(label)} · Input terbaru di atas</small></div></header>${renderQueueRows(reservations) || `<p class="empty-state">${emptyMessage}</p>`}</section>`;
-        queue.innerHTML = dayPanel('Antrean hari ini', todayLabel, 'today', todayRows, 'Belum ada reservasi pada tanggal ini.')
-            + dayPanel('Reservasi hari berikutnya', nextDayLabel, 'event_upcoming', nextDayRows, 'Belum ada reservasi untuk hari berikutnya.');
+        const dayPanel = (title, label, reservations, emptyMessage) => `<section class="reservation-queue-day"><header><div><b>${title}</b><small>${escapeHtml(label)} · Input terbaru di atas</small></div></header>${renderQueueRows(reservations) || `<p class="empty-state">${emptyMessage}</p>`}</section>`;
+        queue.innerHTML = dayPanel('Antrean hari ini', todayLabel, todayRows, 'Belum ada reservasi pada tanggal ini.')
+            + dayPanel('Reservasi hari berikutnya', nextDayLabel, nextDayRows, 'Belum ada reservasi untuk hari berikutnya.');
     }
 
     document.querySelectorAll('.reservation-detail').forEach((button) => {
@@ -2208,10 +2208,10 @@ function renderMembers() {
         box.innerHTML = members.map((member) => {
             const expiresAt = member.member_expires_at ? new Date(`${member.member_expires_at}T00:00:00`) : null;
             const expired = expiresAt && expiresAt < new Date(new Date().setHours(0, 0, 0, 0));
-            const expiryLabel = expiresAt ? `Berlaku sampai ${expiresAt.toLocaleDateString('id-ID')}` : 'Masa berlaku belum diatur';
+            const expiryLabel = expiresAt ? `<strong class="member-expiry-date">Berlaku sampai ${expiresAt.toLocaleDateString('id-ID')}</strong>` : 'Masa berlaku belum diatur';
             return `<div class="member-row">
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
-            <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')} · ${escapeHtml(expiryLabel)}</small></span>
+            <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')} · ${expiryLabel}</small></span>
             <span>${Number(member.visit_count || 0)} kunjungan</span><em class="${expired ? 'membership-expired' : ''}">${expired ? 'Expired' : 'Aktif'}</em>
             ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit ui-action-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
         </div>`; }).join('') || '<p class="empty-state">Belum ada member.</p>';

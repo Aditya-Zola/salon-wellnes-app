@@ -782,6 +782,7 @@ class SalonSnapshotService
             'phone',
             'email',
             'member_since',
+            'member_expires_at',
             'visit_count',
             'notes',
         ], 'page', $page);
