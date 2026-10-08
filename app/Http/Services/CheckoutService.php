@@ -108,6 +108,28 @@ class CheckoutService
                 'updated_at' => $now,
             ]);
 
+            // Setiap invoice lunas langsung memiliki survey draft. Kasir boleh
+            // mengisinya sekarang atau pelanggan dapat dilayani kemudian dari
+            // halaman Customer Survey tanpa membuat data kedua.
+            DB::table('customer_surveys')->insert([
+                'transaction_id' => $transactionId,
+                'reservation_id' => $reservationId,
+                'customer_id' => $reservation->customer_id,
+                'transaction_number' => $number,
+                'customer_name' => $customer->name ?: 'Pelanggan',
+                'customer_phone' => $customer->phone,
+                'status' => 'draft',
+                'facility_rating' => null,
+                'reception_rating' => null,
+                'return_intent' => null,
+                'price_rating' => null,
+                'feedback' => null,
+                'submitted_by' => null,
+                'submitted_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
             $lineDiscounts = $this->allocateDiscounts($billableItems, $discountPercent, $discountAmount, $discountType);
 
             foreach ($billableItems as $index => $item) {
@@ -218,6 +240,7 @@ class CheckoutService
                     'reservation_id' => $reservationId,
                     'promotion_id' => $promotionId,
                     'manual_discount_percent' => $data['manual_discount_percent'] ?? null,
+                    'manual_discount_amount' => $data['manual_discount_amount'] ?? null,
                     'subtotal' => $subtotal,
                     'product_item_ids' => $productLines->map(fn (array $line): int => (int) $line['product']->id)->all(),
                     'discount_amount' => $discountAmount,
@@ -233,6 +256,7 @@ class CheckoutService
                 'number' => $number,
                 'total' => $total,
                 'base_total' => $baseTotal,
+                'discount_amount' => $discountAmount,
                 'deposit_amount' => $depositAmount,
                 'remaining_base_total' => $remainingBaseTotal,
                 'payment_charge_amount' => $paymentChargeAmount,
@@ -367,6 +391,18 @@ class CheckoutService
     {
         $promotion = null;
 
+        if (isset($data['manual_discount_amount']) && (int) $data['manual_discount_amount'] > 0) {
+            $amount = (int) $data['manual_discount_amount'];
+            if ($amount >= $subtotal) {
+                throw ValidationException::withMessages([
+                    'manual_discount_amount' => ['Diskon nominal harus lebih kecil dari subtotal treatment.'],
+                ]);
+            }
+
+            return [FixedPoint::normalizePercent(0), $amount, null, 'fixed'];
+        }
+
+        // Kompatibilitas data/klien lama yang masih mengirim diskon persen.
         if (isset($data['manual_discount_percent']) && FixedPoint::parse((string) $data['manual_discount_percent'], FixedPoint::PERCENT_SCALE) > 0) {
             $percent = FixedPoint::normalizePercent((string) $data['manual_discount_percent']);
 
@@ -805,6 +841,7 @@ class CheckoutService
                     ->on('transactionItem.reservation_item_id', '=', 'item.id');
             })
             ->where('assignment.employee_id', $employeeId)
+            ->whereNull('assignment.commission_voided_at')
             ->where('transaction.status', 'paid')
             ->where('transaction.transacted_at', '>=', $start)
             ->where('transaction.transacted_at', '<', $end)

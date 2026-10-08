@@ -684,6 +684,24 @@ class SalonController extends Controller
         ));
     }
 
+    public function customerSurveysPage(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'status' => ['nullable', Rule::in(['draft', 'submitted'])],
+        ]);
+
+        return response()->json($this->snapshots->customerSurveysPage(
+            $request->user(),
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+            $data['search'] ?? null,
+            $data['status'] ?? null,
+        ));
+    }
+
     public function productsPage(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -1256,6 +1274,17 @@ class SalonController extends Controller
         return response()->json(['message' => 'Status pengerjaan diperbarui.', ...$result]);
     }
 
+    public function rescheduleReservationItem(Request $request, int $reservation, int $item): JsonResponse
+    {
+        $data = $request->validate([
+            'start_time' => ['required', 'date_format:H:i'],
+        ]);
+
+        $result = $this->reservations->rescheduleItem($reservation, $item, $data['start_time'], $request);
+
+        return response()->json(['message' => 'Jam treatment diperbarui.', ...$result]);
+    }
+
     public function storeEmployee(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -1595,6 +1624,67 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Treatment berhasil ditambahkan.', 'id' => $id], 201);
+    }
+
+    public function storeTreatmentBundle(Request $request): JsonResponse
+    {
+        $data = $this->validatedTreatmentBundle($request);
+        $id = DB::transaction(function () use ($data, $request): int {
+            $now = now();
+            $id = DB::table('treatment_bundles')->insertGetId([
+                'code' => $data['code'] ?? 'PKG-'.Str::upper(Str::random(8)),
+                'name' => $data['name'],
+                'bundle_price' => $data['bundle_price'],
+                'description' => $data['description'] ?? null,
+                'is_active' => (bool) ($data['is_active'] ?? true),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            DB::table('treatment_bundle_items')->insert(collect($data['treatment_ids'])->values()->map(
+                fn (int $treatmentId, int $index): array => [
+                    'treatment_bundle_id' => $id,
+                    'treatment_id' => $treatmentId,
+                    'sort_order' => $index,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            )->all());
+            $this->logger->log($request, 'treatment_bundle.created', 'treatment_bundle', $id, "Menambahkan bundle {$data['name']}");
+
+            return $id;
+        }, 3);
+
+        return response()->json(['message' => 'Treatment bundle berhasil ditambahkan.', 'id' => $id], 201);
+    }
+
+    public function updateTreatmentBundle(Request $request, int $bundle): JsonResponse
+    {
+        abort_unless(DB::table('treatment_bundles')->where('id', $bundle)->exists(), 404, 'Bundle treatment tidak ditemukan.');
+        $data = $this->validatedTreatmentBundle($request, $bundle);
+        DB::transaction(function () use ($data, $bundle, $request): void {
+            $now = now();
+            DB::table('treatment_bundles')->where('id', $bundle)->update([
+                'code' => $data['code'] ?? DB::table('treatment_bundles')->where('id', $bundle)->value('code'),
+                'name' => $data['name'],
+                'bundle_price' => $data['bundle_price'],
+                'description' => $data['description'] ?? null,
+                'is_active' => (bool) ($data['is_active'] ?? true),
+                'updated_at' => $now,
+            ]);
+            DB::table('treatment_bundle_items')->where('treatment_bundle_id', $bundle)->delete();
+            DB::table('treatment_bundle_items')->insert(collect($data['treatment_ids'])->values()->map(
+                fn (int $treatmentId, int $index): array => [
+                    'treatment_bundle_id' => $bundle,
+                    'treatment_id' => $treatmentId,
+                    'sort_order' => $index,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            )->all());
+            $this->logger->log($request, 'treatment_bundle.updated', 'treatment_bundle', $bundle, "Memperbarui bundle {$data['name']}");
+        }, 3);
+
+        return response()->json(['message' => 'Treatment bundle berhasil diperbarui.', 'id' => $bundle]);
     }
 
     public function updateTreatmentCommission(Request $request, int $id): JsonResponse
@@ -1984,9 +2074,10 @@ class SalonController extends Controller
                 ->leftJoin('customers as customer', 'customer.id', '=', 'transaction.customer_id')
                 ->where('transaction.id', $transaction)
                 ->lockForUpdate()
-                ->first(['transaction.*', 'customer.name as customer_name']);
+                ->first(['transaction.*', 'customer.name as customer_name', 'customer.phone']);
             abort_unless($sale && $sale->status === 'paid', 404, 'Transaksi lunas tidak ditemukan.');
-            abort_if(DB::table('customer_surveys')->where('transaction_id', $transaction)->exists(), 409, 'Customer Survey untuk transaksi ini sudah tersimpan dan tidak dapat diubah.');
+            $survey = DB::table('customer_surveys')->where('transaction_id', $transaction)->lockForUpdate()->first();
+            abort_if($survey && $survey->status === 'submitted', 409, 'Customer Survey untuk transaksi ini sudah tersimpan dan tidak dapat diubah.');
 
             $therapists = DB::table('transaction_items as item')
                 ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
@@ -2001,12 +2092,14 @@ class SalonController extends Controller
             abort_if($expectedIds->all() !== $submittedIds->all(), 422, 'Penilaian pelayanan harus diisi untuk setiap therapist pada transaksi ini.');
 
             $now = now();
-            $surveyId = DB::table('customer_surveys')->insertGetId([
+            $surveyPayload = [
                 'transaction_id' => $transaction,
                 'reservation_id' => $sale->reservation_id,
                 'customer_id' => $sale->customer_id,
                 'transaction_number' => $sale->number,
                 'customer_name' => $sale->customer_name ?: 'Pelanggan',
+                'customer_phone' => $sale->phone ?? null,
+                'status' => 'submitted',
                 'facility_rating' => $data['facility_rating'],
                 'reception_rating' => $data['reception_rating'],
                 'return_intent' => $data['return_intent'],
@@ -2014,9 +2107,14 @@ class SalonController extends Controller
                 'feedback' => filled($data['feedback'] ?? null) ? trim($data['feedback']) : null,
                 'submitted_by' => $request->user()?->id,
                 'submitted_at' => $now,
-                'created_at' => $now,
                 'updated_at' => $now,
-            ]);
+            ];
+            if ($survey) {
+                DB::table('customer_surveys')->where('id', $survey->id)->update($surveyPayload);
+                $surveyId = (int) $survey->id;
+            } else {
+                $surveyId = DB::table('customer_surveys')->insertGetId([...$surveyPayload, 'created_at' => $now]);
+            }
             $ratings = collect($data['therapist_ratings'])->keyBy(fn (array $rating): int => (int) $rating['employee_id']);
             if ($therapists->isNotEmpty()) {
                 DB::table('customer_survey_therapist_ratings')->insert($therapists->map(fn (object $therapist): array => [
@@ -2039,6 +2137,44 @@ class SalonController extends Controller
         }, 3);
 
         return response()->json(['message' => 'Customer Survey berhasil disimpan.']);
+    }
+
+    public function voidSurveyCommission(Request $request, int $survey): JsonResponse
+    {
+        $data = $request->validate([
+            'assignment_id' => ['required', 'integer'],
+            'reason' => ['required', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($survey, $data, $request): void {
+            $customerSurvey = DB::table('customer_surveys')->where('id', $survey)->lockForUpdate()->first();
+            abort_unless($customerSurvey && $customerSurvey->status === 'submitted', 422, 'Komisi hanya dapat dibatalkan dari Customer Survey yang sudah diisi.');
+            $assignment = DB::table('reservation_item_staff as assignment')
+                ->join('transaction_items as item', 'item.reservation_item_id', '=', 'assignment.reservation_item_id')
+                ->where('assignment.id', (int) $data['assignment_id'])
+                ->where('item.transaction_id', $customerSurvey->transaction_id)
+                ->where('item.item_type', 'treatment')
+                ->lockForUpdate()
+                ->first(['assignment.*', 'item.name as treatment_name']);
+            abort_unless($assignment, 404, 'Komisi therapist tidak ditemukan pada transaksi survey ini.');
+            abort_if($assignment->commission_voided_at, 422, 'Komisi ini sudah dibatalkan sebelumnya.');
+
+            DB::table('reservation_item_staff')->where('id', $assignment->id)->update([
+                'commission_voided_at' => now(),
+                'commission_voided_by' => $request->user()?->id,
+                'commission_void_survey_id' => $customerSurvey->id,
+                'commission_void_reason' => trim($data['reason']),
+                'updated_at' => now(),
+            ]);
+            $this->logger->log($request, 'commission.voided_from_survey', 'reservation_item_staff', $assignment->id, "Membatalkan komisi {$assignment->treatment_name} dari Customer Survey {$customerSurvey->transaction_number}", [
+                'survey_id' => $customerSurvey->id,
+                'transaction_id' => $customerSurvey->transaction_id,
+                'commission_amount' => $assignment->commission_amount,
+                'reason' => trim($data['reason']),
+            ]);
+        }, 3);
+
+        return response()->json(['message' => 'Komisi therapist dibatalkan dari rekap remunerasi.']);
     }
 
     public function invoicePdf(int $transaction): Response
@@ -2067,8 +2203,20 @@ class SalonController extends Controller
             ->select('item.transaction_item_id', DB::raw('SUM(item.quantity) as quantity'))
             ->groupBy('item.transaction_item_id')
             ->pluck('quantity', 'transaction_item_id');
-        $items->each(function (object $item) use ($returnedQuantities): void {
-            $item->returned_quantity = (string) ($returnedQuantities->get($item->id) ?? '0.0000');
+        $returnedTreatmentAmounts = DB::table('sales_return_treatment_items as item')
+            ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+            ->where('sales_return.transaction_id', $invoice->id)
+            ->where('sales_return.status', 'posted')
+            ->select('item.transaction_item_id', DB::raw('SUM(item.amount) as amount'))
+            ->groupBy('item.transaction_item_id')
+            ->pluck('amount', 'transaction_item_id');
+        $items->each(function (object $item) use ($returnedQuantities, $returnedTreatmentAmounts): void {
+            $item->returned_quantity = $item->item_type === 'product'
+                ? (string) ($returnedQuantities->get($item->id) ?? '0.0000')
+                : '0.0000';
+            $item->returned_amount = $item->item_type === 'treatment'
+                ? (int) ($returnedTreatmentAmounts->get($item->id) ?? 0)
+                : 0;
         });
         $payments = DB::table('transaction_payments as payment')
             ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
@@ -2134,10 +2282,27 @@ class SalonController extends Controller
             ]);
         abort_unless($return, 404, 'Struk retur tidak ditemukan.');
 
-        $items = DB::table('sales_return_items')
+        $productItems = DB::table('sales_return_items')
             ->where('sales_return_id', $return->id)
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->map(function (object $item): object {
+                $item->item_type = 'product';
+                $item->name = $item->product_name;
+
+                return $item;
+            });
+        $treatmentItems = DB::table('sales_return_treatment_items')
+            ->where('sales_return_id', $return->id)
+            ->orderBy('id')
+            ->get()
+            ->map(function (object $item): object {
+                $item->item_type = 'treatment';
+                $item->name = $item->treatment_name;
+
+                return $item;
+            });
+        $items = $productItems->concat($treatmentItems)->values();
         $logoPath = public_path('images/selesa-logo.png');
         $logoDataUri = is_file($logoPath)
             ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
@@ -2667,6 +2832,7 @@ class SalonController extends Controller
                     ->on('transaction_item.reservation_item_id', '=', 'item.id');
             })
             ->where('assignment.employee_id', $employeeId)
+            ->whereNull('assignment.commission_voided_at')
             ->where('transaction.status', 'paid')
             ->where('transaction.transacted_at', '>=', $start)
             ->where('transaction.transacted_at', '<', $end)
@@ -2740,6 +2906,29 @@ class SalonController extends Controller
         );
 
         return response()->json(['message' => 'Resep treatment berhasil diperbarui.']);
+    }
+
+    /** @return array{code?: string, name: string, bundle_price: int, description?: string|null, is_active?: bool, treatment_ids: array<int, int>} */
+    private function validatedTreatmentBundle(Request $request, ?int $ignoreId = null): array
+    {
+        $codeRule = Rule::unique('treatment_bundles', 'code');
+        if ($ignoreId !== null) {
+            $codeRule->ignore($ignoreId);
+        }
+
+        $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/', $codeRule],
+            'name' => ['required', 'string', 'max:150'],
+            'bundle_price' => ['required', 'integer', 'min:1', 'max:999999999999'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'is_active' => ['nullable', 'boolean'],
+            'treatment_ids' => ['required', 'array', 'min:2', 'max:20'],
+            'treatment_ids.*' => ['required', 'integer', 'distinct', 'exists:treatments,id'],
+        ]);
+        $activeCount = DB::table('treatments')->whereIn('id', $data['treatment_ids'])->where('is_active', true)->count();
+        abort_if($activeCount !== count($data['treatment_ids']), 422, 'Semua isi bundle harus berupa treatment aktif.');
+
+        return $data;
     }
 
     private function resolveOrCreateTreatmentCategory(string $name): int

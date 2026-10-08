@@ -74,6 +74,9 @@ let salesView = 'sales';
 let salesSearchTimer;
 let memberPageState = null;
 let memberSearchTimer;
+let customerSurveyPageState = null;
+let customerSurveySearchTimer;
+let customerSurveySummaryExpanded = false;
 let productPageState = null;
 let productSearchTimer;
 let stockHistoryPageState = null;
@@ -115,6 +118,7 @@ const copy = {
     'stok-riwayat': ['Riwayat Keluar-Masuk', 'Telusuri seluruh pergerakan stok produk'],
     'stok-opname': ['Stok opname', 'Tambahkan stok produk yang baru masuk'],
     penjualan: ['Penjualan', 'Riwayat transaksi lunas dan cetak ulang nota'],
+    'customer-survey': ['Customer Survey', 'Draft dan hasil survey pelanggan setelah transaksi'],
     'keuangan-arus-kas': ['Arus Kas', 'Dana masuk, pengeluaran, dan catatan kas salon'],
     'keuangan-laba-rugi': ['Laba-Rugi', 'Pendapatan, HPP, biaya operasional, dan laba bersih'],
     'keuangan-neraca': ['Neraca', 'Posisi aset, kewajiban, dan ekuitas salon'],
@@ -272,6 +276,7 @@ async function refresh() {
     financeFiltersNeedReset = false;
     if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesPageState)?.meta?.current_page || 1);
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
+    if (canViewSales && customerSurveyPageState) await loadCustomerSurveyPage(customerSurveyPageState.meta?.current_page || 1);
     if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
     if (canViewProducts) await loadStockHistoryPage(stockHistoryPageState?.meta?.current_page || 1);
     if (document.getElementById('remunerasi')?.classList.contains('active') || document.getElementById('penggajian')?.classList.contains('active')) await loadRemunerationReport();
@@ -729,6 +734,7 @@ function openPage(id) {
         renderReservations();
     }
     if (pageId === 'remunerasi' || pageId === 'penggajian') loadRemunerationReport().catch((error) => toast(error.message, true));
+    if (pageId === 'customer-survey') loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1).catch((error) => toast(error.message, true));
     scrollTo(0, 0);
     if (pageId === 'arsip-remunerasi') return loadRemunerationArchives().catch((error) => toast(error.message, true));
 }
@@ -1002,7 +1008,7 @@ function renderReservations() {
                 const span = Math.max(1, Math.ceil((entry.end - entry.start) / 30));
                 const staffName = employeeName(entry.assignment);
                 const ariaLabel = `${entry.timing.startLabel} sampai ${entry.timing.endLabel}, ${reservationCustomerName(entry.reservation)}, ${itemTreatmentName(entry.item)}, therapist ${staffName}`;
-                const concurrentClass = ' is-therapist-slot';
+                const concurrentClass = laneCount > 1 ? ' is-therapist-slot' : '';
                 const eventLeft = (lane / laneCount) * 100;
                 const eventWidth = 100 / laneCount;
                 return `<button type="button" class="calendar-event therapist-day-event${concurrentClass} ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(entry.reservation.id)}" data-item-index="${entry.itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--event-left:${eventLeft}%;--event-width:${eventWidth}%;--service-ratio:100%"><span class="calendar-event-main"><time>${escapeHtml(entry.timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(entry.reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(entry.item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(entry.timing.endLabel)}</span></button>`;
@@ -1083,7 +1089,10 @@ function renderReservations() {
         const addTreatmentAction = !isAlreadyPaid(reservation) && canUpdateReservations
             ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}">Tambah treatment</button>`
             : '';
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
+        const editTimeAction = canUpdateReservations && unfinishedItems.length
+            ? `<button type="button" class="queue-edit-time" data-id="${Number(reservation.id)}">Ubah jam</button>`
+            : '';
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction || editTimeAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${editTimeAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
     }).join('');
     if (queue) {
         const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
@@ -1121,6 +1130,12 @@ function renderReservations() {
             if (reservation) openCashierTreatmentPicker(reservation);
         };
     });
+    document.querySelectorAll('.queue-edit-time').forEach((button) => {
+        button.onclick = () => {
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (reservation) openReservationTimeEditor(reservation);
+        };
+    });
     document.querySelectorAll('.queue-cancel-reservation').forEach((button) => {
         button.onclick = async () => {
             const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -1142,6 +1157,23 @@ function canCancelReservation(reservation) {
     if (!canUpdateReservations || isAlreadyPaid(reservation) || ['cancelled', 'completed'].includes(reservation.status)) return false;
 
     return !reservationItems(reservation).some((item) => item.work_status === 'finished');
+}
+
+function openReservationTimeEditor(reservation) {
+    const items = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
+    if (!items.length) return toast('Tidak ada treatment aktif yang dapat diubah jamnya.', true);
+    const itemOptions = items.map((item) => `${Number(item.id)}|${itemTreatmentName(item)} · saat ini ${itemStartTime(item, reservation)}`);
+    const timeOptions = Array.from({ length: 157 }, (_, index) => {
+        const total = (9 * 60) + (index * 5);
+        const value = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        return `${value}|${value}`;
+    });
+    quickForm(`Ubah jam · ${reservation.queue_number || reservation.booking_code}`, [
+        ['item_id', 'Treatment', 'select', itemOptions, String(items[0].id)],
+        ['start_time', 'Jam mulai', 'select', timeOptions, itemStartTime(items[0], reservation)],
+    ], (data) => api(`/operasional/reservasi/${Number(reservation.id)}/item/${Number(data.item_id)}/jam`, {
+        method: 'PATCH', body: JSON.stringify({ start_time: data.start_time }),
+    }));
 }
 
 async function cancelReservation(reservation, detailModal = null) {
@@ -1191,6 +1223,26 @@ async function completeReservationTreatments(reservation) {
     await refresh();
 }
 
+async function cancelReservationTreatment(reservation, item, detailModal) {
+    const confirmed = await confirmAction({
+        title: 'Batalkan treatment?',
+        message: `Treatment ${itemTreatmentName(item)} akan dibatalkan dan tetap tersimpan pada riwayat reservasi.`,
+        confirmLabel: 'Batalkan treatment',
+        icon: 'cancel',
+    });
+    if (!confirmed) return;
+
+    quickForm('Alasan pembatalan treatment', [['reason', 'Alasan pembatalan', 'text']], async (data) => {
+        const result = await api(`/operasional/reservasi/${Number(reservation.id)}/item/${Number(item.id)}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'cancelled', reason: data.reason }),
+        });
+        detailModal?.remove();
+        await refresh();
+        return result;
+    });
+}
+
 function openReservationDetail(reservation) {
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
@@ -1222,7 +1274,7 @@ function openReservationDetail(reservation) {
                     <span>Otomatis selesai <b>${escapeHtml(itemAutoCompleteTime(item, reservation))}</b></span>
                     <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
                 </div>
-                <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small></div>
+                <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small>${!paid && canUpdateReservations && !['finished', 'cancelled'].includes(item.work_status) ? `<button type="button" class="reservation-item-cancel ui-action-delete" data-item-id="${Number(item.id)}">Batalkan treatment</button>` : ''}</div>
             </article>`;
         }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
         <footer>${!paid && canUpdateReservations
@@ -1239,6 +1291,12 @@ function openReservationDetail(reservation) {
     wrapper.querySelector('.reservation-add-treatment')?.addEventListener('click', () => {
         wrapper.remove();
         openCashierTreatmentPicker(reservation);
+    });
+    wrapper.querySelectorAll('.reservation-item-cancel').forEach((button) => {
+        button.onclick = () => {
+            const item = items.find((candidate) => Number(candidate.id) === Number(button.dataset.itemId));
+            if (item) cancelReservationTreatment(reservation, item, wrapper).catch((error) => toast(error.message, true));
+        };
     });
 }
 
@@ -1269,8 +1327,14 @@ function resetCashier() {
 }
 
 function selectedDiscount() {
+    return Number(document.getElementById('discount')?.value || 0);
+}
+
+function selectedDiscountAmount(serviceSubtotal) {
     const manual = Number(document.getElementById('manual-discount')?.value || 0);
-    return manual > 0 ? manual : Number(document.getElementById('discount')?.value || 0);
+    if (manual > 0) return Math.min(Math.max(0, manual), Math.max(0, serviceSubtotal - 1));
+
+    return Math.round(serviceSubtotal * selectedDiscount() / 100);
 }
 
 function selectedTotal() {
@@ -1283,7 +1347,7 @@ function selectedInvoiceTotal() {
     if (!reservation) return 0;
     const serviceSubtotal = reservationSubtotal(reservation);
     const productSubtotal = reservationProductItems(reservation).reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
-    return Math.max(0, Math.round(serviceSubtotal - (serviceSubtotal * selectedDiscount() / 100) + productSubtotal));
+    return Math.max(0, serviceSubtotal - selectedDiscountAmount(serviceSubtotal) + productSubtotal);
 }
 
 function reservationProductItems(reservation) {
@@ -1342,8 +1406,7 @@ function selectCashier(id) {
     const productItems = reservationProductItems(reservation);
     const productSubtotal = productItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
     const subtotal = serviceSubtotal + productSubtotal;
-    const discount = selectedDiscount();
-    const discountAmount = Math.round(serviceSubtotal * discount / 100);
+    const discountAmount = selectedDiscountAmount(serviceSubtotal);
     const total = subtotal - discountAmount;
     const depositAmount = reservationDepositAmount(reservation);
     const remainingTotal = Math.max(0, total - depositAmount);
@@ -1395,7 +1458,7 @@ function selectCashier(id) {
     resetPaymentRows();
 }
 
-function openCashierProductPicker() {
+function openCashierProductPickerLegacy() {
     if (!selectedReservation) {
         toast('Pilih antrean terlebih dahulu.', true);
         return;
@@ -1418,11 +1481,34 @@ function openCashierProductPicker() {
     const quantity = wrapper.querySelector('input[name="quantity"]');
     const stockLabel = wrapper.querySelector('#product-picker-stock');
     const submitButton = wrapper.querySelector('button.primary');
+    const productField = select.closest('label');
+    const searchField = document.createElement('label');
+    searchField.className = 'cashier-product-search';
+    searchField.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir">';
+    productField.before(searchField);
+    const searchInput = searchField.querySelector('input');
     select.innerHTML = products.map((product) => {
         const sellable = Number(product.selling_price || 0) > 0;
         return `<option value="${Number(product.id)}" ${sellable ? '' : 'disabled'}>${escapeHtml(product.name)} · ${sellable ? money(product.selling_price) : 'Harga jual belum diatur'}</option>`;
     }).join('');
     submitButton.disabled = !sellableProducts.length;
+    const renderProductOptions = (term = '') => {
+        const keyword = String(term).trim().toLowerCase();
+        const currentProductId = Number(select.value);
+        const matches = products.filter((product) => !keyword || [product.name, product.code, product.category]
+            .some((value) => String(value || '').toLowerCase().includes(keyword)));
+        select.innerHTML = matches.length
+            ? matches.map((product) => {
+                const sellable = Number(product.selling_price || 0) > 0;
+                return `<option value="${Number(product.id)}" ${sellable ? '' : 'disabled'}>${escapeHtml(product.name)} · ${sellable ? money(product.selling_price) : 'Harga jual belum diatur'}</option>`;
+            }).join('')
+            : '<option value="" disabled selected>Tidak ada produk yang cocok</option>';
+        if (matches.some((product) => Number(product.id) === currentProductId && Number(product.selling_price || 0) > 0)) {
+            select.value = String(currentProductId);
+        }
+        submitButton.disabled = !matches.some((product) => Number(product.selling_price || 0) > 0);
+        return matches;
+    };
     const syncStock = () => {
         const product = products.find((item) => Number(item.id) === Number(select.value));
         stockLabel.textContent = product ? `Stok tersedia: ${productStock(product)} ${productUnit(product)} · Harga jual: ${money(product.selling_price)}` : '';
@@ -1436,6 +1522,10 @@ function openCashierProductPicker() {
     };
     syncStock();
     select.onchange = syncStock;
+    searchInput.addEventListener('input', () => {
+        renderProductOptions(searchInput.value);
+        syncStock();
+    });
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('form').onsubmit = (event) => {
         event.preventDefault();
@@ -1453,6 +1543,101 @@ function openCashierProductPicker() {
         api(`/operasional/reservasi/${Number(selectedReservation)}/produk`, {
             method: 'POST',
             body: JSON.stringify({ product_id: Number(product.id), quantity: String(amount) }),
+        }).then(async (result) => {
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+            selectCashier(selectedReservation);
+        }).catch((error) => {
+            submitButton.disabled = false;
+            toast(error.message, true);
+        });
+    };
+}
+
+function openCashierProductPicker() {
+    if (!selectedReservation) {
+        toast('Pilih antrean terlebih dahulu.', true);
+        return;
+    }
+
+    const products = array(state.products)
+        .filter((product) => Number(product.is_active ?? 1) === 1 && productStock(product) > 0 && Number(product.selling_price || 0) > 0)
+        .sort((first, second) => String(first.name || '').localeCompare(String(second.name || ''), 'id'));
+    if (!products.length) {
+        toast('Tidak ada produk aktif dengan stok dan harga jual yang tersedia.', true);
+        return;
+    }
+
+    let selectedProduct = products[0];
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box cashier-product-picker-modal">
+        <div class="modal-head"><div><h2>Tambah produk</h2><p>Cari lalu pilih produk retail yang akan ditambahkan.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+        <form>
+            <div class="cashier-product-picker-content">
+                <label class="cashier-product-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" name="product_search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir"></label>
+                <div class="cashier-product-results" role="listbox" aria-label="Hasil pencarian produk"></div>
+                <div class="cashier-product-selected" aria-live="polite"></div>
+                <label class="cashier-product-quantity">Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label>
+            </div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Tambah produk</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    const searchInput = wrapper.querySelector('input[name="product_search"]');
+    const resultBox = wrapper.querySelector('.cashier-product-results');
+    const selectedBox = wrapper.querySelector('.cashier-product-selected');
+    const quantity = wrapper.querySelector('input[name="quantity"]');
+    const submitButton = wrapper.querySelector('button[type="submit"]');
+    const productMatches = (term = '') => {
+        const keyword = String(term).trim().toLocaleLowerCase('id');
+        return products.filter((product) => !keyword || [product.name, product.code, product.category]
+            .some((value) => String(value || '').toLocaleLowerCase('id').includes(keyword)));
+    };
+    const syncSelectedProduct = () => {
+        if (!selectedProduct) {
+            selectedBox.innerHTML = '<p>Pilih produk dari hasil pencarian.</p>';
+            submitButton.disabled = true;
+            return;
+        }
+        const stock = productStock(selectedProduct);
+        quantity.max = String(stock);
+        if (Number(quantity.value || 0) > stock) quantity.value = String(stock);
+        selectedBox.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">inventory_2</span><div><b>${escapeHtml(selectedProduct.name)}</b><small>${escapeHtml(selectedProduct.code || selectedProduct.category || 'Produk retail')} &middot; Stok ${Number(stock).toLocaleString('id-ID')} ${escapeHtml(productUnit(selectedProduct))}</small></div><strong>${money(selectedProduct.selling_price)}</strong>`;
+        submitButton.disabled = false;
+    };
+    const renderResults = (term = '') => {
+        const matches = productMatches(term);
+        resultBox.innerHTML = matches.length
+            ? matches.map((product) => `<button type="button" class="cashier-product-result${Number(product.id) === Number(selectedProduct?.id) ? ' is-selected' : ''}" data-product-id="${Number(product.id)}" role="option" aria-selected="${Number(product.id) === Number(selectedProduct?.id)}"><span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || 'Produk retail')} &middot; Stok ${Number(productStock(product)).toLocaleString('id-ID')} ${escapeHtml(productUnit(product))}</small></span><strong>${money(product.selling_price)}</strong></button>`).join('')
+            : '<p class="cashier-product-empty">Produk tidak ditemukan.</p>';
+        resultBox.querySelectorAll('.cashier-product-result').forEach((button) => {
+            button.onclick = () => {
+                selectedProduct = products.find((product) => Number(product.id) === Number(button.dataset.productId)) || null;
+                renderResults(searchInput.value);
+                syncSelectedProduct();
+            };
+        });
+    };
+
+    renderResults();
+    syncSelectedProduct();
+    searchInput.focus();
+    searchInput.addEventListener('input', () => renderResults(searchInput.value));
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = (event) => {
+        event.preventDefault();
+        const amount = Number(quantity.value || 0);
+        if (!selectedProduct || amount <= 0 || amount > productStock(selectedProduct)) {
+            toast('Jumlah produk melebihi stok yang tersedia.', true);
+            return;
+        }
+        submitButton.disabled = true;
+        api(`/operasional/reservasi/${Number(selectedReservation)}/produk`, {
+            method: 'POST',
+            body: JSON.stringify({ product_id: Number(selectedProduct.id), quantity: String(amount) }),
         }).then(async (result) => {
             wrapper.remove();
             toast(result.message);
@@ -1486,7 +1671,7 @@ function openCashierAddPicker() {
     };
 }
 
-function openCashierTreatmentPicker(reservationOverride = null) {
+function openCashierTreatmentPickerLegacy(reservationOverride = null) {
     const reservation = reservationOverride || array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
     const treatments = array(state.treatments).filter((treatment) => Number(treatment.is_active ?? 1) === 1);
     if (!reservation || !treatments.length) {
@@ -1565,6 +1750,137 @@ function openCashierTreatmentPicker(reservationOverride = null) {
     loadAvailability();
 }
 
+function openCashierTreatmentPicker(reservationOverride = null) {
+    const reservation = reservationOverride || array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+    const treatments = array(state.treatments)
+        .filter((treatment) => Number(treatment.is_active ?? 1) === 1)
+        .sort((first, second) => String(first.name || '').localeCompare(String(second.name || ''), 'id'));
+    if (!reservation || !treatments.length) {
+        toast('Tidak ada treatment aktif yang dapat ditambahkan.', true);
+        return;
+    }
+
+    let selectedTreatment = treatments[0];
+    const defaultTime = String(reservation.reservation_time || '09:00').slice(0, 5);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box cashier-treatment-picker-modal">
+        <div class="modal-head"><div><h2>Tambah treatment</h2><p>Cari layanan, lalu atur jadwal dan therapist sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+        <form>
+            <div class="cashier-treatment-picker-content">
+                <label class="cashier-product-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" name="treatment_search" placeholder="Cari nama atau kategori treatment..." autocomplete="off" aria-label="Cari treatment kasir"></label>
+                <div class="cashier-treatment-results" role="listbox" aria-label="Hasil pencarian treatment"></div>
+                <div class="cashier-treatment-selected" aria-live="polite"></div>
+                <label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label>
+                <label>Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label>
+                <p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist...</p>
+            </div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary" disabled>Tambahkan treatment</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    const searchInput = wrapper.querySelector('input[name="treatment_search"]');
+    const resultBox = wrapper.querySelector('.cashier-treatment-results');
+    const selectedBox = wrapper.querySelector('.cashier-treatment-selected');
+    const timeSelect = wrapper.querySelector('[name="start_time"]');
+    const employeeSelect = wrapper.querySelector('[name="employee_id"]');
+    const availability = wrapper.querySelector('.cashier-treatment-availability');
+    const submitButton = wrapper.querySelector('button[type="submit"]');
+    const matches = (term = '') => {
+        const keyword = String(term).trim().toLocaleLowerCase('id');
+        return treatments.filter((treatment) => !keyword || [treatment.name, treatment.category]
+            .some((value) => String(value || '').toLocaleLowerCase('id').includes(keyword)));
+    };
+    const syncSelectedTreatment = () => {
+        if (!selectedTreatment) {
+            selectedBox.innerHTML = '<p>Pilih treatment dari hasil pencarian.</p>';
+            return;
+        }
+        const duration = Number(selectedTreatment.duration_minutes || selectedTreatment.duration || 0);
+        selectedBox.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">spa</span><div><b>${escapeHtml(selectedTreatment.name)}</b><small>${escapeHtml(selectedTreatment.category || 'Treatment')} &middot; ${duration ? `${duration} menit` : 'Durasi belum diatur'}</small></div><strong>${money(treatmentPrice(selectedTreatment))}</strong>`;
+    };
+    const syncSubmitState = () => {
+        submitButton.disabled = !selectedTreatment || employeeSelect.disabled || !employeeSelect.value;
+    };
+    const loadAvailability = async () => {
+        if (!selectedTreatment) return;
+        employeeSelect.disabled = true;
+        submitButton.disabled = true;
+        availability.textContent = 'Memeriksa jadwal therapist...';
+        try {
+            const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(reservation.reservation_date)}&start_time=${encodeURIComponent(timeSelect.value)}&treatment_id=${encodeURIComponent(selectedTreatment.id)}`);
+            const available = array(data.employees).filter((employee) => employee.available);
+            employeeSelect.innerHTML = available.length
+                ? `<option value="">Pilih therapist</option>${available.map((employee) => `<option value="${Number(employee.id)}">${escapeHtml(employee.name)}${employee.specialty ? ` · ${escapeHtml(employee.specialty)}` : ''}</option>`).join('')}`
+                : '<option value="">Tidak ada therapist tersedia</option>';
+            employeeSelect.disabled = !available.length;
+            availability.textContent = available.length
+                ? `${available.length} therapist tersedia untuk ${timeSelect.value}.`
+                : `Tidak ada therapist tersedia pada ${timeSelect.value}. Coba jam lain.`;
+            syncSubmitState();
+        } catch (error) {
+            employeeSelect.innerHTML = '<option value="">Jadwal tidak dapat dimuat</option>';
+            employeeSelect.disabled = true;
+            availability.textContent = error.message;
+            syncSubmitState();
+            toast(error.message, true);
+        }
+    };
+    const renderResults = (term = '') => {
+        const found = matches(term);
+        resultBox.innerHTML = found.length
+            ? found.map((treatment) => {
+                const duration = Number(treatment.duration_minutes || treatment.duration || 0);
+                return `<button type="button" class="cashier-treatment-result${Number(treatment.id) === Number(selectedTreatment?.id) ? ' is-selected' : ''}" data-treatment-id="${Number(treatment.id)}" role="option" aria-selected="${Number(treatment.id) === Number(selectedTreatment?.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category || 'Treatment')} &middot; ${duration ? `${duration} menit` : 'Durasi belum diatur'}</small></span><strong>${money(treatmentPrice(treatment))}</strong></button>`;
+            }).join('')
+            : '<p class="cashier-product-empty">Treatment tidak ditemukan.</p>';
+        resultBox.querySelectorAll('.cashier-treatment-result').forEach((button) => {
+            button.onclick = () => {
+                selectedTreatment = treatments.find((treatment) => Number(treatment.id) === Number(button.dataset.treatmentId)) || null;
+                renderResults(searchInput.value);
+                syncSelectedTreatment();
+                loadAvailability();
+            };
+        });
+    };
+
+    renderResults();
+    syncSelectedTreatment();
+    searchInput.focus();
+    searchInput.addEventListener('input', () => renderResults(searchInput.value));
+    timeSelect.addEventListener('change', loadAvailability);
+    employeeSelect.addEventListener('change', syncSubmitState);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        if (!selectedTreatment || !employeeSelect.value) {
+            toast('Pilih therapist yang tersedia.', true);
+            return;
+        }
+        submitButton.disabled = true;
+        try {
+            const result = await api(`/operasional/reservasi/${Number(reservation.id)}/item`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    treatment_id: Number(selectedTreatment.id),
+                    start_time: timeSelect.value,
+                    staff: [{ employee_id: Number(employeeSelect.value), role: 'primary' }],
+                }),
+            });
+            wrapper.remove();
+            toast(result.message);
+            await refresh();
+            if (Number(selectedReservation) === Number(reservation.id)) selectCashier(reservation.id);
+        } catch (error) {
+            submitButton.disabled = false;
+            toast(error.message, true);
+            if (error.status === 409) loadAvailability();
+        }
+    };
+    loadAvailability();
+}
+
 function receiptPayload(result, reservation, productItems, payments) {
     const treatments = reservationItems(reservation)
         .filter((item) => item.work_status !== 'cancelled')
@@ -1586,7 +1902,7 @@ function receiptPayload(result, reservation, productItems, payments) {
     }));
     const serviceSubtotal = reservationSubtotal(reservation);
     const subtotal = serviceSubtotal + products.reduce((total, item) => total + item.total, 0);
-    const discount = Math.round(serviceSubtotal * selectedDiscount() / 100);
+    const discount = selectedDiscountAmount(serviceSubtotal);
 
     return {
         number: compactInvoiceNumber(result.number || result.transaction_number),
@@ -1873,9 +2189,9 @@ function openReceiptPrintChoice(receipt, options = {}) {
                 method: 'POST',
                 body: JSON.stringify({ therapist_ratings: therapistRatings, facility_rating: facilityRating, reception_rating: receptionRating, return_intent: returnIntent, price_rating: priceRating, feedback: String(wrapper.querySelector('[name="survey-feedback"]')?.value || '').trim() }),
             });
-            wrapper.querySelector('.customer-survey-panel')?.classList.add('is-saved');
-            wrapper.querySelectorAll('.customer-survey-panel input, .customer-survey-panel textarea').forEach((input) => { input.disabled = true; });
-            saveButton.textContent = 'Customer Survey tersimpan';
+            wrapper.querySelector('.transaction-success-modal')?.classList.add('is-survey-finished');
+            wrapper.querySelector('.customer-survey-panel')?.remove();
+            wrapper.querySelector('.customer-survey-toggle')?.remove();
             toast(result.message);
             await refresh();
         } catch (error) {
@@ -2057,6 +2373,150 @@ function renderTreatments() {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
         button.onclick = () => openRecipeInfo(treatment);
     });
+
+    const bundleBox = document.getElementById('treatment-bundle-grid');
+    if (bundleBox) {
+        const bundles = array(state.treatment_bundles);
+        bundleBox.innerHTML = bundles.map((bundle) => `<article class="treatment-card treatment-bundle-card">
+            <span class="category">Bundle</span><h3>${escapeHtml(bundle.name)}</h3>
+            <p>${array(bundle.items).map((item, index) => `<span>${index + 1}. ${escapeHtml(item.name)}</span>`).join('')}</p>
+            <div class="treatment-foot"><span><small>Harga normal ${money(bundle.normal_price)}</small><b>${money(bundle.bundle_price)}</b><small>Hemat ${money(bundle.saving_amount)}</small></span><button type="button" class="recipe-button bundle-ingredients" data-id="${Number(bundle.id)}">Lihat isi</button></div>
+        </article>`).join('') || '<p class="empty-state">Belum ada treatment bundle.</p>';
+        bundleBox.querySelectorAll('.bundle-ingredients').forEach((button) => {
+            button.onclick = () => {
+                const bundle = bundles.find((item) => Number(item.id) === Number(button.dataset.id));
+                if (!bundle) return;
+                const wrapper = document.createElement('div');
+                wrapper.className = 'modal open quick-modal';
+                wrapper.innerHTML = `<div class="modal-box recipe-info-modal"><div class="modal-head"><div><h2>${escapeHtml(bundle.name)}</h2><p>Ingredients treatment bundle</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><ul class="recipe-summary">${array(bundle.items).map((item, index) => `<li><span>${index + 1}. ${escapeHtml(item.name)}</span><b>${Number(item.duration_minutes)} menit</b></li>`).join('')}</ul><footer><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
+                document.body.appendChild(wrapper);
+                wrapper.querySelectorAll('.quick-close').forEach((close) => { close.onclick = () => wrapper.remove(); });
+            };
+        });
+    }
+}
+
+async function loadCustomerSurveyPage(page = 1) {
+    if (!canViewSales) return;
+    const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    const search = document.getElementById('customer-survey-search')?.value.trim();
+    const status = document.getElementById('customer-survey-status')?.value;
+    if (search) params.set('search', search);
+    if (status) params.set('status', status);
+    customerSurveyPageState = await api(`/operasional/customer-survey?${params.toString()}`);
+    const box = document.getElementById('customer-survey-list');
+    if (!box) return;
+    const rows = array(customerSurveyPageState.data);
+    const therapistSummary = array(customerSurveyPageState.therapist_summary);
+    const summaryBox = document.getElementById('customer-survey-therapist-summary');
+    if (summaryBox) {
+        const visibleTherapists = customerSurveySummaryExpanded ? therapistSummary : therapistSummary.slice(0, 6);
+        summaryBox.innerHTML = `<div class="customer-survey-summary-head"><div><h3>Penilaian total therapist</h3><p>Akumulasi dari seluruh Customer Survey yang sudah diisi.</p></div></div><div class="customer-survey-summary-grid">${visibleTherapists.map((therapist) => `<article><b>${escapeHtml(therapist.employee_name)}</b><strong>${Number(therapist.average_score || 0).toFixed(1)}<small>/ 5</small></strong><span>${Number(therapist.total_surveys || 0)} survey masuk</span></article>`).join('') || '<p class="empty-state">Belum ada penilaian therapist.</p>'}</div>${therapistSummary.length > 6 ? `<button type="button" class="customer-survey-summary-toggle secondary">${customerSurveySummaryExpanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${therapistSummary.length} terapis`}</button>` : ''}`;
+        summaryBox.querySelector('.customer-survey-summary-toggle')?.addEventListener('click', () => {
+            customerSurveySummaryExpanded = !customerSurveySummaryExpanded;
+            loadCustomerSurveyPage(page).catch((error) => toast(error.message, true));
+        });
+    }
+    box.innerHTML = rows.map((survey) => `<div class="tr"><span><b>${escapeHtml(survey.transaction_number)}</b><small>${escapeHtml(survey.customer_name)}</small></span><span>${escapeHtml(survey.customer_phone || '-')}</span><span>${escapeHtml(array(survey.treatments).join(', ') || '-')}</span><span><em class="status-${escapeHtml(survey.status)}">${survey.status === 'draft' ? 'Belum diisi' : 'Sudah diisi'}</em></span><span class="customer-survey-actions">${survey.status === 'draft' ? `<button type="button" class="customer-survey-fill ui-action-edit" data-id="${Number(survey.id)}">Isi survey</button>` : `<button type="button" class="customer-survey-detail ui-action-view" data-id="${Number(survey.id)}">Detail</button><button type="button" class="customer-survey-followup ui-action-delete" data-id="${Number(survey.id)}">Tindak lanjut</button>`}</span></div>`).join('') || '<p class="empty-state">Tidak ada customer survey.</p>';
+    box.querySelectorAll('.customer-survey-fill').forEach((button) => {
+        button.onclick = () => {
+            const survey = rows.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (survey) openCustomerSurveyDraft(survey);
+        };
+    });
+    box.querySelectorAll('.customer-survey-detail').forEach((button) => {
+        button.onclick = () => {
+            const survey = rows.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (survey) openCustomerSurveyDetail(survey);
+        };
+    });
+    box.querySelectorAll('.customer-survey-followup').forEach((button) => {
+        button.onclick = () => {
+            const survey = rows.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (survey) openSurveyCommissionFollowup(survey);
+        };
+    });
+}
+
+function openCustomerSurveyDetail(survey) {
+    const labels = {
+        therapist: { very_satisfied: 'Sangat puas', standard: 'Standar', dissatisfied: 'Kurang puas', very_dissatisfied: 'Sangat tidak puas' },
+        facility: { very_suitable: 'Sangat sesuai', standard: 'Standar', poor: 'Kurang sesuai' },
+        reception: { very_good: 'Sangat baik', good: 'Baik', neutral: 'Biasa', bad: 'Buruk' },
+        returnIntent: { yes: 'Ya', maybe: 'Mungkin', no: 'Tidak' },
+        price: { fair: 'Cocok', worth_it: 'Mahal tapi worth it', expensive: 'Mahal' },
+    };
+    const value = (group, key) => labels[group][key] || '-';
+    const ratings = array(survey.therapist_ratings);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box customer-survey-detail-modal">
+        <div class="modal-head"><div><h2>Detail Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}${survey.submitted_at ? ` &middot; ${escapeHtml(formatTransactionDate(survey.submitted_at))}` : ''}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="customer-survey-detail-content">
+            <section><h3>Penilaian therapist</h3><div class="customer-survey-rating-list">${ratings.map((rating) => `<div><span>${escapeHtml(rating.employee_name)}</span><b>${escapeHtml(value('therapist', rating.rating))}</b></div>`).join('') || '<p>Belum ada penilaian therapist.</p>'}</div></section>
+            <section><h3>Penilaian kunjungan</h3><div class="customer-survey-answer-grid"><div><small>Fasilitas</small><b>${escapeHtml(value('facility', survey.facility_rating))}</b></div><div><small>Resepsionis</small><b>${escapeHtml(value('reception', survey.reception_rating))}</b></div><div><small>Ingin kembali</small><b>${escapeHtml(value('returnIntent', survey.return_intent))}</b></div><div><small>Penilaian harga</small><b>${escapeHtml(value('price', survey.price_rating))}</b></div></div></section>
+            <section><h3>Masukan pelanggan</h3><p class="customer-survey-feedback-detail">${escapeHtml(survey.feedback || 'Pelanggan tidak memberi masukan tertulis.')}</p></section>
+        </div>
+        <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+    </div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+}
+
+function openSurveyCommissionFollowup(survey) {
+    const assignments = array(survey.commission_assignments);
+    // Survey commission follow-up uses a structured table below.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    queueMicrotask(() => {
+        wrapper.innerHTML = `<div class="modal-box commission-followup-modal">
+            <div class="modal-head"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+            <div class="commission-followup-content"><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list"><div class="commission-followup-heading"><span>Treatment</span><span>Terapis</span><span>Komisi</span><span>Aksi</span></div>${assignments.map((assignment) => `<article><b>${escapeHtml(assignment.treatment_name)}</b><span class="commission-therapist">${escapeHtml(assignment.employee_name)}</span><span class="commission-amount">${money(assignment.commission_amount)}</span>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `<small>${escapeHtml(assignment.commission_void_reason)}</small>` : ''}</em>` : `<button type="button" class="void-survey-commission ui-action-delete" data-assignment-id="${Number(assignment.id)}">Batalkan</button>`}</article>`).join('') || '<p class="empty-state">Tidak ada komisi treatment pada transaksi ini.</p>'}</div></div>
+            <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+        </div>`;
+        wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+        wrapper.querySelectorAll('.void-survey-commission').forEach((button) => {
+            button.onclick = () => quickForm('Alasan pembatalan komisi', [['reason', 'Alasan komplain', 'text']], async (data) => {
+                const result = await api(`/operasional/customer-survey/${Number(survey.id)}/batalkan-komisi`, { method: 'POST', body: JSON.stringify({ assignment_id: Number(button.dataset.assignmentId), reason: data.reason }) });
+                wrapper.remove();
+                await loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1);
+                return result;
+            });
+        });
+    });
+    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list">${assignments.map((assignment) => `<article><span><b>${escapeHtml(assignment.treatment_name)}</b><small>${escapeHtml(assignment.employee_name)} · ${money(assignment.commission_amount)}</small>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `: ${escapeHtml(assignment.commission_void_reason)}` : ''}</em>` : ''}</span>${assignment.commission_voided_at ? '' : `<button type="button" class="void-survey-commission ui-action-delete" data-assignment-id="${Number(assignment.id)}">Batalkan komisi</button>`}</article>`).join('') || '<p class="empty-state">Tidak ada komisi treatment pada transaksi ini.</p>'}</div><footer><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelectorAll('.void-survey-commission').forEach((button) => {
+        button.onclick = () => quickForm('Alasan pembatalan komisi', [['reason', 'Alasan komplain', 'text']], async (data) => {
+            const result = await api(`/operasional/customer-survey/${Number(survey.id)}/batalkan-komisi`, { method: 'POST', body: JSON.stringify({ assignment_id: Number(button.dataset.assignmentId), reason: data.reason }) });
+            wrapper.remove();
+            await loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1);
+            return result;
+        });
+    });
+}
+
+function openCustomerSurveyDraft(survey) {
+    const therapists = array(survey.therapists);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    const therapistRatings = therapists.map((therapist) => `<label>${escapeHtml(therapist.name)}<select name="therapist-${Number(therapist.id)}"><option value="">Pilih penilaian</option><option value="very_satisfied">Sangat puas</option><option value="standard">Standar</option><option value="dissatisfied">Kurang puas</option><option value="very_dissatisfied">Sangat tidak puas</option></select></label>`).join('');
+    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields">${therapistRatings}<label>Fasilitas<select name="facility_rating" required><option value="">Pilih penilaian</option><option value="very_suitable">Sangat sesuai</option><option value="standard">Standar</option><option value="poor">Kurang sesuai</option></select></label><label>Resepsionis<select name="reception_rating" required><option value="">Pilih penilaian</option><option value="very_good">Sangat baik</option><option value="good">Baik</option><option value="neutral">Biasa</option><option value="bad">Buruk</option></select></label><label>Ingin kembali<select name="return_intent" required><option value="">Pilih jawaban</option><option value="yes">Ya</option><option value="maybe">Mungkin</option><option value="no">Tidak</option></select></label><label>Penilaian harga<select name="price_rating" required><option value="">Pilih penilaian</option><option value="fair">Cocok</option><option value="worth_it">Mahal tapi worth it</option><option value="expensive">Mahal</option></select></label><label>Masukan<textarea name="feedback" maxlength="1000"></textarea></label></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan survey</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const ratings = therapists.map((therapist) => ({ employee_id: Number(therapist.id), rating: form.elements[`therapist-${Number(therapist.id)}`]?.value || '' }));
+        if (ratings.some((rating) => !rating.rating)) return toast('Penilaian seluruh therapist wajib diisi.', true);
+        try {
+            await api(`/operasional/penjualan/${Number(survey.transaction_id)}/customer-survey`, { method: 'POST', body: JSON.stringify({ therapist_ratings: ratings, facility_rating: form.elements.facility_rating.value, reception_rating: form.elements.reception_rating.value, return_intent: form.elements.return_intent.value, price_rating: form.elements.price_rating.value, feedback: form.elements.feedback.value.trim() || null }) });
+            wrapper.remove();
+            toast('Customer Survey berhasil disimpan.');
+            await loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1);
+        } catch (error) { toast(error.message, true); }
+    };
 }
 
 function openRecipeInfo(treatment) {
@@ -2212,7 +2672,7 @@ function renderMembers() {
             return `<div class="member-row">
             <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
             <span><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')} · ${expiryLabel}</small></span>
-            <span>${Number(member.visit_count || 0)} kunjungan</span><em class="${expired ? 'membership-expired' : ''}">${expired ? 'Expired' : 'Aktif'}</em>
+            <span><small>Treatment terakhir</small><b>${escapeHtml(member.last_treatment || 'Belum ada')}</b></span><em class="${expired ? 'membership-expired' : ''}">${expired ? 'Expired' : 'Aktif'}</em>
             ${canManageMemberships ? `<span class="membership-actions"><button type="button" class="membership-edit ui-action-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete" data-id="${Number(member.id)}">Hapus</button></span>` : ''}
         </div>`; }).join('') || '<p class="empty-state">Belum ada member.</p>';
     }
@@ -3013,7 +3473,7 @@ function renderSales() {
         const returnStatus = refundedAmount > 0
             ? `<em class="sales-return-status">${refundedAmount >= Number(transaction.total) ? 'Retur penuh' : 'Retur sebagian'}</em>`
             : '';
-        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button></div></div>`;
+        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button>${canRefundSales ? `<button type="button" class="sales-return-button ui-action-delete" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Retur</button>` : ''}</div></div>`;
     }).join('');
     box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
@@ -3024,6 +3484,11 @@ function renderSales() {
             title: 'Cetak ulang nota',
             description: `${compactInvoiceNumber(transaction.number)} \u00b7 ${money(transaction.total)}`,
         });
+    });
+    box.querySelectorAll('.sales-return-button').forEach((button) => {
+        const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
+        if (!transaction) return;
+        button.onclick = () => openSalesReturn(transaction);
     });
     const meta = salesPageState?.meta;
     if (pagination) {
@@ -3052,12 +3517,17 @@ function renderSalesReturns() {
     const returns = array(salesReturnsPageState?.data);
     const rows = returns.map((salesReturn) => {
         const items = array(salesReturn.items);
-        const itemNames = items.map((item) => item.product_name).filter(Boolean);
+        const itemNames = items.map((item) => item.name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
-        const itemQuantity = items.reduce((total, item) => total + Number(item.quantity || 0), 0);
-        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemQuantity.toLocaleString('id-ID')} item · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt ui-action-view" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
+        const treatmentCount = items.filter((item) => item.item_type === 'treatment').length;
+        const productQuantity = items.filter((item) => item.item_type === 'product').reduce((total, item) => total + Number(item.quantity || 0), 0);
+        const itemDetail = [
+            treatmentCount ? `${treatmentCount} treatment` : '',
+            productQuantity ? `${productQuantity.toLocaleString('id-ID')} produk` : '',
+        ].filter(Boolean).join(' · ') || 'Item retur';
+        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${escapeHtml(itemDetail)} · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt ui-action-view" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
     }).join('');
-    box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>PRODUK & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
+    box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>RINCIAN & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
     box.querySelectorAll('.sales-return-receipt').forEach((button) => {
         button.onclick = () => window.open(`/operasional/retur/${Number(button.dataset.returnId)}/struk.pdf`, '_blank', 'noopener');
     });
@@ -3073,7 +3543,7 @@ function renderSalesReturns() {
     }
 }
 
-function openSalesReturn(transaction) {
+function openSalesReturnLegacy(transaction) {
     const products = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
     if (!products.length) {
         toast('Tidak ada produk yang masih dapat diretur.', true);
@@ -3164,6 +3634,135 @@ function openSalesReturn(transaction) {
         }
     };
     wrapper.querySelector('.sales-return-quantity')?.focus();
+}
+
+function openSalesReturn(transaction) {
+    const products = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
+    const treatments = array(transaction.items).filter((item) => item.item_type === 'treatment' && Number(item.refundable_amount || 0) > 0);
+    if (!products.length && !treatments.length) {
+        toast('Tidak ada treatment atau produk yang masih dapat diretur.', true);
+        return;
+    }
+
+    const isTreatmentReturn = treatments.length > 0;
+    const methods = array(salesPageState?.refund_payment_options)
+        .filter((method) => !isTreatmentReturn || Boolean(method.is_cash));
+    if (!methods.length) {
+        toast('Metode pembayaran tunai untuk retur treatment belum tersedia.', true);
+        return;
+    }
+
+    const preferredMethodId = Number(methods.find((method) => method.is_cash)?.id || methods[0].id);
+    const modalTitle = treatments.length && products.length
+        ? 'Retur treatment & produk'
+        : (treatments.length ? 'Retur treatment' : 'Retur produk');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal sales-return-overlay';
+    wrapper.innerHTML = `<div class="modal-box sales-return-modal">
+        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">${escapeHtml(modalTitle)}</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} &middot; Tentukan item dan nominal pengembalian dana.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <form class="sales-return-form">
+            ${treatments.length ? `<section class="sales-return-section">
+                <div class="sales-return-section-title"><div><b>Treatment</b><small>Refund wajib tunai. Nominal dapat kurang dari sisa harga invoice.</small></div><span>Refund tunai</span></div>
+                <div class="sales-return-treatments">${treatments.map((item) => `<article class="sales-return-treatment" data-item-id="${Number(item.id)}" data-remaining="${Number(item.refundable_amount)}">
+                    <div><strong>${escapeHtml(item.name)}</strong><small>Harga invoice ${money(item.total_amount)} &middot; Sudah direfund ${money(item.returned_amount || 0)}</small></div>
+                    <label>Nominal refund (Rp)<input class="sales-return-treatment-amount" type="number" min="0" max="${Number(item.refundable_amount)}" step="1" inputmode="numeric" value="0"></label>
+                    <b class="sales-return-treatment-total">${money(0)}</b>
+                </article>`).join('')}</div>
+            </section>` : ''}
+            ${products.length ? `<section class="sales-return-section">
+                <div class="sales-return-section-title"><div><b>Produk</b><small>Pilih jumlah dan status stok produk yang dikembalikan.</small></div><span>Stok</span></div>
+                <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
+                    <div><strong>${escapeHtml(item.name)}</strong><small>Terjual ${Number(item.quantity).toLocaleString('id-ID')} &middot; Sudah diretur ${Number(item.returned_quantity || 0).toLocaleString('id-ID')}</small></div>
+                    <label>Qty retur<input class="sales-return-quantity" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
+                    <label class="sales-return-restock"><input type="checkbox" class="sales-return-restock-input" checked><span>Kembali ke stok</span></label>
+                    <b class="sales-return-line-total">${money(0)}</b>
+                </article>`).join('')}</div>
+            </section>` : ''}
+            <div class="sales-return-fields">
+                <label>Metode pengembalian dana<select name="payment_method_id" required>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}" ${Number(method.id) === preferredMethodId ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
+                <label class="sales-return-reference" hidden>Nomor referensi<input name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
+                <label class="sales-return-reason">Alasan retur<textarea name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: treatment tidak dapat dilanjutkan atau produk tidak sesuai"></textarea></label>
+            </div>
+            <div class="sales-return-summary"><span><small>Total pengembalian dana</small><strong class="sales-return-total">${money(0)}</strong></span><p>${isTreatmentReturn ? 'Nominal treatment tercatat sebagai pengembalian dana tunai berdasarkan nilai pada invoice.' : 'Nominal dihitung otomatis dari harga produk pada invoice.'}</p></div>
+            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary sales-return-submit"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
+        </form>
+    </div>`;
+    document.body.appendChild(wrapper);
+
+    const form = wrapper.querySelector('form');
+    const totalElement = wrapper.querySelector('.sales-return-total');
+    const methodSelect = form.elements.payment_method_id;
+    const referenceLabel = wrapper.querySelector('.sales-return-reference');
+    const referenceInput = form.elements.reference_number;
+    const calculate = () => {
+        let total = 0;
+        wrapper.querySelectorAll('.sales-return-product').forEach((row) => {
+            const input = row.querySelector('.sales-return-quantity');
+            const quantity = Math.min(Number(input.max || 0), Math.max(0, Number(input.value || 0)));
+            const amount = Math.round(quantity * Number(row.dataset.price || 0));
+            row.querySelector('.sales-return-line-total').textContent = money(amount);
+            total += amount;
+        });
+        wrapper.querySelectorAll('.sales-return-treatment').forEach((row) => {
+            const input = row.querySelector('.sales-return-treatment-amount');
+            const amount = Math.min(Number(row.dataset.remaining || 0), Math.max(0, Math.round(Number(input.value || 0))));
+            row.querySelector('.sales-return-treatment-total').textContent = money(amount);
+            total += amount;
+        });
+        totalElement.textContent = money(total);
+        return total;
+    };
+    wrapper.querySelectorAll('.sales-return-quantity, .sales-return-treatment-amount').forEach((input) => input.addEventListener('input', calculate));
+    methodSelect.onchange = () => {
+        const requiresReference = methodSelect.selectedOptions[0]?.dataset.reference === '1';
+        referenceLabel.hidden = !requiresReference;
+        referenceInput.required = requiresReference;
+        if (!requiresReference) referenceInput.value = '';
+    };
+    methodSelect.onchange();
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.onclick = (event) => { if (event.target === wrapper) wrapper.remove(); };
+    form.onsubmit = async (event) => {
+        event.preventDefault();
+        const items = [...wrapper.querySelectorAll('.sales-return-product')].map((row) => ({
+            transaction_item_id: Number(row.dataset.itemId),
+            quantity: Number(row.querySelector('.sales-return-quantity').value || 0).toFixed(4),
+            restock: row.querySelector('.sales-return-restock-input').checked,
+        })).filter((item) => Number(item.quantity) > 0);
+        const treatmentItems = [...wrapper.querySelectorAll('.sales-return-treatment')].map((row) => ({
+            transaction_item_id: Number(row.dataset.itemId),
+            refund_amount: Math.max(0, Math.round(Number(row.querySelector('.sales-return-treatment-amount').value || 0))),
+        })).filter((item) => item.refund_amount > 0);
+        if ((!items.length && !treatmentItems.length) || calculate() <= 0) {
+            toast('Isi minimal satu produk atau nominal refund treatment.', true);
+            return;
+        }
+
+        const button = wrapper.querySelector('.sales-return-submit');
+        button.disabled = true;
+        try {
+            const result = await api(`/operasional/penjualan/${Number(transaction.id)}/retur`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    ...(items.length ? { items } : {}),
+                    ...(treatmentItems.length ? { treatment_items: treatmentItems } : {}),
+                    payment_method_id: Number(methodSelect.value),
+                    reference_number: referenceInput.value.trim() || null,
+                    reason: form.elements.reason.value.trim(),
+                    idempotency_key: `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`,
+                }),
+            });
+            await refresh();
+            wrapper.innerHTML = `<div class="modal-box sales-return-success"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk retur</button><button type="button" class="secondary sales-return-done">Selesai</button></div>`;
+            wrapper.querySelector('.sales-return-print').onclick = () => window.open(`/operasional/retur/${Number(result.id)}/struk.pdf`, '_blank', 'noopener');
+            wrapper.querySelector('.sales-return-done').onclick = () => wrapper.remove();
+            toast('Retur dan refund berhasil diproses.');
+        } catch (error) {
+            toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    wrapper.querySelector('.sales-return-treatment-amount, .sales-return-quantity')?.focus();
 }
 
 function formatCashEntryDate(value) {
@@ -4332,8 +4931,7 @@ function treatmentOptions(selected = '') {
 
 function reservationTreatmentMatches(query = '') {
     const normalized = String(query).trim().toLocaleLowerCase('id-ID');
-
-    return array(state.treatments)
+    const treatments = array(state.treatments)
         .filter((treatment) => Number(treatment.is_active ?? 1) === 1)
         .filter((treatment) => !normalized || [
             treatment.name,
@@ -4342,7 +4940,13 @@ function reservationTreatmentMatches(query = '') {
             treatment.category,
             treatment.description,
         ].some((value) => String(value || '').toLocaleLowerCase('id-ID').includes(normalized)))
-        .slice(0, 12);
+        .map((treatment) => ({ kind: 'treatment', ...treatment }));
+    const bundles = array(state.treatment_bundles)
+        .filter((bundle) => !normalized || [bundle.name, bundle.code, ...array(bundle.items).map((item) => item.name)]
+            .some((value) => String(value || '').toLocaleLowerCase('id-ID').includes(normalized)))
+        .map((bundle) => ({ kind: 'bundle', ...bundle }));
+
+    return [...bundles, ...treatments].slice(0, 12);
 }
 
 function closeReservationTreatmentPickers(except = null) {
@@ -4363,7 +4967,9 @@ function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
 
     const matches = reservationTreatmentMatches(input.value);
     const selectedId = Number(select.value || 0);
-    results.innerHTML = matches.map((treatment) => `<button type="button" class="treatment-search-option${Number(treatment.id) === selectedId ? ' selected' : ''}" data-treatment-id="${Number(treatment.id)}" role="option" aria-selected="${Number(treatment.id) === selectedId}"><span><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || 'Treatment')} &middot; ${money(treatmentPrice(treatment))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment tidak ditemukan.</p>';
+    results.innerHTML = matches.map((item) => item.kind === 'bundle'
+        ? `<button type="button" class="treatment-search-option treatment-search-bundle" data-bundle-id="${Number(item.id)}" role="option"><span><b><em>Bundle</em> ${escapeHtml(item.name)}</b><small>${escapeHtml(array(item.items).map((bundleItem) => bundleItem.name).join(' · '))} &middot; ${money(item.bundle_price)}</small></span><i class="material-symbols-outlined" aria-hidden="true">inventory_2</i></button>`
+        : `<button type="button" class="treatment-search-option${Number(item.id) === selectedId ? ' selected' : ''}" data-treatment-id="${Number(item.id)}" role="option" aria-selected="${Number(item.id) === selectedId}"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.category_name || item.category?.name || item.category || 'Treatment')} &middot; ${money(treatmentPrice(item))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment atau bundle tidak ditemukan.</p>';
     results.hidden = !showResults;
     label.classList.toggle('open', showResults);
     label.classList.toggle('opens-up', showResults && results.getBoundingClientRect().bottom > window.innerHeight - 16);
@@ -4378,6 +4984,43 @@ function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
             closeReservationTreatmentPickers();
         });
     });
+    results.querySelectorAll('[data-bundle-id]').forEach((option) => {
+        option.addEventListener('click', () => {
+            const bundle = array(state.treatment_bundles).find((item) => Number(item.id) === Number(option.dataset.bundleId));
+            if (!bundle) return;
+            addReservationBundle(bundle);
+            closeReservationTreatmentPickers();
+        });
+    });
+}
+
+function commissionPercentOptions(selected = '') {
+    const selectedValue = String(selected);
+    const values = Array.from({ length: 201 }, (_, index) => (index / 2).toFixed(1).replace(/\.0$/, ''));
+    return `<option value="">Otomatis</option>${values.map((value) => `<option value="${value}" ${value === selectedValue ? 'selected' : ''}>${value}%</option>`).join('')}`;
+}
+
+function syncReservationCommission(card, force = false) {
+    const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
+    const rows = [...card.querySelectorAll('.staff-row')];
+    const total = Number(treatment?.default_commission_percent ?? treatment?.commission_percent ?? 0);
+    if (!card.dataset.commissionCustom || force) {
+        const base = rows.length ? total / rows.length : 0;
+        const rounded = Math.round(base * 100) / 100;
+        let remaining = total;
+        rows.forEach((row, index) => {
+            const value = index === rows.length - 1 ? Math.round(remaining * 100) / 100 : rounded;
+            remaining -= value;
+            row.querySelector('.item-commission').value = String(value);
+        });
+    }
+    const allocated = rows.reduce((sum, row) => sum + Number(row.querySelector('.item-commission').value || 0), 0);
+    const note = card.querySelector('.reservation-commission-note');
+    if (note) {
+        const valid = Math.round(allocated * 100) === Math.round(total * 100);
+        note.textContent = treatment ? `Komisi treatment ${total}% · pembagian ${allocated}%${valid ? '' : ` (harus ${total}%)`}` : 'Pilih treatment untuk mengatur komisi.';
+        note.classList.toggle('invalid', Boolean(treatment) && !valid);
+    }
 }
 
 function addStaffRow(container, role = 'primary') {
@@ -4385,10 +5028,13 @@ function addStaffRow(container, role = 'primary') {
     row.className = 'staff-row';
     row.innerHTML = `<label class="therapist-picker-label">Therapist<select class="item-employee" aria-hidden="true" tabindex="-1"><option value="">Pilih therapist</option>${employeeOptions()}</select><button type="button" class="therapist-picker" aria-haspopup="listbox" aria-expanded="false"><span>Pilih therapist</span><i class="material-symbols-outlined" aria-hidden="true">expand_more</i></button><div class="therapist-picker-menu" role="listbox" hidden></div></label>
         <label>Peran<select class="item-staff-role"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
+        <label>Komisi<select class="item-commission">${commissionPercentOptions()}</select></label>
         <button type="button" class="icon-button remove-staff ui-action-delete" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.item-employee').addEventListener('change', () => {
-        renderReservationTherapistPicker(row, container.closest('.reservation-item-card')?._therapistAvailability || []);
+        const card = container.closest('.reservation-item-card');
+        renderReservationTherapistPicker(row, card?._therapistAvailability || []);
+        refreshReservationItemSummary(card);
     });
     row.querySelector('.therapist-picker').addEventListener('click', () => toggleReservationTherapistPicker(row));
     row.querySelector('.therapist-picker-menu').addEventListener('click', (event) => {
@@ -4399,12 +5045,19 @@ function addStaffRow(container, role = 'primary') {
         closeReservationTherapistPickers();
     });
     renderReservationTherapistPicker(row, []);
+    syncReservationCommission(container.closest('.reservation-item-card'));
+    row.querySelector('.item-commission').addEventListener('change', () => {
+        const card = container.closest('.reservation-item-card');
+        card.dataset.commissionCustom = 'true';
+        syncReservationCommission(card);
+    });
     row.querySelector('.remove-staff').onclick = () => {
         if (container.children.length <= 1) {
             toast('Setiap treatment minimal memiliki satu therapist.', true);
             return;
         }
         row.remove();
+        syncReservationCommission(container.closest('.reservation-item-card'));
     };
 }
 
@@ -4547,15 +5200,16 @@ function addReservationItem(values = {}) {
     if (!container) return;
     const card = document.createElement('article');
     card.className = 'reservation-item-card';
+    if (values.bundle_id) card.dataset.bundleId = String(values.bundle_id);
+    if (values.actual_price !== undefined) card.dataset.actualPrice = String(values.actual_price);
     const itemNumber = container.children.length + 1;
-    card.innerHTML = `<div class="reservation-item-title"><strong>Treatment ${itemNumber}</strong><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div>
-        <div class="reservation-item-grid">
+    card.innerHTML = `<div class="reservation-item-title"><strong><span class="reservation-item-name">Treatment ${itemNumber}</span><small class="reservation-item-summary">Belum dipilih</small></strong><span class="reservation-item-actions"><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></span></div>
+        <div class="reservation-item-body"><div class="reservation-item-grid">
             <label class="treatment-picker-label">Treatment<select class="item-treatment" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results" role="listbox" hidden></div></label>
             <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
-            ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : '<span class="reservation-price-note"><small>Harga</small><b>Mengikuti harga normal</b></span>'}
-        </div>
-        <label class="item-notes">Catatan treatment<textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label>
-        <div class="staff-block"><div class="staff-block-head"><span>Pembagian therapist</span><button type="button" class="link add-staff"><span class="material-symbols-outlined">add</span> Tambah therapist</button></div><div class="staff-rows"></div></div>`;
+            ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : `<span class="reservation-price-note"><small>Harga</small><b>${values.actual_price !== undefined ? `Harga bundle ${money(values.actual_price)}` : 'Mengikuti harga normal'}</b></span>`}
+        </div><details class="reservation-item-more"><summary>Catatan treatment (opsional)</summary><label class="item-notes"><textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label></details>
+        <div class="staff-block"><div class="staff-block-head"><span>Therapist & komisi</span><button type="button" class="link add-staff"><span class="material-symbols-outlined">add</span> Tambah</button></div><div class="staff-rows"></div><small class="reservation-commission-note"></small></div></div>`;
     container.appendChild(card);
 
     const staffContainer = card.querySelector('.staff-rows');
@@ -4573,15 +5227,7 @@ function addReservationItem(values = {}) {
     renderReservationTreatmentPicker(card);
     addStaffRow(staffContainer, 'primary');
     card.querySelector('.add-staff').onclick = () => addStaffRow(staffContainer, 'assistant');
-    card.querySelector('.remove-reservation-item').onclick = () => {
-        if (container.children.length <= 1) {
-            toast('Reservasi minimal memiliki satu treatment.', true);
-            return;
-        }
-        card.remove();
-        renumberReservationItems();
-        syncReservationDeposit();
-    };
+    card.querySelector('.remove-reservation-item').onclick = () => removeReservationItemCard(card);
     card.querySelector('.item-treatment').onchange = (event) => {
         const treatment = array(state.treatments).find((item) => Number(item.id) === Number(event.target.value));
         if (treatment && treatmentSearch) treatmentSearch.value = treatment.name;
@@ -4589,15 +5235,132 @@ function addReservationItem(values = {}) {
         if (treatment && priceInput && !priceInput.value) priceInput.placeholder = String(treatmentPrice(treatment));
         refreshReservationTherapistAvailability(card);
         syncReservationDeposit();
+        delete card.dataset.commissionCustom;
+        syncReservationCommission(card, true);
+        renderReservationCart();
+        refreshReservationItemSummary(card);
     };
-    card.querySelector('.item-time').addEventListener('change', () => refreshReservationTherapistAvailability(card));
+    card.querySelector('.item-time').addEventListener('change', () => {
+        refreshReservationTherapistAvailability(card);
+        renderReservationCart();
+        refreshReservationItemSummary(card);
+    });
     card.querySelector('.item-price')?.addEventListener('input', () => syncReservationDeposit());
+    refreshReservationItemSummary(card);
+    renderReservationCart();
+}
+
+function refreshReservationItemSummary(card) {
+    const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
+    const therapists = [...card.querySelectorAll('.staff-row .item-employee')]
+        .map((select) => serviceProviders().find((employee) => Number(employee.id) === Number(select.value))?.name)
+        .filter(Boolean);
+    const name = card.querySelector('.reservation-item-name');
+    const summary = card.querySelector('.reservation-item-summary');
+    if (name) name.textContent = treatment?.name || name.textContent.match(/^Treatment \d+$/)?.[0] || 'Treatment';
+    if (summary) summary.textContent = treatment
+        ? `${card.querySelector('.item-time')?.value || '09:00'} · ${therapists.join(', ') || 'Pilih therapist'}`
+        : 'Belum dipilih';
+}
+
+function removeReservationItemCard(card) {
+    const container = document.getElementById('reservation-items');
+    if (!container || !card) return;
+    const bundleId = card.dataset.bundleId;
+    const cards = card.classList.contains('reservation-bundle-card')
+        ? [card]
+        : bundleId
+        ? [...container.querySelectorAll('.reservation-item-card')].filter((candidate) => candidate.dataset.bundleId === bundleId)
+        : [card];
+    if (container.children.length <= cards.length) {
+        toast('Reservasi minimal memiliki satu treatment.', true);
+        return;
+    }
+    cards.forEach((candidate) => candidate.remove());
+    renumberReservationItems();
+    syncReservationDeposit();
+    renderReservationCart();
+}
+
+function renderReservationCart() {
+    const box = document.getElementById('reservation-cart');
+    const container = document.getElementById('reservation-items');
+    if (!box || !container) return;
+    const cards = [...container.querySelectorAll('.reservation-item-card')];
+    const groups = [];
+    cards.forEach((card, index) => {
+        const bundleId = card.dataset.bundleId;
+        if (card.classList.contains('reservation-bundle-card')) {
+            const bundle = array(state.treatment_bundles).find((item) => Number(item.id) === Number(bundleId));
+            if (bundle) groups.push({ card, cards: [card], bundleId, index, name: bundle.name, time: card.querySelector('.bundle-time')?.value || '09:00', isBundle: true, bundleCount: array(bundle.items).length });
+            return;
+        }
+        const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
+        if (!treatment) return;
+        const existing = bundleId && groups.find((group) => group.bundleId === bundleId);
+        if (existing) {
+            existing.cards.push(card);
+            return;
+        }
+        const bundle = bundleId ? array(state.treatment_bundles).find((item) => Number(item.id) === Number(bundleId)) : null;
+        groups.push({ card, cards: [card], bundleId, index, name: bundle?.name || treatment.name, time: card.querySelector('.item-time')?.value || '09:00', isBundle: Boolean(bundle) });
+    });
+    box.innerHTML = `<div class="reservation-cart-head"><b>Keranjang treatment</b><small>${groups.length} pilihan</small></div>${groups.length ? `<div class="reservation-cart-items">${groups.map((group) => `<div class="reservation-cart-item"><span><b>${group.isBundle ? 'Bundle · ' : ''}${escapeHtml(group.name)}</b><small>${group.isBundle ? `${group.bundleCount || group.cards.length} treatment · ` : ''}${escapeHtml(group.time)}</small></span><button type="button" class="reservation-cart-remove" data-index="${group.index}" aria-label="Kurangi ${escapeHtml(group.name)}"><span class="material-symbols-outlined">remove</span></button></div>`).join('')}</div>` : '<p class="reservation-cart-empty">Belum ada treatment dipilih. Gunakan pencarian di bawah.</p>'}`;
+    box.querySelectorAll('.reservation-cart-remove').forEach((button) => {
+        button.onclick = () => removeReservationItemCard(cards[Number(button.dataset.index)]);
+    });
 }
 
 function renumberReservationItems() {
     document.querySelectorAll('#reservation-items .reservation-item-card').forEach((card, index) => {
-        card.querySelector('.reservation-item-title strong').textContent = `Treatment ${index + 1}`;
+        if (!card.classList.contains('reservation-bundle-card')) card.querySelector('.reservation-item-name').textContent = `Treatment ${index + 1}`;
     });
+}
+
+function addMinutesToTime(time, minutes) {
+    const [hour, minute] = String(time || '09:00').split(':').map(Number);
+    const total = Math.max(0, (hour * 60) + minute + Number(minutes || 0));
+    return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function bundlePriceAllocations(bundle) {
+    const normalTotal = Number(bundle.normal_price || 0);
+    let allocated = 0;
+    return array(bundle.items).map((item, index, items) => {
+        const price = index === items.length - 1
+            ? Number(bundle.bundle_price) - allocated
+            : Math.round((Number(item.normal_price) / Math.max(1, normalTotal)) * Number(bundle.bundle_price));
+        allocated += price;
+        return price;
+    });
+}
+
+function addReservationBundle(bundle) {
+    const container = document.getElementById('reservation-items');
+    const blankCard = container?.querySelector('.reservation-item-card');
+    if (container?.children.length === 1 && !blankCard?.querySelector('.item-treatment')?.value) blankCard.remove();
+    const start = container?.lastElementChild?.querySelector('.item-time, .bundle-time')?.value || '09:00';
+    const card = document.createElement('article');
+    card.className = 'reservation-item-card reservation-bundle-card';
+    card.dataset.bundleId = String(bundle.id);
+    card.dataset.actualPrice = String(bundle.bundle_price);
+    const prices = bundlePriceAllocations(bundle);
+    card.innerHTML = `<div class="reservation-item-title"><strong><span class="reservation-item-name">Bundle · ${escapeHtml(bundle.name)}</span><small class="reservation-item-summary">${array(bundle.items).length} treatment · ${money(bundle.bundle_price)}</small></strong><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div><div class="bundle-start-time"><label>Jam mulai paket<select class="bundle-time">${reservationTimeOptions(start)}</select></label><small>Urutan jam treatment dihitung otomatis.</small></div><div class="bundle-treatment-table"><div class="bundle-treatment-head"><span>Treatment</span><span>Therapist</span><span>Komisi</span></div>${array(bundle.items).map((item, index) => `<div class="bundle-treatment-row" data-treatment-id="${Number(item.treatment_id)}" data-duration="${Number(item.duration_minutes)}" data-price="${prices[index]}"><span><b>${escapeHtml(item.name)}</b><small class="bundle-item-time"></small></span><label><select class="bundle-employee"><option value="">Pilih therapist</option>${employeeOptions()}</select></label><label><select class="bundle-commission">${commissionPercentOptions(item.default_commission_percent ?? 0)}</select></label></div>`).join('')}</div>`;
+    container?.appendChild(card);
+    const updateTimes = () => {
+        let cursor = card.querySelector('.bundle-time').value;
+        card.querySelectorAll('.bundle-treatment-row').forEach((row) => {
+            row.querySelector('.bundle-item-time').textContent = cursor;
+            cursor = addMinutesToTime(cursor, Number(row.dataset.duration || 0));
+        });
+        renderReservationCart();
+    };
+    card.querySelector('.bundle-time').addEventListener('change', updateTimes);
+    card.querySelector('.remove-reservation-item').onclick = () => removeReservationItemCard(card);
+    updateTimes();
+    renumberReservationItems();
+    syncReservationDeposit();
+    toast(`${bundle.name} ditambahkan. Pilih therapist dan komisi setiap treatment.`);
 }
 
 function resetReservationForm() {
@@ -4638,7 +5401,7 @@ function syncReservationDeposit() {
         } else if (amount.dataset.autoDefault !== 'false') {
             const total = [...document.querySelectorAll('#reservation-items .reservation-item-card')]
                 .reduce((sum, card) => {
-                    const price = card.querySelector('.item-price')?.value;
+                    const price = card.querySelector('.item-price')?.value ?? card.dataset.actualPrice;
                     const treatment = array(state.treatments).find((item) => Number(item.id) === Number(card.querySelector('.item-treatment')?.value));
                     return sum + (price !== null && price !== '' && price !== undefined ? Number(price) : treatmentPrice(treatment));
                 }, 0);
@@ -4787,11 +5550,31 @@ function selectReservationMember(memberId) {
 
 function collectReservationPayload(form) {
     const formData = new FormData(form);
-    const items = [...document.querySelectorAll('#reservation-items .reservation-item-card')].map((card) => {
-        const actualPrice = card.querySelector('.item-price')?.value ?? '';
+    const items = [...document.querySelectorAll('#reservation-items .reservation-item-card')].flatMap((card) => {
+        if (card.classList.contains('reservation-bundle-card')) {
+            let start = card.querySelector('.bundle-time').value;
+            return [...card.querySelectorAll('.bundle-treatment-row')].map((row) => {
+                const item = {
+                    treatment_id: Number(row.dataset.treatmentId),
+                    start_time: start,
+                    actual_price: Number(row.dataset.price),
+                    bundle_id: Number(card.dataset.bundleId),
+                    notes: `Bundle: ${card.querySelector('.reservation-item-name').textContent.replace(/^Bundle · /, '')}`,
+                    staff: [{
+                        employee_id: Number(row.querySelector('.bundle-employee').value),
+                        role: 'primary',
+                        ...(row.querySelector('.bundle-commission').value !== '' ? { commission_percent: Number(row.querySelector('.bundle-commission').value) } : {}),
+                    }],
+                };
+                start = addMinutesToTime(start, Number(row.dataset.duration || 0));
+                return item;
+            });
+        }
+        const actualPrice = card.querySelector('.item-price')?.value ?? card.dataset.actualPrice ?? '';
         const staff = [...card.querySelectorAll('.staff-row')].map((row) => ({
             employee_id: Number(row.querySelector('.item-employee').value),
             role: row.querySelector('.item-staff-role').value,
+            ...(row.querySelector('.item-commission').value !== '' ? { commission_percent: Number(row.querySelector('.item-commission').value) } : {}),
         }));
         const item = {
             treatment_id: Number(card.querySelector('.item-treatment').value),
@@ -4800,6 +5583,7 @@ function collectReservationPayload(form) {
             staff,
         };
         if (actualPrice !== '') item.actual_price = Number(actualPrice);
+        if (card.dataset.bundleId) item.bundle_id = Number(card.dataset.bundleId);
         return item;
     });
 
@@ -5667,6 +6451,22 @@ document.getElementById('member-search')?.addEventListener('input', () => {
     clearTimeout(memberSearchTimer);
     memberSearchTimer = setTimeout(() => loadMembersPage(1).catch((error) => toast(error.message, true)), 250);
 });
+document.getElementById('customer-survey-search')?.addEventListener('input', () => {
+    clearTimeout(customerSurveySearchTimer);
+    customerSurveySearchTimer = setTimeout(() => loadCustomerSurveyPage(1).catch((error) => toast(error.message, true)), 250);
+});
+document.getElementById('customer-survey-status')?.addEventListener('change', () => loadCustomerSurveyPage(1).catch((error) => toast(error.message, true)));
+
+const manualDiscountInput = document.getElementById('manual-discount');
+if (manualDiscountInput) {
+    manualDiscountInput.removeAttribute('max');
+    manualDiscountInput.step = '1000';
+    manualDiscountInput.inputMode = 'numeric';
+    manualDiscountInput.placeholder = 'Nominal Rp';
+    manualDiscountInput.setAttribute('aria-label', 'Diskon manual nominal rupiah');
+    const note = manualDiscountInput.closest('.promo')?.querySelector('small');
+    if (note) note.textContent = 'Gunakan event atau masukkan nominal rupiah manual.';
+}
 document.getElementById('stock-history-from')?.addEventListener('change', () => loadStockHistoryPage(1).catch((error) => toast(error.message, true)));
 document.getElementById('stock-history-to')?.addEventListener('change', () => loadStockHistoryPage(1).catch((error) => toast(error.message, true)));
 document.getElementById('cash-entry-type-filter')?.addEventListener('change', renderCashEntryHistory);
@@ -5945,7 +6745,7 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
                 reservation_id: selectedReservation,
                 discount_percent: String(selectedDiscount()),
                 ...(Number(document.getElementById('manual-discount')?.value || 0) > 0
-                    ? { manual_discount_percent: String(document.getElementById('manual-discount').value) }
+                    ? { manual_discount_amount: Number(document.getElementById('manual-discount').value) }
                     : {}),
                 payments,
                 idempotency_key: paymentIdempotencyKey,
@@ -5981,6 +6781,27 @@ if (treatmentAdd) {
         ['commission_percent', 'Komisi (%)', 'number'],
     ], (data) => api('/operasional/treatment', { method: 'POST', body: JSON.stringify(data) }));
 }
+
+document.getElementById('open-treatment-bundle')?.addEventListener('click', () => {
+    const treatments = array(state.treatments);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><h2>Buat treatment bundle</h2><p>Pilih treatment yang dikerjakan berurutan.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="form-grid"><label>Nama bundle<input name="name" required maxlength="150" placeholder="Contoh: Aurora Package"></label><label>Harga bundle<input name="bundle_price" type="number" min="1" required></label><label class="full-width">Keterangan<textarea name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><div class="recipe-checklist">${treatments.map((treatment) => `<label class="recipe-product"><input type="checkbox" name="treatment_ids" value="${Number(treatment.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${Number(treatment.duration_minutes)} menit · ${money(treatmentPrice(treatment))}</small></span></label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan bundle</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const treatmentIds = [...form.querySelectorAll('[name="treatment_ids"]:checked')].map((input) => Number(input.value));
+        if (treatmentIds.length < 2) return toast('Pilih minimal dua treatment untuk bundle.', true);
+        try {
+            await api('/operasional/treatment/bundle', { method: 'POST', body: JSON.stringify({ name: form.name.value.trim(), bundle_price: Number(form.bundle_price.value), description: form.description.value.trim() || null, treatment_ids: treatmentIds }) });
+            wrapper.remove();
+            toast('Treatment bundle berhasil disimpan.');
+            await refresh();
+        } catch (error) { toast(error.message, true); }
+    };
+});
 
 document.getElementById('open-employee')?.addEventListener('click', () => quickForm('Tambah pegawai', [
     ['name', 'Nama', 'text'],

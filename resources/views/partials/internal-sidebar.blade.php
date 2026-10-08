@@ -28,6 +28,7 @@
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
         ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
+        ['page' => 'customer-survey', 'label' => 'Customer Survey', 'icon' => 'assignment', 'permission' => 'sales.view'],
         [
             'page' => 'keuangan',
             'label' => 'Keuangan',
