@@ -47,6 +47,7 @@ class SalonSnapshotService
 
         if ($this->canAny($user, ['treatments.view', 'reservations.create', 'cashier.view'])) {
             $snapshot['treatments'] = $this->treatments($mayManageTreatmentRecipes);
+            $snapshot['treatment_bundles'] = $this->treatmentBundles();
         }
 
         if ($this->canAny($user, ['memberships.view', 'memberships.manage'])) {
@@ -500,6 +501,98 @@ class SalonSnapshotService
         });
     }
 
+    private function treatmentBundles(): mixed
+    {
+        $bundles = DB::table('treatment_bundles')->where('is_active', true)->orderBy('name')->get();
+        if ($bundles->isEmpty()) {
+            return $bundles;
+        }
+        $items = DB::table('treatment_bundle_items as item')
+            ->join('treatments as treatment', 'treatment.id', '=', 'item.treatment_id')
+            ->whereIn('item.treatment_bundle_id', $bundles->pluck('id'))
+            ->orderBy('item.sort_order')
+            ->get(['item.treatment_bundle_id', 'item.treatment_id', 'item.sort_order', 'treatment.name', 'treatment.duration_minutes', 'treatment.normal_price', 'treatment.default_commission_percent'])
+            ->groupBy('treatment_bundle_id');
+
+        return $bundles->map(function (object $bundle) use ($items): object {
+            $bundle->items = ($items->get($bundle->id) ?? collect())->values();
+            $bundle->normal_price = (int) collect($bundle->items)->sum('normal_price');
+            $bundle->saving_amount = max(0, $bundle->normal_price - (int) $bundle->bundle_price);
+
+            return $bundle;
+        })->values();
+    }
+
+    public function customerSurveysPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $status = null): array
+    {
+        abort_unless($this->can($user, 'sales.view'), 403);
+        $search = trim((string) $search);
+        $query = DB::table('customer_surveys as survey')
+            ->when($status, fn ($builder, string $value) => $builder->where('survey.status', $value))
+            ->when($search !== '', function ($builder) use ($search): void {
+                $like = '%'.$search.'%';
+                $builder->where(function ($nested) use ($like): void {
+                    $nested->where('survey.transaction_number', 'like', $like)
+                        ->orWhere('survey.customer_name', 'like', $like)
+                        ->orWhere('survey.customer_phone', 'like', $like);
+                });
+            })
+            ->orderByRaw("CASE WHEN survey.status = 'draft' THEN 0 ELSE 1 END")
+            ->orderByDesc('survey.created_at');
+        $paginator = $query->paginate(min(max($perPage, 10), 50), [
+            'survey.id', 'survey.transaction_id', 'survey.transaction_number', 'survey.customer_name', 'survey.customer_phone', 'survey.status', 'survey.facility_rating', 'survey.reception_rating', 'survey.return_intent', 'survey.price_rating', 'survey.feedback', 'survey.submitted_at', 'survey.created_at',
+        ], 'page', $page);
+        $rows = $paginator->getCollection();
+        $treatments = DB::table('transaction_items')
+            ->whereIn('transaction_id', $rows->pluck('transaction_id'))
+            ->where('item_type', 'treatment')
+            ->orderBy('sort_order')->get(['transaction_id', 'name'])->groupBy('transaction_id');
+        $therapists = DB::table('transaction_items as item')
+            ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->whereIn('item.transaction_id', $rows->pluck('transaction_id'))
+            ->where('item.item_type', 'treatment')
+            ->orderBy('employee.name')
+            ->get(['item.transaction_id', 'employee.id', 'employee.name'])
+            ->groupBy('transaction_id')
+            ->map(fn ($items) => $items->unique('id')->values());
+        $assignments = DB::table('transaction_items as item')
+            ->join('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->whereIn('item.transaction_id', $rows->pluck('transaction_id'))
+            ->where('item.item_type', 'treatment')
+            ->orderBy('item.sort_order')
+            ->orderBy('employee.name')
+            ->get(['item.transaction_id', 'item.name as treatment_name', 'assignment.id', 'assignment.commission_amount', 'assignment.commission_voided_at', 'assignment.commission_void_reason', 'employee.name as employee_name'])
+            ->groupBy('transaction_id');
+        $therapistRatings = DB::table('customer_survey_therapist_ratings')
+            ->whereIn('customer_survey_id', $rows->pluck('id'))
+            ->orderBy('employee_name')
+            ->get(['customer_survey_id', 'employee_name', 'rating'])
+            ->groupBy('customer_survey_id');
+        $rows->transform(function (object $survey) use ($treatments, $therapists, $assignments, $therapistRatings): object {
+            $survey->treatments = ($treatments->get($survey->transaction_id) ?? collect())->pluck('name')->values();
+            $survey->therapists = ($therapists->get($survey->transaction_id) ?? collect())->values();
+            $survey->commission_assignments = ($assignments->get($survey->transaction_id) ?? collect())->values();
+            $survey->therapist_ratings = ($therapistRatings->get($survey->id) ?? collect())->values();
+
+            return $survey;
+        });
+        $therapistSummary = DB::table('customer_survey_therapist_ratings as rating')
+            ->join('customer_surveys as survey', 'survey.id', '=', 'rating.customer_survey_id')
+            ->where('survey.status', 'submitted')
+            ->groupBy('rating.employee_name')
+            ->orderByDesc('total_surveys')
+            ->orderBy('rating.employee_name')
+            ->get([
+                'rating.employee_name',
+                DB::raw('COUNT(*) as total_surveys'),
+                DB::raw("ROUND(AVG(CASE rating.rating WHEN 'very_satisfied' THEN 5 WHEN 'standard' THEN 3 WHEN 'dissatisfied' THEN 2 WHEN 'very_dissatisfied' THEN 1 ELSE 0 END), 1) as average_score"),
+            ]);
+
+        return ['data' => $rows->values(), 'therapist_summary' => $therapistSummary, 'meta' => ['current_page' => $paginator->currentPage(), 'last_page' => $paginator->lastPage(), 'per_page' => $paginator->perPage(), 'total' => $paginator->total()]];
+    }
+
     private function members(): mixed
     {
         return DB::table('customers')
@@ -636,6 +729,13 @@ class SalonSnapshotService
                 ->select('item.transaction_item_id', DB::raw('SUM(item.quantity) as quantity'))
                 ->groupBy('item.transaction_item_id')
                 ->pluck('quantity', 'transaction_item_id');
+            $returnedTreatmentAmounts = DB::table('sales_return_treatment_items as item')
+                ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+                ->whereIn('sales_return.transaction_id', $transactions->pluck('id'))
+                ->where('sales_return.status', 'posted')
+                ->select('item.transaction_item_id', DB::raw('SUM(item.amount) as amount'))
+                ->groupBy('item.transaction_item_id')
+                ->pluck('amount', 'transaction_item_id');
             $returns = DB::table('sales_returns as sales_return')
                 ->join('payment_methods as method', 'method.id', '=', 'sales_return.refund_payment_method_id')
                 ->whereIn('sales_return.transaction_id', $transactions->pluck('id'))
@@ -655,12 +755,23 @@ class SalonSnapshotService
             $cashiers = DB::table('users')
                 ->whereIn('id', $transactions->pluck('finalized_by')->filter()->unique())
                 ->pluck('name', 'id');
-            $transactions = $transactions->map(function (object $transaction) use ($payments, $items, $cashiers, $returnedQuantities, $returns): object {
+            $transactions = $transactions->map(function (object $transaction) use ($payments, $items, $cashiers, $returnedQuantities, $returnedTreatmentAmounts, $returns): object {
                 $transaction->payments = collect($payments->get($transaction->id, []))->values();
                 $transaction->payment_method = $transaction->payments->pluck('payment_method_name')->join(' + ');
-                $transaction->items = collect($items->get($transaction->id, []))->map(function (object $item) use ($returnedQuantities): object {
-                    $item->returned_quantity = (string) ($returnedQuantities->get($item->id) ?? '0.0000');
-                    $item->refundable_quantity = max(0, (float) $item->quantity - (float) $item->returned_quantity);
+                $transaction->items = collect($items->get($transaction->id, []))->map(function (object $item) use ($returnedQuantities, $returnedTreatmentAmounts): object {
+                    if ($item->item_type === 'product') {
+                        $item->returned_quantity = (string) ($returnedQuantities->get($item->id) ?? '0.0000');
+                        $item->refundable_quantity = max(0, (float) $item->quantity - (float) $item->returned_quantity);
+                        $item->returned_amount = 0;
+                        $item->refundable_amount = 0;
+
+                        return $item;
+                    }
+
+                    $item->returned_quantity = '0.0000';
+                    $item->refundable_quantity = 0;
+                    $item->returned_amount = (int) ($returnedTreatmentAmounts->get($item->id) ?? 0);
+                    $item->refundable_amount = max(0, (int) $item->total_amount - (int) $item->returned_amount);
 
                     return $item;
                 })->values();
@@ -737,10 +848,29 @@ class SalonSnapshotService
         $returns = $paginator->getCollection();
 
         if ($returns->isNotEmpty()) {
-            $items = DB::table('sales_return_items')
+            $productItems = DB::table('sales_return_items')
                 ->whereIn('sales_return_id', $returns->pluck('id'))
                 ->orderBy('id')
                 ->get(['sales_return_id', 'product_name', 'quantity', 'amount'])
+                ->map(fn (object $item): object => (object) [
+                    'sales_return_id' => $item->sales_return_id,
+                    'item_type' => 'product',
+                    'name' => $item->product_name,
+                    'quantity' => $item->quantity,
+                    'amount' => (int) $item->amount,
+                ]);
+            $treatmentItems = DB::table('sales_return_treatment_items')
+                ->whereIn('sales_return_id', $returns->pluck('id'))
+                ->orderBy('id')
+                ->get(['sales_return_id', 'treatment_name', 'amount'])
+                ->map(fn (object $item): object => (object) [
+                    'sales_return_id' => $item->sales_return_id,
+                    'item_type' => 'treatment',
+                    'name' => $item->treatment_name,
+                    'quantity' => 1,
+                    'amount' => (int) $item->amount,
+                ]);
+            $items = $productItems->concat($treatmentItems)
                 ->groupBy('sales_return_id');
             $returns = $returns->map(function (object $salesReturn) use ($items): object {
                 $salesReturn->items = collect($items->get($salesReturn->id, []))->values();
@@ -787,8 +917,26 @@ class SalonSnapshotService
             'notes',
         ], 'page', $page);
 
+        $members = $paginator->getCollection();
+        $lastTreatments = DB::table('transactions as transaction')
+            ->join('transaction_items as item', 'item.transaction_id', '=', 'transaction.id')
+            ->whereIn('transaction.customer_id', $members->pluck('id'))
+            ->where('transaction.status', 'paid')
+            ->where('item.item_type', 'treatment')
+            ->orderByDesc('transaction.transacted_at')
+            ->orderByDesc('item.id')
+            ->get(['transaction.customer_id', 'item.name'])
+            ->unique('customer_id')
+            ->keyBy('customer_id');
+
+        $members->transform(function (object $member) use ($lastTreatments): object {
+            $member->last_treatment = $lastTreatments->get($member->id)?->name;
+
+            return $member;
+        });
+
         return [
-            'data' => $paginator->getCollection()->values(),
+            'data' => $members->values(),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
@@ -1458,11 +1606,10 @@ class SalonSnapshotService
             ->where('status', 'paid')
             ->whereBetween('transacted_at', [$from->startOfDay(), $to->endOfDay()])
             ->sum('payment_charge_amount');
-        $returns = (int) DB::table('sales_return_items as item')
-            ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
-            ->where('sales_return.status', 'posted')
-            ->whereBetween('sales_return.returned_at', [$from->startOfDay(), $to->endOfDay()])
-            ->sum('item.amount');
+        $returns = (int) DB::table('sales_returns')
+            ->where('status', 'posted')
+            ->whereBetween('returned_at', [$from->startOfDay(), $to->endOfDay()])
+            ->sum('total_amount');
         $restockedReturnCosts = DB::table('sales_return_items as return_item')
             ->join('sales_returns as sales_return', 'sales_return.id', '=', 'return_item.sales_return_id')
             ->join('transaction_items as item', 'item.id', '=', 'return_item.transaction_item_id')

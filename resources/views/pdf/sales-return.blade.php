@@ -47,12 +47,16 @@
         </section>
 
         <section class="section">
-            <p class="caption">STRUK RETUR PRODUK</p>
+            <p class="caption">STRUK RETUR</p>
             @foreach ($items as $item)
                 <div class="item">
                     <div class="item-name">
-                        {{ $item->product_name }}
-                        <p class="item-detail">{{ rtrim(rtrim(number_format((float) $item->quantity, 4, '.', ''), '0'), '.') }} x Rp {{ number_format($item->unit_price, 0, ',', '.') }} &middot; {{ $item->restocked ? 'Kembali ke stok' : 'Tidak kembali ke stok' }}</p>
+                        {{ $item->name }}
+                        @if ($item->item_type === 'product')
+                            <p class="item-detail">Produk · {{ rtrim(rtrim(number_format((float) $item->quantity, 4, '.', ''), '0'), '.') }} x Rp {{ number_format($item->unit_price, 0, ',', '.') }} &middot; {{ $item->restocked ? 'Kembali ke stok' : 'Tidak kembali ke stok' }}</p>
+                        @else
+                            <p class="item-detail">Treatment · Nominal refund tunai</p>
+                        @endif
                     </div>
                     <div class="item-amount">Rp {{ number_format($item->amount, 0, ',', '.') }}</div>
                 </div>
@@ -69,7 +73,7 @@
         <section class="section">
             <p class="reason"><strong>Alasan retur:</strong> {{ $return->reason }}</p>
         </section>
-        <footer class="footer">Simpan struk ini sebagai bukti pengembalian produk dan dana.</footer>
+        <footer class="footer">Simpan struk ini sebagai bukti pengembalian treatment/produk dan dana.</footer>
     </main>
 </body>
 </html>
