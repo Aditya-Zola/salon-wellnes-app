@@ -62,7 +62,7 @@
         <tbody>
         @foreach ($items as $item)
             <tr>
-                <td><strong>{{ $item->name }}</strong><small>{{ $item->item_type === 'product' ? 'Produk retail' : 'Treatment' }}@if((float) $item->returned_quantity > 0) · Diretur {{ rtrim(rtrim(number_format((float) $item->returned_quantity, 4, '.', ''), '0'), '.') }}@endif</small></td>
+                <td><strong>{{ $item->name }}</strong><small>{{ $item->item_type === 'product' ? 'Produk retail' : 'Treatment' }}@if((float) $item->returned_quantity > 0) · Diretur {{ rtrim(rtrim(number_format((float) $item->returned_quantity, 4, '.', ''), '0'), '.') }}@elseif(($item->returned_amount ?? 0) > 0) · Refund Rp {{ number_format($item->returned_amount, 0, ',', '.') }}@endif</small></td>
                 <td>{{ rtrim(rtrim(number_format((float) $item->quantity, 4, '.', ''), '0'), '.') }}</td>
                 <td class="right">Rp {{ number_format($item->unit_price, 0, ',', '.') }}</td>
                 <td>Rp {{ number_format($item->total_amount, 0, ',', '.') }}</td>

@@ -15,7 +15,9 @@ class ReservationService
 {
     private const PREPARATION_MINUTES = 15;
 
-    private const REST_MINUTES = 45;
+    private const STANDARD_REST_MINUTES = 45;
+
+    private const LONG_TREATMENT_REST_MINUTES = 60;
 
     private const AUTO_COMPLETE_GRACE_MINUTES = 15;
 
@@ -389,10 +391,9 @@ class ReservationService
                 'items' => [$data],
             ], collect([$treatment])->keyBy('id'))[0];
             $this->validateStaffAssignments([$candidate]);
-            [$conflicts] = $this->findConflicts([$candidate], $employees);
-            if ($conflicts !== []) {
-                throw new ReservationConflictException($conflicts, false);
-            }
+            // Jadwal adalah panduan operasional, bukan batas kapasitas keras.
+            // Terapis yang sama boleh menangani beberapa treatment pada waktu
+            // yang sama, termasuk treatment tambahan pada reservasi ini.
 
             $now = now();
             $commissionProfiles = $this->commissionProfilesForTreatments(collect([(int) $treatment->id]));
@@ -744,6 +745,44 @@ class ReservationService
         }, 3);
     }
 
+    /** Mengubah jadwal operasional tanpa mengubah harga maupun invoice. */
+    public function rescheduleItem(int $reservationId, int $itemId, string $startTime, Request $request): array
+    {
+        return DB::transaction(function () use ($reservationId, $itemId, $startTime, $request): array {
+            $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+            abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+            abort_if($reservation->status === 'cancelled', 422, 'Reservasi yang dibatalkan tidak dapat diubah.');
+
+            $item = DB::table('reservation_items')
+                ->where('id', $itemId)
+                ->where('reservation_id', $reservationId)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($item, 404, 'Item reservasi tidak ditemukan.');
+            abort_if(in_array($item->work_status, ['finished', 'cancelled'], true), 422, 'Jam treatment yang selesai atau dibatalkan tidak dapat diubah.');
+
+            $start = CarbonImmutable::createFromFormat('!Y-m-d H:i', "{$reservation->reservation_date} {$startTime}", config('app.timezone'));
+            $end = $start->addMinutes((int) $item->duration_minutes + self::PREPARATION_MINUTES);
+            $ready = $end->addMinutes($this->restMinutes((int) $item->duration_minutes));
+            DB::table('reservation_items')->where('id', $itemId)->update([
+                'scheduled_start_at' => $start,
+                'scheduled_end_at' => $end,
+                'scheduled_ready_at' => $ready,
+                'updated_at' => now(),
+            ]);
+            $this->logger->log(
+                $request,
+                'reservation_item.rescheduled',
+                'reservation_item',
+                $itemId,
+                "Mengubah jam {$item->treatment_name} dari ".CarbonImmutable::parse($item->scheduled_start_at)->format('H:i')." menjadi {$startTime}",
+                ['reservation_id' => $reservationId, 'from' => $item->scheduled_start_at, 'to' => $start->toDateTimeString()],
+            );
+
+            return ['id' => $itemId, 'reservation_id' => $reservationId, 'start_time' => $start->format('H:i')];
+        }, 3);
+    }
+
     public function availability(string $date, string $time, int $treatmentId): array
     {
         $treatment = DB::table('treatments')->where('id', $treatmentId)->where('is_active', true)->first();
@@ -878,12 +917,27 @@ class ReservationService
             ->pluck('commission_percent')
             ->values()
             ->all();
+        $manualPercents = $orderedStaff->pluck('commission_percent')->values()->all();
+        $hasManualCommission = collect($manualPercents)->contains(fn ($percent): bool => $percent !== null && $percent !== '');
         $customScaled = array_map(
             fn ($percent): int => FixedPoint::parse((string) $percent, FixedPoint::PERCENT_SCALE),
             $customPercents,
         );
 
-        if (count($customScaled) === $staffCount && array_sum($customScaled) === $totalPercentScaled) {
+        if ($hasManualCommission) {
+            if (count(array_filter($manualPercents, fn ($percent): bool => $percent !== null && $percent !== '')) !== $staffCount) {
+                throw ValidationException::withMessages(['items' => ['Isi pembagian komisi untuk setiap therapist.']]);
+            }
+            $percentages = array_map(
+                fn ($percent): int => FixedPoint::parse((string) $percent, FixedPoint::PERCENT_SCALE),
+                $manualPercents,
+            );
+            $totalPercentScaled = array_sum($percentages);
+            if ($totalPercentScaled > 100 * (10 ** FixedPoint::PERCENT_SCALE)) {
+                throw ValidationException::withMessages(['items' => ['Total komisi tidak boleh melebihi 100%.']]);
+            }
+            $totalPercent = FixedPoint::format($totalPercentScaled, FixedPoint::PERCENT_SCALE);
+        } elseif (count($customScaled) === $staffCount && array_sum($customScaled) === $totalPercentScaled) {
             $percentages = $customScaled;
         } else {
             $basePercent = intdiv($totalPercentScaled, $staffCount);
@@ -950,9 +1004,20 @@ class ReservationService
                 // Waktu selesai mencakup 15 menit persiapan/beres-beres.
                 'end' => $end,
                 // Therapist baru dapat menerima layanan berikutnya setelah istirahat.
-                'ready' => $end->addMinutes(self::REST_MINUTES),
+                'ready' => $end->addMinutes($this->restMinutes((int) $treatment->duration_minutes)),
             ];
         })->all();
+    }
+
+    /**
+     * Istirahat dihitung untuk setiap therapist pada item yang ditanganinya.
+     * Treatment lebih dari dua jam mendapat satu jam penuh sebelum slot berikutnya.
+     */
+    private function restMinutes(int $durationMinutes): int
+    {
+        return $durationMinutes > 120
+            ? self::LONG_TREATMENT_REST_MINUTES
+            : self::STANDARD_REST_MINUTES;
     }
 
     private function validateStaffAssignments(array $candidates): void
@@ -977,10 +1042,29 @@ class ReservationService
 
     private function authorizePriceOverrides(array $candidates, Request $request): void
     {
+        $bundleCandidateIndexes = [];
+        collect($candidates)->groupBy(fn (array $candidate) => $candidate['input']['bundle_id'] ?? null)
+            ->filter(fn ($items, $bundleId) => filled($bundleId))
+            ->each(function (Collection $items, $bundleId) use (&$bundleCandidateIndexes): void {
+                $bundle = DB::table('treatment_bundles')->where('id', (int) $bundleId)->where('is_active', true)->first();
+                if (! $bundle) {
+                    throw ValidationException::withMessages(['items' => ['Bundle treatment tidak tersedia.']]);
+                }
+                $bundleTreatmentIds = DB::table('treatment_bundle_items')->where('treatment_bundle_id', $bundle->id)->orderBy('sort_order')->pluck('treatment_id')->map(fn ($id): int => (int) $id)->all();
+                $candidateTreatmentIds = $items->pluck('treatment.id')->map(fn ($id): int => (int) $id)->all();
+                $bundlePrice = $items->sum(fn (array $candidate): int => (int) ($candidate['input']['actual_price'] ?? $candidate['treatment']->normal_price));
+                if ($bundleTreatmentIds !== $candidateTreatmentIds || $bundlePrice !== (int) $bundle->bundle_price) {
+                    throw ValidationException::withMessages(['items' => ['Isi atau harga bundle tidak sesuai dengan master bundle.']]);
+                }
+                foreach ($items as $index => $candidate) {
+                    $bundleCandidateIndexes[] = $index;
+                }
+            });
+
         foreach ($candidates as $itemIndex => $candidate) {
             $actualPrice = $candidate['input']['actual_price'] ?? null;
 
-            if ($actualPrice === null || (int) $actualPrice === (int) $candidate['treatment']->normal_price) {
+            if (in_array($itemIndex, $bundleCandidateIndexes, true) || $actualPrice === null || (int) $actualPrice === (int) $candidate['treatment']->normal_price) {
                 continue;
             }
 

@@ -44,6 +44,7 @@ class RemunerationReportService
             })
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
             ->where('transaction.status', 'paid')
+            ->whereNull('assignment.commission_voided_at')
             ->whereBetween('transaction.transacted_at', [$from->startOfDay(), $to->endOfDay()])
             ->orderBy('transaction.transacted_at')
             ->orderBy('employee.name')

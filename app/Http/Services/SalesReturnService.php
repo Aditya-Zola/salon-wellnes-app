@@ -40,17 +40,44 @@ class SalesReturnService
                 ]);
             }
 
-            $inputs = collect($data['items'])->keyBy(fn (array $item): int => (int) $item['transaction_item_id']);
-            $items = DB::table('transaction_items')
+            $productInputs = collect($data['items'] ?? [])
+                ->keyBy(fn (array $item): int => (int) $item['transaction_item_id']);
+            $treatmentInputs = collect($data['treatment_items'] ?? [])
+                ->keyBy(fn (array $item): int => (int) $item['transaction_item_id']);
+            if ($productInputs->isEmpty() && $treatmentInputs->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'items' => ['Pilih minimal satu produk atau treatment yang akan diretur.'],
+                ]);
+            }
+            if ($treatmentInputs->isNotEmpty() && ! (bool) $paymentMethod->is_cash) {
+                throw ValidationException::withMessages([
+                    'payment_method_id' => ['Retur treatment harus dikembalikan melalui metode tunai.'],
+                ]);
+            }
+
+            $products = DB::table('transaction_items')
                 ->where('transaction_id', $transactionId)
                 ->where('item_type', 'product')
-                ->whereIn('id', $inputs->keys())
+                ->whereIn('id', $productInputs->keys())
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
-            if ($items->count() !== $inputs->count()) {
+            if ($products->count() !== $productInputs->count()) {
                 throw ValidationException::withMessages([
                     'items' => ['Salah satu produk tidak termasuk dalam transaksi ini.'],
+                ]);
+            }
+
+            $treatments = DB::table('transaction_items')
+                ->where('transaction_id', $transactionId)
+                ->where('item_type', 'treatment')
+                ->whereIn('id', $treatmentInputs->keys())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            if ($treatments->count() !== $treatmentInputs->count()) {
+                throw ValidationException::withMessages([
+                    'treatment_items' => ['Salah satu treatment tidak termasuk dalam transaksi ini.'],
                 ]);
             }
 
@@ -58,13 +85,13 @@ class SalesReturnService
                 ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
                 ->where('sales_return.transaction_id', $transactionId)
                 ->where('sales_return.status', 'posted')
-                ->whereIn('item.transaction_item_id', $items->pluck('id'))
+                ->whereIn('item.transaction_item_id', $products->pluck('id'))
                 ->select('item.transaction_item_id', DB::raw('SUM(item.quantity) as quantity'))
                 ->groupBy('item.transaction_item_id')
                 ->pluck('quantity', 'transaction_item_id');
 
-            $prepared = $items->map(function (object $item) use ($inputs, $returnedQuantities): array {
-                $input = $inputs->get((int) $item->id);
+            $preparedProducts = $products->map(function (object $item) use ($productInputs, $returnedQuantities): array {
+                $input = $productInputs->get((int) $item->id);
                 $sold = FixedPoint::parse((string) $item->quantity, FixedPoint::STOCK_SCALE);
                 $returned = FixedPoint::parse((string) ($returnedQuantities->get($item->id) ?? 0), FixedPoint::STOCK_SCALE);
                 $quantity = FixedPoint::parse((string) $input['quantity'], FixedPoint::STOCK_SCALE);
@@ -82,7 +109,33 @@ class SalesReturnService
                     'restock' => (bool) $input['restock'],
                 ];
             });
-            $total = $prepared->sum('amount');
+
+            $returnedTreatmentAmounts = DB::table('sales_return_treatment_items as item')
+                ->join('sales_returns as sales_return', 'sales_return.id', '=', 'item.sales_return_id')
+                ->where('sales_return.transaction_id', $transactionId)
+                ->where('sales_return.status', 'posted')
+                ->whereIn('item.transaction_item_id', $treatments->pluck('id'))
+                ->select('item.transaction_item_id', DB::raw('SUM(item.amount) as amount'))
+                ->groupBy('item.transaction_item_id')
+                ->pluck('amount', 'transaction_item_id');
+            $preparedTreatments = $treatments->map(function (object $item) use ($treatmentInputs, $returnedTreatmentAmounts): array {
+                $input = $treatmentInputs->get((int) $item->id);
+                $refundAmount = (int) $input['refund_amount'];
+                $alreadyReturned = (int) ($returnedTreatmentAmounts->get($item->id) ?? 0);
+                $remaining = max(0, (int) $item->total_amount - $alreadyReturned);
+
+                if ($refundAmount > $remaining) {
+                    throw ValidationException::withMessages([
+                        'treatment_items' => ["Nominal retur {$item->name} melebihi sisa nominal yang dapat dikembalikan."],
+                    ]);
+                }
+
+                return [
+                    'item' => $item,
+                    'amount' => $refundAmount,
+                ];
+            });
+            $total = $preparedProducts->sum('amount') + $preparedTreatments->sum('amount');
             abort_if($total <= 0, 422, 'Nominal pengembalian dana harus lebih dari nol.');
             abort_if((int) $transaction->refunded_amount + $total > (int) $transaction->total, 422, 'Total pengembalian dana melebihi nilai transaksi.');
 
@@ -103,7 +156,7 @@ class SalesReturnService
                 'updated_at' => $now,
             ]);
 
-            foreach ($prepared as $line) {
+            foreach ($preparedProducts as $line) {
                 $product = DB::table('products')->where('id', $line['item']->item_id)->lockForUpdate()->first();
                 abort_unless($product, 422, "Produk {$line['item']->name} tidak ditemukan.");
 
@@ -153,6 +206,19 @@ class SalesReturnService
                 ]);
             }
 
+            foreach ($preparedTreatments as $line) {
+                DB::table('sales_return_treatment_items')->insert([
+                    'sales_return_id' => $returnId,
+                    'transaction_item_id' => $line['item']->id,
+                    'treatment_id' => $line['item']->item_id,
+                    'treatment_name' => $line['item']->name,
+                    'original_amount' => $line['item']->total_amount,
+                    'amount' => $line['amount'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+
             DB::table('transactions')->where('id', $transactionId)->update([
                 'refunded_amount' => (int) $transaction->refunded_amount + $total,
                 'updated_at' => $now,
@@ -168,10 +234,14 @@ class SalesReturnService
                     'transaction_id' => $transactionId,
                     'total_amount' => $total,
                     'payment_method_id' => (int) $paymentMethod->id,
-                    'items' => $prepared->map(fn (array $line): array => [
+                    'items' => $preparedProducts->map(fn (array $line): array => [
                         'transaction_item_id' => (int) $line['item']->id,
                         'quantity' => FixedPoint::format($line['quantity'], FixedPoint::STOCK_SCALE),
                         'restocked' => $line['restock'],
+                    ])->all(),
+                    'treatment_items' => $preparedTreatments->map(fn (array $line): array => [
+                        'transaction_item_id' => (int) $line['item']->id,
+                        'amount' => $line['amount'],
                     ])->all(),
                 ],
             );

@@ -27,6 +27,7 @@ class CheckoutRequest extends FormRequest
             'promotion_id' => ['nullable', 'integer', 'exists:promotions,id'],
             'discount_percent' => ['nullable', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
             'manual_discount_percent' => ['nullable', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/'],
+            'manual_discount_amount' => ['nullable', 'integer', 'min:0', 'max:999999999999'],
             'product_items' => ['nullable', 'array', 'max:50'],
             'product_items.*.product_id' => ['required', 'integer', 'distinct', 'exists:products,id'],
             'product_items.*.quantity' => ['required', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
