@@ -63,3 +63,24 @@ di source control.
 - Push branch selain `main` untuk memperoleh Preview Deployment.
 - Uji login, transaksi, retur, saldo, stok, nota, dan struk retur.
 - Merge pull request ke `main` untuk membuat Production Deployment.
+
+## Migrasi otomatis production
+
+Workflow `.github/workflows/laravel.yml` menjalankan `php artisan migrate --force`
+setelah seluruh tes lulus, hanya untuk push ke `main` pada repo
+`RezaAmru/salon-wellnes-app`. Repo `origin` tidak menjalankan migrasi ini agar
+dua repo tidak berebut mengubah database yang sama. Job memakai GitHub Actions
+environment `production`, bukan `.env` lokal, dan tidak menjalankan seeder.
+
+Sebelum mengaktifkannya, buat environment `production` pada repo Vercel di
+GitHub dan isi environment secrets `APP_KEY`, `DB_HOST`, `DB_PORT`,
+`DB_DATABASE`, `DB_USERNAME`, dan `DB_PASSWORD` dengan nilai production yang
+sama seperti di Vercel. Batasi environment ini ke branch `main`; pertimbangkan
+persetujuan manual untuk migrasi yang berisiko. Jika secret belum tersedia,
+job akan gagal sebelum menyentuh database.
+
+GitHub Actions dan deploy otomatis Vercel dipicu secara terpisah oleh push
+`main`. Karena itu workflow ini **tidak menjamin** migrasi selesai sebelum
+versi aplikasi baru tayang. Migration baru harus kompatibel dengan kode lama
+dan baru selama jeda deploy. Untuk urutan ketat, pindahkan pemicu deployment
+Vercel ke tahap setelah job migrasi berhasil.
