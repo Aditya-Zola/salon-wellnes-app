@@ -5017,9 +5017,8 @@ function syncReservationCommission(card, force = false) {
     const allocated = rows.reduce((sum, row) => sum + Number(row.querySelector('.item-commission').value || 0), 0);
     const note = card.querySelector('.reservation-commission-note');
     if (note) {
-        const valid = Math.round(allocated * 100) === Math.round(total * 100);
-        note.textContent = treatment ? `Komisi treatment ${total}% · pembagian ${allocated}%${valid ? '' : ` (harus ${total}%)`}` : 'Pilih treatment untuk mengatur komisi.';
-        note.classList.toggle('invalid', Boolean(treatment) && !valid);
+        note.textContent = treatment ? `Master ${total}% · komisi reservasi ${allocated}%` : 'Pilih treatment untuk mengatur komisi.';
+        note.classList.toggle('invalid', allocated > 100);
     }
 }
 

@@ -932,9 +932,11 @@ class ReservationService
                 fn ($percent): int => FixedPoint::parse((string) $percent, FixedPoint::PERCENT_SCALE),
                 $manualPercents,
             );
-            if (array_sum($percentages) !== $totalPercentScaled) {
-                throw ValidationException::withMessages(['items' => ['Total pembagian komisi harus sama dengan komisi treatment.']]);
+            $totalPercentScaled = array_sum($percentages);
+            if ($totalPercentScaled > 100 * (10 ** FixedPoint::PERCENT_SCALE)) {
+                throw ValidationException::withMessages(['items' => ['Total komisi tidak boleh melebihi 100%.']]);
             }
+            $totalPercent = FixedPoint::format($totalPercentScaled, FixedPoint::PERCENT_SCALE);
         } elseif (count($customScaled) === $staffCount && array_sum($customScaled) === $totalPercentScaled) {
             $percentages = $customScaled;
         } else {

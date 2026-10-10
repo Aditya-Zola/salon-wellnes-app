@@ -2145,8 +2145,8 @@ class SalonOperationsTest extends TestCase
 
         $reservation = $this->createReservation($this->admin, [
             $this->item($facial->id, '10:00', [
-                ['employee_id' => $dita->id, 'role' => 'primary', 'commission_percent' => 3],
-                ['employee_id' => $rani->id, 'role' => 'assistant', 'commission_percent' => 2],
+                ['employee_id' => $dita->id, 'role' => 'primary', 'commission_percent' => 1.5],
+                ['employee_id' => $rani->id, 'role' => 'assistant', 'commission_percent' => 1],
             ]),
         ], ['phone' => '081299900014'])->assertCreated();
         $reservationId = (int) $reservation->json('id');
@@ -2170,7 +2170,7 @@ class SalonOperationsTest extends TestCase
         ])->assertCreated()->json('id');
         $this->assertDatabaseHas('payrolls', [
             'id' => $payrollId,
-            'commission' => 2850,
+            'commission' => 1425,
         ]);
 
         $this->actingAs($this->cashier)->postJson("/operasional/penjualan/{$transactionId}/customer-survey", [
@@ -2320,17 +2320,20 @@ class SalonOperationsTest extends TestCase
         $dita = $this->employee('EMP-DITA');
         $rani = $this->employee('EMP-RANI');
         $item = $this->item($treatment->id, '09:00', [
-            ['employee_id' => $dita->id, 'role' => 'primary', 'commission_percent' => 3],
-            ['employee_id' => $rani->id, 'role' => 'assistant', 'commission_percent' => 2],
+            ['employee_id' => $dita->id, 'role' => 'primary', 'commission_percent' => 1.5],
+            ['employee_id' => $rani->id, 'role' => 'assistant', 'commission_percent' => 1],
         ]);
         $reservationId = (int) $this->createReservation($this->admin, [$item])->assertCreated()->json('id');
         $itemId = (int) DB::table('reservation_items')->where('reservation_id', $reservationId)->value('id');
 
-        $this->assertDatabaseHas('reservation_item_staff', [
-            'reservation_item_id' => $itemId, 'employee_id' => $dita->id, 'commission_percent' => '3.0000',
+        $this->assertDatabaseHas('reservation_items', [
+            'id' => $itemId, 'commission_percent' => '2.5000', 'commission_amount' => 2375,
         ]);
         $this->assertDatabaseHas('reservation_item_staff', [
-            'reservation_item_id' => $itemId, 'employee_id' => $rani->id, 'commission_percent' => '2.0000',
+            'reservation_item_id' => $itemId, 'employee_id' => $dita->id, 'commission_percent' => '1.5000', 'commission_amount' => 1425,
+        ]);
+        $this->assertDatabaseHas('reservation_item_staff', [
+            'reservation_item_id' => $itemId, 'employee_id' => $rani->id, 'commission_percent' => '1.0000', 'commission_amount' => 950,
         ]);
     }
 
