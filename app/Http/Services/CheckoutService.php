@@ -143,6 +143,9 @@ class CheckoutService
                     'reservation_item_id' => $item->id,
                     'item_type' => 'treatment',
                     'item_id' => $item->treatment_id,
+                    'treatment_bundle_id' => $item->treatment_bundle_id,
+                    'treatment_bundle_name' => $item->treatment_bundle_name,
+                    'treatment_bundle_instance' => $item->treatment_bundle_instance,
                     'name' => $item->treatment_name,
                     'quantity' => FixedPoint::format(10 ** FixedPoint::STOCK_SCALE, FixedPoint::STOCK_SCALE),
                     'unit_price' => $gross,
@@ -508,6 +511,8 @@ class CheckoutService
         $resolved = [];
         $basePaid = 0;
         $chargeTotal = 0;
+        $tenderedTotal = 0;
+        $hasCashPayment = false;
 
         foreach ($paymentInputs as $index => $input) {
             $method = $methods->get((int) $input['payment_method_id']);
@@ -533,20 +538,10 @@ class CheckoutService
                 ? (int) $input['tendered_amount']
                 : $amount;
 
-            if ($method->is_cash && $tenderedAmount < $amount) {
-                throw ValidationException::withMessages([
-                    "payments.{$index}.tendered_amount" => ['Uang tunai yang diterima tidak boleh kurang dari nominal pembayaran.'],
-                ]);
-            }
-
-            if (! $method->is_cash && $tenderedAmount !== $amount) {
-                throw ValidationException::withMessages([
-                    "payments.{$index}.tendered_amount" => ['Nominal diterima untuk pembayaran non-tunai harus sama dengan nominal pembayaran.'],
-                ]);
-            }
-
             $basePaid = $this->safeAdd($basePaid, $baseAmount);
             $chargeTotal = $this->safeAdd($chargeTotal, $chargeAmount);
+            $tenderedTotal = $this->safeAdd($tenderedTotal, $tenderedAmount);
+            $hasCashPayment = $hasCashPayment || (bool) $method->is_cash;
             $resolved[] = [
                 'method' => $method,
                 'amount' => $amount,
@@ -563,6 +558,21 @@ class CheckoutService
         if ($basePaid !== $total) {
             throw ValidationException::withMessages([
                 'payments' => ["Jumlah pembayaran sebelum charge harus tepat Rp{$total}; diterima Rp{$basePaid}."],
+            ]);
+        }
+
+        $requiredTotal = $this->safeAdd($total, $chargeTotal);
+        if ($tenderedTotal < $requiredTotal) {
+            $shortage = $requiredTotal - $tenderedTotal;
+            throw ValidationException::withMessages([
+                'payments' => ["Total pembayaran masih kurang Rp{$shortage}."],
+            ]);
+        }
+
+        if (! $hasCashPayment && $tenderedTotal > $requiredTotal) {
+            $excess = $tenderedTotal - $requiredTotal;
+            throw ValidationException::withMessages([
+                'payments' => ["Total pembayaran non-tunai lebih Rp{$excess}."],
             ]);
         }
 

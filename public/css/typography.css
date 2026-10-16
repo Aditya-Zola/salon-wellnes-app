@@ -1,5 +1,14 @@
 :root {
     --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    /* Satu skala tipografi untuk seluruh aplikasi operasional. */
+    --font-size-caption: 11px;
+    --font-size-label: 12px;
+    --font-size-body: 13px;
+    --font-size-section: 17px;
+    --font-size-modal: 21px;
+    --font-size-page: 28px;
+    --line-height-compact: 1.35;
+    --line-height-body: 1.55;
 }
 
 html,

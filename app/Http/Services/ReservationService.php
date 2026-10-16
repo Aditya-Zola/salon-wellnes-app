@@ -46,6 +46,8 @@ class ReservationService
                 ]);
             }
             $commissionProfiles = $this->commissionProfilesForTreatments($treatmentIds);
+            $bundleIds = collect($data['items'])->pluck('bundle_id')->filter()->map(fn ($id) => (int) $id)->unique();
+            $bundles = DB::table('treatment_bundles')->whereIn('id', $bundleIds)->get()->keyBy('id');
 
             // Lock every selected employee in a stable order. Reservation writers that
             // involve the same employee are serialized, including when no schedule row exists yet.
@@ -69,6 +71,18 @@ class ReservationService
             $candidates = $this->buildCandidates($data, $treatments);
             $this->validateStaffAssignments($candidates);
             $this->authorizePriceOverrides($candidates, $request);
+            [$bundleConflicts, $conflictedAssignments] = $this->findBundleRestConflicts($candidates, $employees);
+            $overrideReason = trim((string) ($data['override_reason'] ?? ''));
+            $isOverridden = (bool) ($data['override_conflict'] ?? false);
+            if ($bundleConflicts !== []) {
+                $canOverride = (bool) $request->user()?->can('reservations.override_conflict');
+                if (! $isOverridden || ! $canOverride) {
+                    throw new ReservationConflictException($bundleConflicts, $canOverride);
+                }
+                if ($overrideReason === '') {
+                    throw ValidationException::withMessages(['override_reason' => ['Alasan override bentrok wajib diisi.']]);
+                }
+            }
             // Jadwal di reservasi adalah estimasi operasional. Therapist aktif
             // boleh memiliki jadwal yang bertumpuk; operator yang menentukan
             // kapan treatment benar-benar selesai dari antrean hari ini.
@@ -121,6 +135,11 @@ class ReservationService
                 $itemId = DB::table('reservation_items')->insertGetId([
                     'reservation_id' => $reservationId,
                     'treatment_id' => $treatment->id,
+                    'treatment_bundle_id' => $candidate['input']['bundle_id'] ?? null,
+                    'treatment_bundle_name' => isset($candidate['input']['bundle_id'])
+                        ? $bundles->get((int) $candidate['input']['bundle_id'])?->name
+                        : null,
+                    'treatment_bundle_instance' => $candidate['input']['bundle_instance'] ?? null,
                     'treatment_name' => $treatment->name,
                     'duration_minutes' => $treatment->duration_minutes,
                     'normal_price' => $treatment->normal_price,
@@ -146,6 +165,7 @@ class ReservationService
                     $employeeId = (int) $staff['employee_id'];
                     $employee = $employees->get($employeeId);
                     $staffCommission = $commission['by_employee'][$employeeId];
+                    $assignmentOverridden = isset($conflictedAssignments[$itemIndex.':'.$employeeId]) && $isOverridden;
 
                     DB::table('reservation_item_staff')->insert([
                         'reservation_item_id' => $itemId,
@@ -153,9 +173,9 @@ class ReservationService
                         'role' => $staff['role'],
                         'commission_percent' => $staffCommission['percent'],
                         'commission_amount' => $staffCommission['amount'],
-                        'conflict_override_reason' => null,
-                        'conflict_overridden_by' => null,
-                        'conflict_overridden_at' => null,
+                        'conflict_override_reason' => $assignmentOverridden ? $overrideReason : null,
+                        'conflict_overridden_by' => $assignmentOverridden ? $request->user()?->id : null,
+                        'conflict_overridden_at' => $assignmentOverridden ? $now : null,
                         'created_at' => $now,
                         'updated_at' => $now,
                     ]);
@@ -169,13 +189,18 @@ class ReservationService
                         'role' => $staff['role'],
                         'commission_percent' => $staffCommission['percent'],
                         'commission_amount' => $staffCommission['amount'],
-                        'conflict_overridden' => false,
+                        'conflict_overridden' => $assignmentOverridden,
                     ];
                 }
 
                 $createdItems[] = [
                     'id' => $itemId,
                     'treatment_id' => (int) $treatment->id,
+                    'treatment_bundle_id' => isset($candidate['input']['bundle_id']) ? (int) $candidate['input']['bundle_id'] : null,
+                    'treatment_bundle_name' => isset($candidate['input']['bundle_id'])
+                        ? $bundles->get((int) $candidate['input']['bundle_id'])?->name
+                        : null,
+                    'treatment_bundle_instance' => $candidate['input']['bundle_instance'] ?? null,
                     'treatment_name' => $treatment->name,
                     'duration_minutes' => (int) $treatment->duration_minutes,
                     'normal_price' => (int) $treatment->normal_price,
@@ -273,6 +298,10 @@ class ReservationService
                         ->values()
                         ->all(),
                     'deposit_amount' => $deposit['amount'] ?? 0,
+                    'bundle_conflict_override' => $bundleConflicts !== [] && $isOverridden ? [
+                        'reason' => $overrideReason,
+                        'conflicts' => $bundleConflicts,
+                    ] : null,
                 ],
             );
 
@@ -987,15 +1016,23 @@ class ReservationService
 
     private function buildCandidates(array $data, Collection $treatments): array
     {
-        return collect($data['items'])->map(function (array $item) use ($data, $treatments): array {
+        $bundleEnds = [];
+
+        return collect($data['items'])->map(function (array $item) use ($data, $treatments, &$bundleEnds): array {
             $treatment = $treatments->get((int) $item['treatment_id']);
-            $start = CarbonImmutable::createFromFormat(
+            $requestedStart = CarbonImmutable::createFromFormat(
                 '!Y-m-d H:i',
                 "{$data['date']} {$item['start_time']}",
                 config('app.timezone'),
             );
+            $bundleId = isset($item['bundle_id']) ? (int) $item['bundle_id'] : null;
+            $bundleInstance = $item['bundle_instance'] ?? null;
+            $start = $bundleInstance && isset($bundleEnds[$bundleInstance]) ? $bundleEnds[$bundleInstance] : $requestedStart;
 
             $end = $start->addMinutes((int) $treatment->duration_minutes + self::PREPARATION_MINUTES);
+            if ($bundleInstance) {
+                $bundleEnds[$bundleInstance] = $end;
+            }
 
             return [
                 'input' => $item,
@@ -1007,6 +1044,62 @@ class ReservationService
                 'ready' => $end->addMinutes($this->restMinutes((int) $treatment->duration_minutes)),
             ];
         })->all();
+    }
+
+    /**
+     * Bundle mengikuti perjalanan customer (item berikutnya mulai saat item
+     * sebelumnya selesai), sedangkan therapist tetap wajib melewati waktu
+     * istirahatnya. Bentrok ini dapat dioverride secara eksplisit dan diaudit.
+     *
+     * @return array{0: array<int, array<string, mixed>>, 1: array<string, bool>}
+     */
+    private function findBundleRestConflicts(array $candidates, Collection $employees): array
+    {
+        $conflicts = [];
+        $assignments = [];
+
+        foreach ($candidates as $itemIndex => $candidate) {
+            $bundleId = $candidate['input']['bundle_id'] ?? null;
+            $bundleInstance = $candidate['input']['bundle_instance'] ?? null;
+            if (! $bundleId || ! $bundleInstance) {
+                continue;
+            }
+
+            foreach ($candidate['input']['staff'] as $staff) {
+                $employeeId = (int) $staff['employee_id'];
+                foreach ($candidates as $otherIndex => $other) {
+                    if ($otherIndex >= $itemIndex || ($other['input']['bundle_instance'] ?? null) !== $bundleInstance) {
+                        continue;
+                    }
+                    if (! collect($other['input']['staff'])->contains(
+                        fn (array $otherStaff): bool => (int) $otherStaff['employee_id'] === $employeeId
+                    )) {
+                        continue;
+                    }
+                    if ($candidate['start']->gte($other['ready'])) {
+                        continue;
+                    }
+
+                    $conflicts[] = [
+                        'type' => 'bundle_therapist_rest',
+                        'bundle_id' => (int) $bundleId,
+                        'bundle_instance' => $bundleInstance,
+                        'item_index' => $itemIndex,
+                        'conflicting_item_index' => $otherIndex,
+                        'employee_id' => $employeeId,
+                        'employee_name' => $employees->get($employeeId)?->name,
+                        'requested_start_at' => $candidate['start']->toIso8601String(),
+                        'requested_end_at' => $candidate['end']->toIso8601String(),
+                        'conflicting_end_at' => $other['end']->toIso8601String(),
+                        'conflicting_ready_at' => $other['ready']->toIso8601String(),
+                    ];
+                    $assignments[$itemIndex.':'.$employeeId] = true;
+                    $assignments[$otherIndex.':'.$employeeId] = true;
+                }
+            }
+        }
+
+        return [$conflicts, $assignments];
     }
 
     /**
@@ -1043,9 +1136,10 @@ class ReservationService
     private function authorizePriceOverrides(array $candidates, Request $request): void
     {
         $bundleCandidateIndexes = [];
-        collect($candidates)->groupBy(fn (array $candidate) => $candidate['input']['bundle_id'] ?? null)
-            ->filter(fn ($items, $bundleId) => filled($bundleId))
-            ->each(function (Collection $items, $bundleId) use (&$bundleCandidateIndexes): void {
+        collect($candidates)->groupBy(fn (array $candidate) => $candidate['input']['bundle_instance'] ?? null)
+            ->filter(fn ($items, $bundleInstance) => filled($bundleInstance))
+            ->each(function (Collection $items) use (&$bundleCandidateIndexes): void {
+                $bundleId = (int) $items->first()['input']['bundle_id'];
                 $bundle = DB::table('treatment_bundles')->where('id', (int) $bundleId)->where('is_active', true)->first();
                 if (! $bundle) {
                     throw ValidationException::withMessages(['items' => ['Bundle treatment tidak tersedia.']]);

@@ -235,6 +235,9 @@ class SalonSnapshotService
                 'id',
                 'reservation_id',
                 'treatment_id',
+                'treatment_bundle_id',
+                'treatment_bundle_name',
+                'treatment_bundle_instance',
                 'treatment_name',
                 'duration_minutes',
                 'normal_price',
@@ -295,6 +298,9 @@ class SalonSnapshotService
                 'reservation_id' => (int) $item->reservation_id,
                 'id' => (int) $item->id,
                 'treatment_id' => (int) $item->treatment_id,
+                'treatment_bundle_id' => $item->treatment_bundle_id === null ? null : (int) $item->treatment_bundle_id,
+                'treatment_bundle_name' => $item->treatment_bundle_name,
+                'treatment_bundle_instance' => $item->treatment_bundle_instance,
                 'treatment_name' => $item->treatment_name,
                 'duration_minutes' => (int) $item->duration_minutes,
                 'normal_price' => (int) $item->normal_price,
@@ -523,12 +529,16 @@ class SalonSnapshotService
         })->values();
     }
 
-    public function customerSurveysPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $status = null): array
+    public function customerSurveysPage(Authenticatable $user, int $page = 1, int $perPage = 20, ?string $search = null, ?string $status = null, ?string $from = null, ?string $to = null): array
     {
         abort_unless($this->can($user, 'sales.view'), 403);
         $search = trim((string) $search);
+        $fromDate = $from ? CarbonImmutable::createFromFormat('Y-m-d', $from)->startOfDay() : null;
+        $toDate = $to ? CarbonImmutable::createFromFormat('Y-m-d', $to)->endOfDay() : null;
         $query = DB::table('customer_surveys as survey')
             ->when($status, fn ($builder, string $value) => $builder->where('survey.status', $value))
+            ->when($fromDate, fn ($builder, CarbonImmutable $value) => $builder->where('survey.created_at', '>=', $value))
+            ->when($toDate, fn ($builder, CarbonImmutable $value) => $builder->where('survey.created_at', '<=', $value))
             ->when($search !== '', function ($builder) use ($search): void {
                 $like = '%'.$search.'%';
                 $builder->where(function ($nested) use ($like): void {
@@ -581,6 +591,8 @@ class SalonSnapshotService
         $therapistSummary = DB::table('customer_survey_therapist_ratings as rating')
             ->join('customer_surveys as survey', 'survey.id', '=', 'rating.customer_survey_id')
             ->where('survey.status', 'submitted')
+            ->when($fromDate, fn ($builder, CarbonImmutable $value) => $builder->where('survey.created_at', '>=', $value))
+            ->when($toDate, fn ($builder, CarbonImmutable $value) => $builder->where('survey.created_at', '<=', $value))
             ->groupBy('rating.employee_name')
             ->orderByDesc('total_surveys')
             ->orderBy('rating.employee_name')
@@ -918,19 +930,34 @@ class SalonSnapshotService
         ], 'page', $page);
 
         $members = $paginator->getCollection();
-        $lastTreatments = DB::table('transactions as transaction')
+        $treatmentRows = DB::table('transactions as transaction')
             ->join('transaction_items as item', 'item.transaction_id', '=', 'transaction.id')
+            ->join('reservations as reservation', 'reservation.id', '=', 'transaction.reservation_id')
+            ->leftJoin('reservation_item_staff as assignment', 'assignment.reservation_item_id', '=', 'item.reservation_item_id')
+            ->leftJoin('employees as employee', 'employee.id', '=', 'assignment.employee_id')
             ->whereIn('transaction.customer_id', $members->pluck('id'))
             ->where('transaction.status', 'paid')
             ->where('item.item_type', 'treatment')
+            ->orderByDesc('reservation.reservation_date')
             ->orderByDesc('transaction.transacted_at')
             ->orderByDesc('item.id')
-            ->get(['transaction.customer_id', 'item.name'])
-            ->unique('customer_id')
-            ->keyBy('customer_id');
+            ->get(['transaction.customer_id', 'item.id as transaction_item_id', 'item.name', 'reservation.reservation_date', 'employee.name as therapist_name']);
+        $treatmentHistory = $treatmentRows->groupBy('customer_id')->map(fn (Collection $rows): Collection => $rows
+            ->groupBy('transaction_item_id')
+            ->map(function (Collection $itemRows): array {
+                $item = $itemRows->first();
 
-        $members->transform(function (object $member) use ($lastTreatments): object {
-            $member->last_treatment = $lastTreatments->get($member->id)?->name;
+                return [
+                    'treatment_name' => $item->name,
+                    'reservation_date' => $item->reservation_date,
+                    'therapist_name' => $itemRows->pluck('therapist_name')->filter()->unique()->join(', ') ?: '-',
+                ];
+            })->values());
+
+        $members->transform(function (object $member) use ($treatmentHistory): object {
+            $history = $treatmentHistory->get($member->id, collect());
+            $member->treatment_history = $history->all();
+            $member->last_treatment = $history->first()['treatment_name'] ?? null;
 
             return $member;
         });

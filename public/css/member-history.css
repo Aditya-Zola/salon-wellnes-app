@@ -1,0 +1,151 @@
+/* Membership list: compact rows with treatment history in a dedicated dialog. */
+#member-list .member-row {
+    grid-template-columns: 38px minmax(230px, 1fr) auto auto;
+    min-height: 74px;
+}
+
+.member-identity > b,
+.member-identity > small {
+    display: block;
+}
+
+.member-identity > small { margin-top: 3px; }
+.member-latest-treatment {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    color: #765039 !important;
+}
+.member-latest-treatment .material-symbols-outlined { font-size: 13px; }
+.member-latest-treatment b {
+    overflow: hidden;
+    max-width: 260px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.membership-actions .member-history-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-color: #d9c9bd;
+    background: #f8f3ef;
+    color: #6a4634;
+}
+.member-history-button > .material-symbols-outlined { font-size: 15px; }
+.member-history-modal .modal-box {
+    display: flex;
+    width: min(620px, calc(100vw - 28px));
+    max-height: calc(100vh - 36px);
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 14px;
+}
+.member-history-modal .modal-head {
+    flex: none;
+    border-bottom: 1px solid var(--ui-line);
+}
+.member-history-eyebrow {
+    display: block;
+    margin-bottom: 5px;
+    color: #9a755e;
+    font-size: var(--ui-font-caption, 11px);
+    font-weight: 800;
+    letter-spacing: .12em;
+}
+.member-history-modal-body {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 22px;
+}
+.member-history-item {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid #eee8e4;
+}
+.member-history-item:last-child { border-bottom: 0; }
+.member-history-number {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border-radius: 50%;
+    background: #f1e8e2;
+    color: #765039;
+    font-size: var(--ui-font-caption, 11px);
+    font-weight: 800;
+}
+.member-history-item > div > b {
+    display: block;
+    color: var(--ui-text);
+    font-size: var(--ui-font-body, 13px);
+}
+.member-history-item p {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 6px 0 0;
+    color: var(--ui-muted);
+    font-size: var(--ui-font-caption, 11px);
+}
+.member-history-item p span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.member-history-item p .material-symbols-outlined { font-size: 13px; }
+.member-history-modal footer {
+    display: flex;
+    flex: none;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 22px;
+    border-top: 1px solid var(--ui-line);
+    background: #fff;
+}
+.member-history-load-area { display: flex; align-items: center; gap: 9px; }
+.member-history-load-area[hidden] { display: none; }
+.member-history-load-more {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 11px;
+    border: 1px solid #d9c9bd;
+    border-radius: 7px;
+    background: #f8f3ef;
+    color: #6a4634;
+    font: 700 var(--ui-font-label, 12px)/1 inherit;
+    cursor: pointer;
+}
+.member-history-load-more .material-symbols-outlined { font-size: 15px; }
+.member-history-progress { color: var(--ui-muted); font-size: var(--ui-font-caption, 11px); }
+.member-history-modal footer > .quick-close { margin-left: auto; }
+.member-history-modal-empty {
+    padding: 50px 20px;
+    text-align: center;
+    color: var(--ui-muted);
+}
+.member-history-modal-empty > .material-symbols-outlined { font-size: 36px; }
+.member-history-modal-empty b {
+    display: block;
+    margin-top: 8px;
+    color: var(--ui-text);
+}
+.member-history-modal-empty p { margin: 5px 0 0; font-size: var(--ui-font-label, 12px); }
+
+@media (max-width: 700px) {
+    #member-list .member-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+    #member-list .member-row > em { display: block; }
+    #member-list .membership-actions {
+        grid-column: 2 / -1;
+        justify-content: flex-start;
+    }
+    .member-history-item p {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 5px;
+    }
+}
