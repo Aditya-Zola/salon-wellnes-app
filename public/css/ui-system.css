@@ -706,6 +706,34 @@
 .ui-shell #reservation-modal .reservation-modal-box { border-radius: 20px; }
 .ui-shell #reservation-modal .reservation-items > article { box-shadow: none; }
 .ui-shell #reservation-modal .reservation-footer { margin: 22px -24px -24px; padding: 18px 24px; }
+
+/*
+ * Reservation modal performance
+ *
+ * A full-screen backdrop blur is expensive while the long reservation form is
+ * scrolling. Keep the same dimmed appearance without continuously repainting
+ * the page behind it, and isolate the scrollable form into its own paint layer.
+ */
+.ui-shell #reservation-modal {
+    background: rgb(36 28 22 / .62);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+.ui-shell #reservation-modal .reservation-modal-box {
+    contain: layout paint;
+}
+.ui-shell #reservation-modal .reservation-form {
+    overscroll-behavior: contain;
+    contain: paint;
+    transform: translateZ(0);
+}
+.ui-shell #reservation-modal .reservation-footer {
+    box-shadow: none;
+}
+.ui-shell #reservation-modal .reservation-item-card,
+.ui-shell #reservation-modal .reservation-bundle-card {
+    contain: layout paint;
+}
 .ui-shell .permission-item strong { font-size: 13px; }
 .ui-shell .permission-item small { color: var(--ui-muted); font-size: 11px; line-height: 1.5; }
 .ui-shell .permission-group { padding: 20px; border-radius: 14px; }
@@ -791,6 +819,46 @@
 .ui-shell .save-customer-survey { width: 100%; min-height: 34px; margin-top: 9px; border: 0; border-radius: 8px; background: #6549cf; color: #fff; font: 750 11px/1 var(--font-sans); cursor: pointer; }
 .ui-shell .customer-survey-panel.is-saved { background: #f0faf3; }
 .ui-shell .customer-survey-panel.is-saved .save-customer-survey { background: #4c9d68; }
+.ui-shell .customer-survey-entry-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(900px, calc(100vw - 40px));
+    max-height: calc(100dvh - 40px);
+    overflow: hidden;
+}
+.ui-shell .customer-survey-entry-modal form {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    padding: 0;
+}
+.ui-shell .customer-survey-entry-content {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 18px;
+    padding: 20px 24px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.ui-shell .customer-survey-entry-content .survey-therapist-question,
+.ui-shell .customer-survey-entry-content .survey-feedback {
+    grid-column: 1 / -1;
+}
+.ui-shell .customer-survey-entry-content .survey-question { margin-top: 0; }
+.ui-shell .customer-survey-entry-content .survey-question h3 { margin-bottom: 9px; font-size: 12px; }
+.ui-shell .customer-survey-entry-content .survey-choice { min-height: 54px; }
+.ui-shell .customer-survey-entry-content .survey-choice small { font-size: 10px; line-height: 1.25; }
+.ui-shell .customer-survey-entry-content .survey-choice .material-symbols-outlined { font-size: 21px; }
+.ui-shell .customer-survey-entry-content .survey-choice-grid.text-only .survey-choice { min-height: 46px; }
+.ui-shell .customer-survey-entry-content .survey-feedback textarea { min-height: 76px; }
+.ui-shell .customer-survey-entry-modal form > footer { flex: none; margin: 0; }
+@media (max-width: 720px) {
+    .ui-shell .customer-survey-entry-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+    .ui-shell .customer-survey-entry-content { grid-template-columns: 1fr; padding: 16px; }
+    .ui-shell .customer-survey-entry-content .survey-question { grid-column: 1; }
+}
 .ui-shell .customer-survey-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
 .ui-shell .customer-survey-metrics article { padding: 11px; border: 1px solid var(--ui-line); border-radius: 9px; background: #fbfaf8; }
 .ui-shell .customer-survey-metrics b,.ui-shell .customer-survey-metrics small { display: block; }

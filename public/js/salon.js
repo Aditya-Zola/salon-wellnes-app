@@ -2687,7 +2687,7 @@ function openSurveyCommissionFollowup(survey) {
     });
 }
 
-function openCustomerSurveyDraft(survey) {
+function openCustomerSurveyDraftLegacy(survey) {
     const therapists = array(survey.therapists);
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
@@ -2706,6 +2706,51 @@ function openCustomerSurveyDraft(survey) {
             toast('Customer Survey berhasil disimpan.');
             await loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1);
         } catch (error) { toast(error.message, true); }
+    };
+}
+
+function openCustomerSurveyDraft(survey) {
+    const therapists = array(survey.therapists);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal open quick-modal';
+    const choices = (name, options, columns = 'three', textOnly = false) => `<div class="survey-choice-grid ${columns}${textOnly ? ' text-only' : ''}">${options.map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="${name}" value="${value}">${icon ? `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` : ''}<small>${label}</small></label>`).join('')}</div>`;
+    const therapistRatings = therapists.map((therapist) => `<fieldset data-survey-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend>${choices(`survey-draft-therapist-${Number(therapist.id)}`, [
+        ['very_satisfied', 'sentiment_very_satisfied', 'Sangat baik'],
+        ['standard', 'sentiment_satisfied', 'Standar'],
+        ['dissatisfied', 'sentiment_dissatisfied', 'Kurang puas'],
+        ['very_dissatisfied', 'sentiment_very_dissatisfied', 'Sangat buruk'],
+    ], 'four')}</fieldset>`).join('');
+    wrapper.innerHTML = `<div class="modal-box customer-survey-entry-modal"><div class="modal-head"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="customer-survey-entry-content">
+        ${therapists.length ? `<div class="survey-question survey-therapist-question"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3><div class="survey-therapist-list">${therapistRatings}</div></div>` : ''}
+        <div class="survey-question"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3>${choices('survey-draft-facility', [['very_suitable', 'sentiment_very_satisfied', 'Sangat sesuai'], ['standard', 'sentiment_neutral', 'Standar'], ['poor', 'sentiment_dissatisfied', 'Kurang bagus']])}</div>
+        <div class="survey-question"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3>${choices('survey-draft-reception', [['very_good', 'sentiment_very_satisfied', 'Sangat baik'], ['good', 'thumb_up', 'Baik'], ['neutral', 'sentiment_neutral', 'Biasa saja'], ['bad', 'thumb_down', 'Buruk']], 'four')}</div>
+        <div class="survey-question"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3>${choices('survey-draft-return', [['yes', '', 'Sudah pasti, iya!'], ['maybe', '', 'Hmm, bingung'], ['no', '', 'Tidak dulu']], 'three', true)}</div>
+        <div class="survey-question"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3>${choices('survey-draft-price', [['fair', '', 'Cocok dengan harganya'], ['worth_it', '', 'Agak mahal tapi worth it'], ['expensive', '', 'Mahal sih kak']], 'three', true)}</div>
+        <label class="survey-feedback">Masukan untuk kami<textarea name="feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
+    </div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan survey</button></footer></form></div>`;
+    document.body.appendChild(wrapper);
+    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
+    wrapper.querySelector('form').onsubmit = async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const checkedValue = (name) => String(form.querySelector(`input[name="${name}"]:checked`)?.value || '');
+        const ratings = therapists.map((therapist) => ({ employee_id: Number(therapist.id), rating: checkedValue(`survey-draft-therapist-${Number(therapist.id)}`) }));
+        const facilityRating = checkedValue('survey-draft-facility');
+        const receptionRating = checkedValue('survey-draft-reception');
+        const returnIntent = checkedValue('survey-draft-return');
+        const priceRating = checkedValue('survey-draft-price');
+        if (ratings.some((rating) => !rating.rating) || !facilityRating || !receptionRating || !returnIntent || !priceRating) return toast('Lengkapi seluruh pertanyaan Customer Survey terlebih dahulu.', true);
+        const submitButton = form.querySelector('[type="submit"]');
+        submitButton.disabled = true;
+        try {
+            await api(`/operasional/penjualan/${Number(survey.transaction_id)}/customer-survey`, { method: 'POST', body: JSON.stringify({ therapist_ratings: ratings, facility_rating: facilityRating, reception_rating: receptionRating, return_intent: returnIntent, price_rating: priceRating, feedback: form.elements.feedback.value.trim() || null }) });
+            wrapper.remove();
+            toast('Customer Survey berhasil disimpan.');
+            await loadCustomerSurveyPage(customerSurveyPageState?.meta?.current_page || 1);
+        } catch (error) {
+            submitButton.disabled = false;
+            toast(error.message, true);
+        }
     };
 }
 
@@ -5214,7 +5259,7 @@ function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
         option.addEventListener('click', () => {
             const bundle = array(state.treatment_bundles).find((item) => Number(item.id) === Number(option.dataset.bundleId));
             if (!bundle) return;
-            addReservationBundle(bundle);
+            addReservationBundle(bundle, card);
             closeReservationTreatmentPickers();
         });
     });
@@ -5560,11 +5605,20 @@ function bundlePriceAllocations(bundle) {
     });
 }
 
-function addReservationBundle(bundle) {
+function addReservationBundle(bundle, sourceCard = null) {
     const container = document.getElementById('reservation-items');
-    const blankCard = container?.querySelector('.reservation-item-card');
-    if (container?.children.length === 1 && !blankCard?.querySelector('.item-treatment')?.value) blankCard.remove();
-    const start = container?.lastElementChild?.querySelector('.item-time, .bundle-time')?.value || '09:00';
+    if (!container) return;
+    const sourceIsBlank = sourceCard
+        && sourceCard.parentElement === container
+        && !sourceCard.querySelector('.item-treatment')?.value;
+    const onlyCard = container.children.length === 1 ? container.firstElementChild : null;
+    const replaceableCard = sourceIsBlank
+        ? sourceCard
+        : (onlyCard && !onlyCard.querySelector('.item-treatment')?.value ? onlyCard : null);
+    const start = sourceCard?.querySelector('.item-time, .bundle-time')?.value
+        || replaceableCard?.querySelector('.item-time, .bundle-time')?.value
+        || container.lastElementChild?.querySelector('.item-time, .bundle-time')?.value
+        || '09:00';
     const card = document.createElement('article');
     card.className = 'reservation-item-card reservation-bundle-card';
     card.dataset.bundleId = String(bundle.id);
@@ -5572,7 +5626,12 @@ function addReservationBundle(bundle) {
     card.dataset.actualPrice = String(bundle.bundle_price);
     const prices = bundlePriceAllocations(bundle);
     card.innerHTML = `<div class="reservation-item-title"><strong><span class="reservation-item-name">Bundle · ${escapeHtml(bundle.name)}</span><small class="reservation-item-summary">${array(bundle.items).length} treatment · ${money(bundle.bundle_price)}</small></strong><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div><div class="bundle-start-time"><label>Jam mulai paket<select class="bundle-time">${reservationTimeOptions(start)}</select></label><small>Urutan jam treatment dihitung otomatis.</small></div><div class="bundle-treatment-table"><div class="bundle-treatment-head"><span>Treatment</span><span>Therapist</span><span>Komisi</span></div>${array(bundle.items).map((item, index) => `<div class="bundle-treatment-row" data-treatment-id="${Number(item.treatment_id)}" data-duration="${Number(item.duration_minutes)}" data-price="${prices[index]}"><span><b>${escapeHtml(item.name)}</b><small class="bundle-item-time"></small></span><label><select class="bundle-employee"><option value="">Pilih therapist</option>${employeeOptions()}</select></label><label><select class="bundle-commission">${commissionPercentOptions(item.default_commission_percent ?? 0)}</select></label></div>`).join('')}</div>`;
-    container?.appendChild(card);
+    if (replaceableCard) {
+        container.insertBefore(card, replaceableCard);
+        replaceableCard.remove();
+    } else {
+        container.appendChild(card);
+    }
     const updateTimes = () => {
         let cursor = card.querySelector('.bundle-time').value;
         card.querySelectorAll('.bundle-treatment-row').forEach((row) => {
