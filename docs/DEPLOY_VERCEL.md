@@ -1,8 +1,8 @@
 # Deploy demo ke Vercel
 
 Project ini memakai runtime komunitas `vercel-php` karena PHP bukan runtime
-bawaan Vercel. Database lokal tidak dapat digunakan oleh deployment; gunakan
-database MySQL-compatible yang dapat diakses dari internet, seperti TiDB Cloud.
+bawaan Vercel. Database lokal tidak dapat digunakan oleh deployment; production
+menggunakan PostgreSQL Supabase yang dapat diakses dari internet.
 
 ## Environment variables
 
@@ -21,13 +21,9 @@ APP_TIMEZONE=Asia/Jakarta
 LOG_CHANNEL=stderr
 LOG_LEVEL=warning
 
-DB_CONNECTION=mysql
-DB_HOST=...
-DB_PORT=4000
-DB_DATABASE=salon_wellness
-DB_USERNAME=...
-DB_PASSWORD=...
-MYSQL_ATTR_SSL_CA=/etc/pki/tls/certs/ca-bundle.crt
+DB_CONNECTION=pgsql
+DB_URL=postgresql://...
+DB_SSLMODE=require
 
 SESSION_DRIVER=database
 SESSION_SECURE_COOKIE=true
@@ -37,21 +33,19 @@ FILESYSTEM_DISK=local
 APP_MAINTENANCE_DRIVER=cache
 ```
 
-Gunakan koneksi yang ditampilkan oleh tombol **Connect** di TiDB Cloud. Nama
-pengguna TiDB Starter biasanya memiliki prefix khusus; salin nilainya secara
-utuh. Path CA di atas dipakai oleh runtime Linux Vercel. Saat menjalankan
-migration dari Ubuntu lokal, gunakan `/etc/ssl/certs/ca-certificates.crt`.
+Gunakan connection string yang ditampilkan oleh tombol **Connect** di Supabase
+dan salin nilainya secara utuh.
 Setelah URL Vercel pertama tersedia, perbarui `APP_URL` lalu redeploy.
 
 ## Menyiapkan database
 
-Salin `.env.example` menjadi `.env.tidb`, lalu isi kredensial cloud pada file
+Salin `.env.example` menjadi `.env.production`, lalu isi kredensial cloud pada file
 tersebut. File ini diabaikan Git. Jalankan migration menggunakan environment
 khusus itu agar konfigurasi database lokal pada `.env` tidak berubah:
 
 ```bash
-php artisan migrate --force --env=tidb
-php artisan db:seed --force --env=tidb
+php artisan migrate --force --env=production
+php artisan db:seed --force --env=production
 ```
 
 Pastikan target benar-benar database demo sebelum menjalankan seeder. Jangan
@@ -73,9 +67,9 @@ dua repo tidak berebut mengubah database yang sama. Job memakai GitHub Actions
 environment `production`, bukan `.env` lokal, dan tidak menjalankan seeder.
 
 Sebelum mengaktifkannya, buat environment `production` pada repo Vercel di
-GitHub dan isi environment secrets `APP_KEY`, `DB_HOST`, `DB_PORT`,
-`DB_DATABASE`, `DB_USERNAME`, dan `DB_PASSWORD` dengan nilai production yang
-sama seperti di Vercel. Batasi environment ini ke branch `main`; pertimbangkan
+GitHub dan isi environment secrets `APP_KEY` dan `DB_URL` dengan nilai production
+yang sama seperti di Vercel. Tambahkan environment variables
+`DB_CONNECTION=pgsql` dan `DB_SSLMODE=require`. Batasi environment ini ke branch `main`; pertimbangkan
 persetujuan manual untuk migrasi yang berisiko. Jika secret belum tersedia,
 job akan gagal sebelum menyentuh database.
 
