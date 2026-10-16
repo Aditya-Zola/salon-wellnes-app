@@ -1152,6 +1152,44 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_split_payment_charge_can_be_covered_by_another_payment_row(): void
+    {
+        $bank = $this->paymentMethod('BANK-001');
+        $qris = $this->paymentMethod('QRIS-001');
+        [$reservationId, $total] = $this->finishedTwoItemReservation('081290000199');
+        $firstBase = intdiv($total, 2);
+        $secondBase = $total - $firstBase;
+        $charge = (int) round($firstBase * 0.02);
+
+        $payment = $this->actingAs($this->cashier)
+            ->postJson('/operasional/pembayaran', [
+                'reservation_id' => $reservationId,
+                'payments' => [
+                    [
+                        'payment_method_id' => $bank->id,
+                        'amount' => $firstBase,
+                        'charge_enabled' => true,
+                        'charge_percent' => '2',
+                        'tendered_amount' => $firstBase,
+                    ],
+                    [
+                        'payment_method_id' => $qris->id,
+                        'amount' => $secondBase,
+                        'charge_enabled' => false,
+                        'charge_percent' => '0',
+                        'tendered_amount' => $secondBase + $charge,
+                    ],
+                ],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('payment_charge_amount', $charge);
+
+        $this->assertSame(
+            $total + $charge,
+            (int) DB::table('transaction_payments')->where('transaction_id', $payment->json('id'))->sum('tendered_amount'),
+        );
+    }
+
     public function test_cash_checkout_records_received_amount_and_change(): void
     {
         [$reservationId, $total] = $this->finishedTwoItemReservation('081290000041');
@@ -2235,14 +2273,105 @@ class SalonOperationsTest extends TestCase
         ]);
         $facialItem = $this->item($facial->id, '09:00', [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary']], 80000);
         $facialItem['bundle_id'] = $bundleId;
+        $facialItem['bundle_instance'] = 'bundle-test-01';
         $nailItem = $this->item($nail->id, '10:00', [['employee_id' => $this->employee('EMP-SARI')->id, 'role' => 'primary']], 70000);
         $nailItem['bundle_id'] = $bundleId;
+        $nailItem['bundle_instance'] = 'bundle-test-01';
 
         $reservationId = (int) $this->createReservation($this->marketing, [$facialItem, $nailItem])
             ->assertCreated()
             ->json('id');
 
         $this->assertSame(150000, (int) DB::table('reservation_items')->where('reservation_id', $reservationId)->sum('unit_price'));
+        $items = DB::table('reservation_items')->where('reservation_id', $reservationId)->orderBy('sort_order')->get();
+        $this->assertSame(
+            Carbon::parse($items[0]->scheduled_end_at)->format('Y-m-d H:i:s'),
+            Carbon::parse($items[1]->scheduled_start_at)->format('Y-m-d H:i:s'),
+        );
+        $this->assertSame($bundleId, (int) $items[0]->treatment_bundle_id);
+        $this->assertSame('Paket Test', $items[0]->treatment_bundle_name);
+
+        DB::table('reservation_items')->where('reservation_id', $reservationId)->update(['work_status' => 'finished', 'finished_at' => now()]);
+        $transactionId = (int) $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', [
+            'reservation_id' => $reservationId,
+            'payments' => [['payment_method_id' => $this->paymentMethod('CASH')->id, 'amount' => 150000]],
+        ])->assertCreated()->json('id');
+        $this->assertSame(2, DB::table('transaction_items')->where('transaction_id', $transactionId)->where('treatment_bundle_name', 'Paket Test')->count());
+        $this->assertSame(1, DB::table('transaction_items')->where('transaction_id', $transactionId)->distinct()->count('treatment_bundle_instance'));
+        $this->actingAs($this->admin)->get("/operasional/penjualan/{$transactionId}/nota.pdf")->assertOk();
+    }
+
+    public function test_bundle_master_preserves_the_submitted_treatment_order(): void
+    {
+        $facial = $this->treatment('TRT-FACIAL-BARRIER');
+        $nail = $this->treatment('TRT-NAIL-GEL-HAND');
+        $cream = $this->treatment('TRT-CREAMBATH-MKRZ');
+
+        $bundleId = (int) $this->actingAs($this->admin)->postJson('/operasional/treatment/bundle', [
+            'name' => 'Paket Urutan Custom',
+            'bundle_price' => 250000,
+            'treatment_ids' => [$cream->id, $facial->id, $nail->id],
+        ])->assertCreated()->json('id');
+
+        $this->assertSame(
+            [$cream->id, $facial->id, $nail->id],
+            DB::table('treatment_bundle_items')->where('treatment_bundle_id', $bundleId)->orderBy('sort_order')->pluck('treatment_id')->all(),
+        );
+
+        $this->actingAs($this->admin)->patchJson("/operasional/treatment/bundle/{$bundleId}", [
+            'name' => 'Paket Urutan Custom',
+            'bundle_price' => 250000,
+            'is_active' => true,
+            'treatment_ids' => [$nail->id, $cream->id, $facial->id],
+        ])->assertOk();
+        $this->assertSame(
+            [$nail->id, $cream->id, $facial->id],
+            DB::table('treatment_bundle_items')->where('treatment_bundle_id', $bundleId)->orderBy('sort_order')->pluck('treatment_id')->all(),
+        );
+    }
+
+    public function test_same_therapist_in_sequential_bundle_requires_audited_override(): void
+    {
+        $facial = $this->treatment('TRT-FACIAL-BARRIER');
+        $nail = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-DITA');
+        $bundleId = DB::table('treatment_bundles')->insertGetId([
+            'code' => 'BND-REST-01', 'name' => 'Paket Tanpa Jeda', 'bundle_price' => 150000,
+            'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('treatment_bundle_items')->insert([
+            ['treatment_bundle_id' => $bundleId, 'treatment_id' => $facial->id, 'sort_order' => 1, 'created_at' => now(), 'updated_at' => now()],
+            ['treatment_bundle_id' => $bundleId, 'treatment_id' => $nail->id, 'sort_order' => 2, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+        $staff = [['employee_id' => $therapist->id, 'role' => 'primary']];
+        $first = $this->item($facial->id, '09:00', $staff, 80000);
+        $second = $this->item($nail->id, '10:00', $staff, 70000);
+        foreach ([&$first, &$second] as &$item) {
+            $item['bundle_id'] = $bundleId;
+            $item['bundle_instance'] = 'bundle-rest-01';
+        }
+        unset($item);
+        $payload = $this->reservationPayload([$first, $second], ['phone' => '081290000512']);
+
+        $this->actingAs($this->admin)->postJson('/operasional/reservasi', $payload)
+            ->assertConflict()
+            ->assertJsonPath('code', 'schedule_conflict')
+            ->assertJsonPath('can_override', true)
+            ->assertJsonPath('conflicts.0.type', 'bundle_therapist_rest');
+
+        $reservationId = (int) $this->actingAs($this->admin)->postJson('/operasional/reservasi', [
+            ...$payload,
+            'override_conflict' => true,
+            'override_reason' => 'Therapist menyetujui rangkaian tanpa jeda.',
+        ])->assertCreated()->json('id');
+
+        $assignments = DB::table('reservation_item_staff as staff')
+            ->join('reservation_items as item', 'item.id', '=', 'staff.reservation_item_id')
+            ->where('item.reservation_id', $reservationId)
+            ->get(['staff.conflict_override_reason', 'staff.conflict_overridden_by']);
+        $this->assertCount(2, $assignments);
+        $this->assertTrue($assignments->every(fn (object $assignment): bool => $assignment->conflict_override_reason === 'Therapist menyetujui rangkaian tanpa jeda.'));
+        $this->assertTrue($assignments->every(fn (object $assignment): bool => (int) $assignment->conflict_overridden_by === (int) $this->admin->id));
     }
 
     public function test_admin_can_update_default_commission_for_a_treatment(): void
@@ -3042,7 +3171,7 @@ class SalonOperationsTest extends TestCase
         $this->assertSame([], $dita['conflicts']);
     }
 
-    public function test_member_page_only_exposes_the_latest_treatment_name(): void
+    public function test_member_page_exposes_paid_treatment_history_with_reservation_date_and_therapist(): void
     {
         $member = $this->actingAs($this->admin)->postJson('/operasional/member', [
             'name' => 'Member Treatment Terakhir',
@@ -3083,6 +3212,11 @@ class SalonOperationsTest extends TestCase
         $result = collect($members)->firstWhere('id', $memberId);
 
         $this->assertSame($treatment->name, $result['last_treatment']);
+        $this->assertSame([[
+            'treatment_name' => $treatment->name,
+            'reservation_date' => today()->addDay()->toDateString(),
+            'therapist_name' => $dita->name,
+        ]], $result['treatment_history']);
         $this->assertArrayNotHasKey('last_treatment_at', $result);
     }
 

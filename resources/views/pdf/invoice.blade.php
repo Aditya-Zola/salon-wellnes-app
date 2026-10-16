@@ -60,7 +60,7 @@
     <table class="items">
         <thead><tr><th>Rincian</th><th>Qty</th><th>Harga</th><th>Total</th></tr></thead>
         <tbody>
-        @foreach ($items as $item)
+        @foreach ($displayItems as $item)
             <tr>
                 <td><strong>{{ $item->name }}</strong><small>{{ $item->item_type === 'product' ? 'Produk retail' : 'Treatment' }}@if((float) $item->returned_quantity > 0) · Diretur {{ rtrim(rtrim(number_format((float) $item->returned_quantity, 4, '.', ''), '0'), '.') }}@elseif(($item->returned_amount ?? 0) > 0) · Refund Rp {{ number_format($item->returned_amount, 0, ',', '.') }}@endif</small></td>
                 <td>{{ rtrim(rtrim(number_format((float) $item->quantity, 4, '.', ''), '0'), '.') }}</td>

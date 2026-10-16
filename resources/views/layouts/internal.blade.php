@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
     <link rel="stylesheet" href="{{ asset('css/ui-system.css') }}?v={{ filemtime(public_path('css/ui-system.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/member-history.css') }}?v={{ md5_file(public_path('css/member-history.css')) }}">
 </head>
 <body class="ui-shell">
 <div class="app">

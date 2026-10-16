@@ -691,7 +691,10 @@ class SalonController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', Rule::in(['draft', 'submitted'])],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d'],
         ]);
+        abort_if(isset($data['from'], $data['to']) && $data['to'] < $data['from'], 422, 'Tanggal akhir tidak boleh lebih awal dari tanggal mulai.');
 
         return response()->json($this->snapshots->customerSurveysPage(
             $request->user(),
@@ -699,6 +702,8 @@ class SalonController extends Controller
             (int) ($data['per_page'] ?? 20),
             $data['search'] ?? null,
             $data['status'] ?? null,
+            $data['from'] ?? null,
+            $data['to'] ?? null,
         ));
     }
 
@@ -2218,6 +2223,33 @@ class SalonController extends Controller
                 ? (int) ($returnedTreatmentAmounts->get($item->id) ?? 0)
                 : 0;
         });
+        $displayItems = collect();
+        $bundleRows = [];
+        foreach ($items as $item) {
+            if ($item->item_type !== 'treatment' || blank($item->treatment_bundle_instance)) {
+                $displayItems->push($item);
+                continue;
+            }
+
+            $key = (string) $item->treatment_bundle_instance;
+            if (! isset($bundleRows[$key])) {
+                $bundle = clone $item;
+                $bundle->name = $item->treatment_bundle_name ?: 'Paket treatment';
+                $bundle->quantity = '1.0000';
+                $bundle->unit_price = 0;
+                $bundle->gross_amount = 0;
+                $bundle->discount_amount = 0;
+                $bundle->total_amount = 0;
+                $bundle->returned_amount = 0;
+                $bundleRows[$key] = $bundle;
+                $displayItems->push($bundle);
+            }
+            $bundleRows[$key]->unit_price += (int) $item->unit_price;
+            $bundleRows[$key]->gross_amount += (int) $item->gross_amount;
+            $bundleRows[$key]->discount_amount += (int) $item->discount_amount;
+            $bundleRows[$key]->total_amount += (int) $item->total_amount;
+            $bundleRows[$key]->returned_amount += (int) $item->returned_amount;
+        }
         $payments = DB::table('transaction_payments as payment')
             ->join('payment_methods as method', 'method.id', '=', 'payment.payment_method_id')
             ->where('payment.transaction_id', $invoice->id)
@@ -2246,7 +2278,7 @@ class SalonController extends Controller
 
         $invoiceFilename = preg_replace('/[-_\s]+/', '', $invoice->number);
 
-        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'payments', 'therapists', 'logoDataUri', 'salon'))
+        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'displayItems', 'payments', 'therapists', 'logoDataUri', 'salon'))
             ->setPaper('a4')
             ->stream($invoiceFilename.'.pdf');
     }
