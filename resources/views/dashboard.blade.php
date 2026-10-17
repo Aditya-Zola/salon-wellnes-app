@@ -38,7 +38,8 @@
         @cannot('products.stocktake') #stok-opname,.product-stock-action{display:none!important} @endcannot
         @cannot('payroll.manage') #open-payroll,#remuneration-schedule,.remuneration-status{display:none!important} @endcannot
         @cannot('reservations.update') .status-select{pointer-events:none;opacity:.65} @endcannot
-        @cannot('treatments.update') .recipe-button,.commission-edit{display:none!important} @endcannot
+        @cannot('treatments.update') .recipe-button,.commission-edit,.treatment-price-edit,.bundle-price-edit{display:none!important} @endcannot
+        @cannot('treatments.delete') .treatment-delete,.bundle-delete{display:none!important} @endcannot
         @cannot('products.update') .product-price-edit,.product-edit{display:none!important} @endcannot
         @cannot('finance.manage') #open-cash-entry{display:none!important} @endcannot
         @cannot('payroll.manage') .payroll-edit{display:none!important} @endcannot
@@ -80,7 +81,7 @@
 
         <section class="page reservation-page" id="reservasi-antrean">
             <div class="reservation-page-actions">
-                <button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
+                <button class="primary ui-action-create open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
             </div>
             <div class="today-queue card reservation-queue-card"><div class="card-head"><div><h3>Antrean hari ini</h3><p id="today-queue-date">Urutan berdasarkan jam reservasi</p></div></div><div id="reservation-queue-list"></div></div>
         </section>
@@ -88,7 +89,7 @@
         <section class="page reservation-page" id="reservasi-kalender">
             <div class="reservation-page-actions">
                 <button type="button" class="secondary" id="export-schedule" title="Ekspor jadwal pada tanggal yang dipilih"><span class="material-symbols-outlined" aria-hidden="true">download</span> Ekspor Excel</button>
-                <button class="primary open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
+                <button class="primary ui-action-create open-reservation"><span class="material-symbols-outlined" aria-hidden="true">add</span> Reservasi baru</button>
             </div>
             <div class="calendar-controls card">
                 <div class="calendar-period">
@@ -149,7 +150,7 @@
             <div class="card sales-history-card"><div class="table sales-history-table" id="sales-history"></div><div class="table-pagination" id="sales-pagination"></div></div>
         </section>
 
-        <section class="page" id="treatment"><div class="card treatment-list-card"><div class="toolbar treatment-toolbar"><div><h3>Daftar treatment <b id="treatment-count">0</b></h3><p>Cari atau kelola menu treatment dan resepnya.</p></div><div class="page-toolbar-actions"><label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="treatment-search" type="search" placeholder="Cari treatment..." aria-label="Cari treatment"></label><button class="secondary" id="open-treatment-bundle"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span> Buat bundle</button><button class="primary" id="open-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div></div><div class="treatment-grid treatment-card-grid" id="treatment-grid"></div><div class="card-head"><div><h3>Treatment bundling</h3><p>Isi bundle ditampilkan seperti ingredients dan dikerjakan berurutan.</p></div></div><div class="treatment-grid treatment-card-grid" id="treatment-bundle-grid"></div></div></section>
+        <section class="page" id="treatment"><div class="card treatment-list-card"><div class="toolbar treatment-toolbar"><div><h3>Daftar treatment <b id="treatment-count">0</b></h3><p>Cari atau kelola menu treatment dan resepnya.</p></div><div class="page-toolbar-actions"><label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="treatment-search" type="search" placeholder="Cari treatment..." aria-label="Cari treatment"></label><button class="ui-action-create" id="open-treatment-bundle"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span> Buat bundle</button><button class="primary ui-action-create" id="open-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div></div><div class="treatment-grid treatment-card-grid" id="treatment-grid"></div><div class="card-head"><div><h3>Treatment bundling</h3><p>Isi bundle ditampilkan seperti ingredients dan dikerjakan berurutan.</p></div></div><div class="treatment-grid treatment-card-grid" id="treatment-bundle-grid"></div></div></section>
 
         <section class="page" id="customer-survey"><div class="card"><div class="toolbar customer-survey-toolbar"><div><h3>Customer Survey</h3><p>Draft survey dari invoice lunas yang belum diisi pelanggan.</p></div><div class="sales-filters customer-survey-filters"><input id="customer-survey-search" type="search" placeholder="Cari invoice, nama, atau telepon..." aria-label="Cari customer survey"><label class="customer-survey-date-filter"><span>Dari tanggal</span><input id="customer-survey-from" type="date"></label><label class="customer-survey-date-filter"><span>Sampai tanggal</span><input id="customer-survey-to" type="date"></label><select id="customer-survey-status" aria-label="Filter status customer survey"><option value="">Semua status</option><option value="draft">Belum diisi</option><option value="submitted">Sudah diisi</option></select></div></div><section class="customer-survey-therapist-summary" id="customer-survey-therapist-summary"></section><div class="table sales-history-table" id="customer-survey-list"></div><div class="table-pagination" id="customer-survey-pagination"></div></div></section>
 
@@ -174,7 +175,7 @@
                         <label class="page-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input id="stock-search" type="search" placeholder="Cari produk..." aria-label="Cari produk"></label>
                         <label class="stock-sort-control"><img src="/icons/filter-rectangle.svg" alt="" aria-hidden="true"><select id="stock-sort" class="stock-sort" aria-label="Filter produk berdasarkan jumlah stok"><option value="">Filter produk</option><option value="lowest">Stok terendah</option><option value="highest">Stok terbanyak</option></select></label>
                         <button class="secondary" id="open-product-import"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> Import Excel</button>
-                        <button class="primary" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
+                        <button class="primary ui-action-create" id="open-product"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah produk</button>
                     </div>
                 </div>
             </div>
@@ -312,7 +313,7 @@
                 <label>Tanggal<input required id="reservation-date" name="date" type="date"></label>
                 <label>Sumber booking<select name="source"><option value="walk_in">Walk-in</option><option value="whatsapp">WhatsApp</option><option value="phone">Telepon</option><option value="other">Lainnya</option></select></label>
             </div>
-            <div class="reservation-items-head"><div><h3>Daftar treatment</h3><p>Cari treatment atau bundle, lalu atur waktu dan pembagian therapist.</p></div><div><button type="button" class="secondary" id="add-reservation-item"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div></div>
+            <div class="reservation-items-head"><div><h3>Daftar treatment</h3><p>Cari treatment atau bundle, lalu atur waktu dan pembagian therapist.</p></div><div><button type="button" class="ui-action-create" id="add-reservation-item"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button></div></div>
             <div id="reservation-items"></div>
             @can('cashier.process')
                 <fieldset class="reservation-customer-type" id="reservation-deposit-choice">

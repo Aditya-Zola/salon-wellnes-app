@@ -2391,6 +2391,105 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_update_normal_price_for_a_treatment(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/treatment/{$treatment->id}/harga", [
+                'normal_price' => 125000,
+            ])
+            ->assertOk()
+            ->assertJsonPath('message', 'Harga treatment berhasil diperbarui.');
+
+        $this->assertDatabaseHas('treatments', [
+            'id' => $treatment->id,
+            'normal_price' => 125000,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'treatment.price_updated',
+            'subject_type' => 'treatment',
+            'subject_id' => $treatment->id,
+        ]);
+    }
+
+    public function test_admin_can_archive_an_unused_treatment_without_removing_its_history(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+
+        $response = $this->actingAs($this->admin)->deleteJson("/operasional/treatment/{$treatment->id}");
+
+        $response->assertOk()->assertJsonPath('message', 'Treatment berhasil dihapus. Riwayat transaksi tetap tersimpan.');
+        $this->assertDatabaseHas('treatments', [
+            'id' => $treatment->id,
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'treatment.deleted',
+            'subject_type' => 'treatment',
+            'subject_id' => $treatment->id,
+        ]);
+    }
+
+    public function test_treatment_in_an_active_bundle_must_be_removed_from_bundle_before_deletion(): void
+    {
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $bundleId = DB::table('treatment_bundles')->insertGetId([
+            'code' => 'BUNDLE-DELETE-GUARD',
+            'name' => 'Bundle Delete Guard',
+            'bundle_price' => 100000,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('treatment_bundle_items')->insert([
+            'treatment_bundle_id' => $bundleId,
+            'treatment_id' => $treatment->id,
+            'sort_order' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->deleteJson("/operasional/treatment/{$treatment->id}")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('treatment');
+
+        $this->assertDatabaseHas('treatments', [
+            'id' => $treatment->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_admin_can_update_and_archive_a_treatment_bundle(): void
+    {
+        $bundleId = DB::table('treatment_bundles')->insertGetId([
+            'code' => 'BUNDLE-PRICE-DELETE',
+            'name' => 'Bundle Price Delete',
+            'bundle_price' => 100000,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/operasional/treatment/bundle/{$bundleId}/harga", ['bundle_price' => 150000])
+            ->assertOk()
+            ->assertJsonPath('message', 'Harga bundle berhasil diperbarui.');
+        $this->assertDatabaseHas('treatment_bundles', ['id' => $bundleId, 'bundle_price' => 150000]);
+
+        $this->actingAs($this->admin)
+            ->deleteJson("/operasional/treatment/bundle/{$bundleId}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Bundle berhasil dihapus. Riwayat reservasi tetap tersimpan.');
+        $this->assertDatabaseHas('treatment_bundles', ['id' => $bundleId, 'is_active' => false]);
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'treatment_bundle.deleted',
+            'subject_type' => 'treatment_bundle',
+            'subject_id' => $bundleId,
+        ]);
+    }
+
     public function test_treatment_commission_profile_can_be_customized_for_three_therapists(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');

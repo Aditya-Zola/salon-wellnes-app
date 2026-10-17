@@ -1692,6 +1692,52 @@ class SalonController extends Controller
         return response()->json(['message' => 'Treatment bundle berhasil diperbarui.', 'id' => $bundle]);
     }
 
+    public function updateTreatmentBundlePrice(Request $request, int $bundle): JsonResponse
+    {
+        $treatmentBundle = DB::table('treatment_bundles')->where('id', $bundle)->first();
+        abort_unless($treatmentBundle, 404, 'Bundle treatment tidak ditemukan.');
+        $data = $request->validate([
+            'bundle_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+        ]);
+        $price = (int) $data['bundle_price'];
+
+        DB::table('treatment_bundles')->where('id', $bundle)->update([
+            'bundle_price' => $price,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log(
+            $request,
+            'treatment_bundle.price_updated',
+            'treatment_bundle',
+            $bundle,
+            "Memperbarui harga bundle {$treatmentBundle->name}",
+            ['before' => (int) $treatmentBundle->bundle_price, 'after' => $price],
+        );
+
+        return response()->json(['message' => 'Harga bundle berhasil diperbarui.']);
+    }
+
+    public function destroyTreatmentBundle(Request $request, int $bundle): JsonResponse
+    {
+        $treatmentBundle = DB::table('treatment_bundles')->where('id', $bundle)->first();
+        abort_unless($treatmentBundle, 404, 'Bundle treatment tidak ditemukan.');
+
+        DB::table('treatment_bundles')->where('id', $bundle)->update([
+            'is_active' => false,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log(
+            $request,
+            'treatment_bundle.deleted',
+            'treatment_bundle',
+            $bundle,
+            "Menghapus bundle {$treatmentBundle->name}",
+            ['archive_mode' => true],
+        );
+
+        return response()->json(['message' => 'Bundle berhasil dihapus. Riwayat reservasi tetap tersimpan.']);
+    }
+
     public function updateTreatmentCommission(Request $request, int $id): JsonResponse
     {
         $treatment = DB::table('treatments')->where('id', $id)->first();
@@ -1792,6 +1838,66 @@ class SalonController extends Controller
         );
 
         return response()->json(['message' => 'Komisi treatment berhasil diperbarui.']);
+    }
+
+    public function updateTreatmentPrice(Request $request, int $id): JsonResponse
+    {
+        $treatment = DB::table('treatments')->where('id', $id)->first();
+        abort_unless($treatment, 404, 'Treatment tidak ditemukan.');
+
+        $data = $request->validate([
+            'normal_price' => ['required', 'integer', 'min:0', 'max:999999999999'],
+        ]);
+        $price = (int) $data['normal_price'];
+
+        DB::table('treatments')->where('id', $id)->update([
+            'normal_price' => $price,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log(
+            $request,
+            'treatment.price_updated',
+            'treatment',
+            $id,
+            "Memperbarui harga treatment {$treatment->name}",
+            ['before' => (int) $treatment->normal_price, 'after' => $price],
+        );
+
+        return response()->json(['message' => 'Harga treatment berhasil diperbarui.']);
+    }
+
+    public function destroyTreatment(Request $request, int $id): JsonResponse
+    {
+        $treatment = DB::table('treatments')->where('id', $id)->first();
+        abort_unless($treatment, 404, 'Treatment tidak ditemukan.');
+
+        $bundleNames = DB::table('treatment_bundle_items as item')
+            ->join('treatment_bundles as bundle', 'bundle.id', '=', 'item.treatment_bundle_id')
+            ->where('item.treatment_id', $id)
+            ->where('bundle.is_active', true)
+            ->orderBy('bundle.name')
+            ->pluck('bundle.name');
+
+        if ($bundleNames->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'treatment' => ['Treatment masih digunakan dalam bundle: '.$bundleNames->join(', ').'. Keluarkan treatment dari bundle terlebih dahulu.'],
+            ]);
+        }
+
+        DB::table('treatments')->where('id', $id)->update([
+            'is_active' => false,
+            'updated_at' => now(),
+        ]);
+        $this->logger->log(
+            $request,
+            'treatment.deleted',
+            'treatment',
+            $id,
+            "Menghapus treatment {$treatment->name}",
+            ['archive_mode' => true],
+        );
+
+        return response()->json(['message' => 'Treatment berhasil dihapus. Riwayat transaksi tetap tersimpan.']);
     }
 
     public function updateRecipe(Request $request, int $id): JsonResponse
