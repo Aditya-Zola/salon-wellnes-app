@@ -52,8 +52,12 @@ Route::middleware('auth')->group(function () {
         Route::post('/treatment', [SalonController::class, 'storeTreatment'])->middleware('permission:treatments.create')->name('treatments.store');
         Route::post('/treatment/bundle', [SalonController::class, 'storeTreatmentBundle'])->middleware('permission:treatments.create')->name('treatment-bundles.store');
         Route::patch('/treatment/bundle/{bundle}', [SalonController::class, 'updateTreatmentBundle'])->middleware('permission:treatments.update')->name('treatment-bundles.update');
+        Route::patch('/treatment/bundle/{bundle}/harga', [SalonController::class, 'updateTreatmentBundlePrice'])->middleware('permission:treatments.update')->name('treatment-bundles.price.update');
+        Route::delete('/treatment/bundle/{bundle}', [SalonController::class, 'destroyTreatmentBundle'])->middleware('permission:treatments.delete')->name('treatment-bundles.destroy');
+        Route::patch('/treatment/{id}/harga', [SalonController::class, 'updateTreatmentPrice'])->middleware('permission:treatments.update')->name('treatments.price.update');
         Route::patch('/treatment/{id}/komisi', [SalonController::class, 'updateTreatmentCommission'])->middleware('permission:treatments.update')->name('treatments.commission.update');
         Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');
+        Route::delete('/treatment/{id}', [SalonController::class, 'destroyTreatment'])->middleware('permission:treatments.delete')->name('treatments.destroy');
         Route::get('/member', [SalonController::class, 'membersPage'])->middleware('permission:memberships.view|memberships.manage')->name('members.page');
         Route::post('/member', [SalonController::class, 'storeMember'])->middleware('permission:memberships.manage')->name('members.store');
         Route::patch('/member/{id}', [SalonController::class, 'updateMember'])->middleware('permission:memberships.manage')->name('members.update');

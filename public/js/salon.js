@@ -2387,11 +2387,13 @@ function renderTreatments() {
 
     box.innerHTML = treatments.map((treatment) => {
         const recipeCount = array(treatment.recipes).length;
+        const categoryLabel = String(treatment.category_name || treatment.category?.name || treatment.category || '-');
+        const categoryTone = Array.from(categoryLabel).reduce((total, character) => total + character.charCodeAt(0), 0) % 5;
         return `<article class="treatment-card">
-            <span class="category">${escapeHtml(treatment.category_name || treatment.category?.name || treatment.category || '-')}</span>
+            <div class="treatment-card-top"><span class="category treatment-category-tone-${categoryTone}">${escapeHtml(categoryLabel)}</span><span class="recipe-info-trigger${recipeCount ? '' : ' is-disabled'}" data-id="${Number(treatment.id)}" title="${recipeCount ? `Lihat ${recipeCount} produk dalam resep` : 'Belum ada produk dalam resep'}" aria-label="${recipeCount ? `Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}` : `Belum ada produk dalam resep ${escapeHtml(treatment.name)}`}" ${recipeCount ? 'role="button" tabindex="0"' : 'aria-disabled="true"'}><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div>
             <h3>${escapeHtml(treatment.name)}</h3>
             <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-actions"><button type="button" class="commission-edit ui-action-edit" data-id="${Number(treatment.id)}">Ubah komisi</button>${recipeCount ? `<button type="button" class="recipe-info-button ui-action-view" data-id="${Number(treatment.id)}" title="Lihat ${recipeCount} produk dalam resep" aria-label="Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}"><span class="material-symbols-outlined" aria-hidden="true">info</span></button>` : ''}<button type="button" class="recipe-button ui-action-edit" data-id="${Number(treatment.id)}">Atur resep</button></span></div>
+            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-standard-actions"><button type="button" class="treatment-price-edit ui-action-edit" data-id="${Number(treatment.id)}">Atur harga</button><button type="button" class="commission-edit ui-action-edit" data-id="${Number(treatment.id)}">Ubah komisi</button><button type="button" class="recipe-button ui-action-edit" data-id="${Number(treatment.id)}">Atur resep</button><button type="button" class="treatment-delete ui-action-delete" data-id="${Number(treatment.id)}" title="Hapus treatment" aria-label="Hapus treatment ${escapeHtml(treatment.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button></span></div>
         </article>`;
     }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
 
@@ -2406,28 +2408,96 @@ function renderTreatments() {
             openTreatmentCommissionEditor(treatment);
         };
     });
-    document.querySelectorAll('.recipe-info-button').forEach((button) => {
+    document.querySelectorAll('.treatment-price-edit').forEach((button) => {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
-        button.onclick = () => openRecipeInfo(treatment);
+        button.onclick = () => {
+            if (!treatment) return;
+            quickForm(`Atur harga ${treatment.name}`, [
+                ['normal_price', 'Harga normal', 'number', null, treatmentPrice(treatment)],
+            ], (data) => api(`/operasional/treatment/${Number(treatment.id)}/harga`, {
+                method: 'PATCH',
+                body: JSON.stringify({ normal_price: Number(data.normal_price) }),
+            }));
+        };
+    });
+    document.querySelectorAll('.treatment-delete').forEach((button) => {
+        const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
+        button.onclick = async () => {
+            if (!treatment || !window.confirm(`Hapus treatment ${treatment.name}? Treatment akan hilang dari menu, tetapi riwayat transaksi tetap tersimpan.`)) return;
+            button.disabled = true;
+            try {
+                const result = await api(`/operasional/treatment/${Number(treatment.id)}`, { method: 'DELETE' });
+                toast(result.message);
+                await refresh();
+            } catch (error) {
+                button.disabled = false;
+                toast(error.message, true);
+            }
+        };
+    });
+    document.querySelectorAll('.recipe-info-trigger[role="button"]').forEach((trigger) => {
+        const treatment = treatments.find((item) => Number(item.id) === Number(trigger.dataset.id));
+        const open = () => openRecipeInfo(treatment);
+        trigger.onclick = open;
+        trigger.onkeydown = (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                open();
+            }
+        };
     });
 
     const bundleBox = document.getElementById('treatment-bundle-grid');
     if (bundleBox) {
         const bundles = array(state.treatment_bundles);
         bundleBox.innerHTML = bundles.map((bundle) => `<article class="treatment-card treatment-bundle-card">
-            <span class="category">Bundle</span><h3>${escapeHtml(bundle.name)}</h3>
+            <div class="treatment-card-top"><span class="category">Bundle</span><span class="bundle-info-trigger recipe-info-trigger" data-id="${Number(bundle.id)}" role="button" tabindex="0" title="Lihat isi bundle" aria-label="Lihat isi bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div><h3>${escapeHtml(bundle.name)}</h3>
             <p>${array(bundle.items).map((item, index) => `<span>${index + 1}. ${escapeHtml(item.name)}</span>`).join('')}</p>
-            <div class="treatment-foot"><span><small>Harga normal ${money(bundle.normal_price)}</small><b>${money(bundle.bundle_price)}</b><small>Hemat ${money(bundle.saving_amount)}</small></span><span class="treatment-actions"><button type="button" class="recipe-button bundle-treatment-edit" data-id="${Number(bundle.id)}"><span class="material-symbols-outlined" aria-hidden="true">playlist_add</span> Atur treatment</button><button type="button" class="recipe-button bundle-order-edit" data-id="${Number(bundle.id)}"><span class="material-symbols-outlined" aria-hidden="true">swap_vert</span> Atur urutan</button><button type="button" class="recipe-button bundle-ingredients" data-id="${Number(bundle.id)}">Lihat isi</button></span></div>
+            <div class="treatment-foot"><span><small>Harga normal ${money(bundle.normal_price)}</small><b>${money(bundle.bundle_price)}</b><small>Hemat ${money(bundle.saving_amount)}</small></span><span class="treatment-bundle-actions"><button type="button" class="bundle-price-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur harga</button><button type="button" class="recipe-button bundle-treatment-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur treatment</button><button type="button" class="recipe-button bundle-order-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur urutan</button><button type="button" class="bundle-delete ui-action-delete" data-id="${Number(bundle.id)}" title="Hapus bundle" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button></span></div>
         </article>`).join('') || '<p class="empty-state">Belum ada treatment bundle.</p>';
-        bundleBox.querySelectorAll('.bundle-ingredients').forEach((button) => {
-            button.onclick = () => {
-                const bundle = bundles.find((item) => Number(item.id) === Number(button.dataset.id));
+        bundleBox.querySelectorAll('.bundle-info-trigger').forEach((trigger) => {
+            const open = () => {
+                const bundle = bundles.find((item) => Number(item.id) === Number(trigger.dataset.id));
                 if (!bundle) return;
                 const wrapper = document.createElement('div');
                 wrapper.className = 'modal open quick-modal';
                 wrapper.innerHTML = `<div class="modal-box recipe-info-modal"><div class="modal-head"><div><h2>${escapeHtml(bundle.name)}</h2><p>Ingredients treatment bundle</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><ul class="recipe-summary">${array(bundle.items).map((item, index) => `<li><span>${index + 1}. ${escapeHtml(item.name)}</span><b>${Number(item.duration_minutes)} menit</b></li>`).join('')}</ul><footer><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
                 document.body.appendChild(wrapper);
                 wrapper.querySelectorAll('.quick-close').forEach((close) => { close.onclick = () => wrapper.remove(); });
+            };
+            trigger.onclick = open;
+            trigger.onkeydown = (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    open();
+                }
+            };
+        });
+        bundleBox.querySelectorAll('.bundle-price-edit').forEach((button) => {
+            const bundle = bundles.find((item) => Number(item.id) === Number(button.dataset.id));
+            button.onclick = () => {
+                if (!bundle) return;
+                quickForm(`Atur harga ${bundle.name}`, [
+                    ['bundle_price', 'Harga bundle', 'number', null, Number(bundle.bundle_price)],
+                ], (data) => api(`/operasional/treatment/bundle/${Number(bundle.id)}/harga`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ bundle_price: Number(data.bundle_price) }),
+                }));
+            };
+        });
+        bundleBox.querySelectorAll('.bundle-delete').forEach((button) => {
+            const bundle = bundles.find((item) => Number(item.id) === Number(button.dataset.id));
+            button.onclick = async () => {
+                if (!bundle || !window.confirm(`Hapus bundle ${bundle.name}? Bundle akan hilang dari menu, tetapi riwayat reservasi tetap tersimpan.`)) return;
+                button.disabled = true;
+                try {
+                    const result = await api(`/operasional/treatment/bundle/${Number(bundle.id)}`, { method: 'DELETE' });
+                    toast(result.message);
+                    await refresh();
+                } catch (error) {
+                    button.disabled = false;
+                    toast(error.message, true);
+                }
             };
         });
         bundleBox.querySelectorAll('.bundle-order-edit').forEach((button) => {
@@ -7099,7 +7169,7 @@ document.getElementById('open-treatment-bundle')?.addEventListener('click', () =
     const selectedTreatmentIds = [];
     const wrapper = document.createElement('div');
     wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal"><div class="modal-head"><div><h2>Buat treatment bundle</h2><p>Pilih treatment, lalu susun urutan pengerjaan customer.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="form-grid"><label>Nama bundle<input name="name" required maxlength="150" placeholder="Contoh: Aurora Package"></label><label>Harga bundle<input name="bundle_price" type="number" min="1" required></label><label class="full-width">Keterangan<textarea name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><div class="bundle-editor-grid"><section><div class="bundle-editor-heading"><b>Pilih treatment</b><small>Centang treatment yang termasuk paket</small></div><div class="recipe-checklist bundle-treatment-options">${treatments.map((treatment) => `<label class="recipe-product"><input type="checkbox" name="treatment_ids" value="${Number(treatment.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${Number(treatment.duration_minutes)} menit · ${money(treatmentPrice(treatment))}</small></span></label>`).join('')}</div></section><section><div class="bundle-editor-heading"><b>Urutan pengerjaan</b><small>Gunakan panah untuk mengatur urutan</small></div><div class="bundle-order-list"><p class="bundle-order-empty">Treatment yang dipilih akan muncul di sini.</p></div></section></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan bundle</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal"><div class="modal-head"><div><h2>Buat treatment bundle</h2><p>Pilih treatment, lalu susun urutan pengerjaan customer.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="form-grid"><label>Nama bundle<input name="name" required maxlength="150" placeholder="Contoh: Aurora Package"></label><label>Harga bundle<input name="bundle_price" type="number" min="1" required></label><label class="full-width">Keterangan<textarea name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><div class="bundle-editor-grid"><section><div class="bundle-editor-heading"><b>Pilih treatment</b><small>Centang treatment yang termasuk paket</small></div><div class="recipe-checklist bundle-treatment-options">${treatments.map((treatment) => `<label class="recipe-product"><input type="checkbox" name="treatment_ids" value="${Number(treatment.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${Number(treatment.duration_minutes)} menit · ${money(treatmentPrice(treatment))}</small></span></label>`).join('')}</div></section><section><div class="bundle-editor-heading"><b>Urutan pengerjaan</b><small>Gunakan panah untuk mengatur urutan</small></div><div class="bundle-order-list"><p class="bundle-order-empty">Treatment yang dipilih akan muncul di sini.</p></div></section></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary ui-action-create">Simpan bundle</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     const renderOrder = () => {

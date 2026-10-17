@@ -259,7 +259,7 @@
 .ui-shell .empty-state { padding: 44px 22px !important; color: var(--ui-muted) !important; font-size: 13px; line-height: 1.7; }
 
 /* Buttons: one geometry, with role-based color rather than page-based color. */
-.ui-shell :is(.primary, .secondary, .access-button, .remuneration-action, .sales-reprint-button, .sales-return-receipt, .membership-actions button, .commission-edit, .recipe-button, .product-edit, .sales-page, .product-page, .member-page, .treatment-page, .dashed, .ui-action-view, .ui-action-edit, .ui-action-delete, .ui-action-success) {
+.ui-shell :is(.primary, .secondary, .access-button, .remuneration-action, .sales-reprint-button, .sales-return-receipt, .membership-actions button, .commission-edit, .recipe-button, .product-edit, .sales-page, .product-page, .member-page, .treatment-page, .dashed, .ui-action-create, .ui-action-view, .ui-action-edit, .ui-action-delete, .ui-action-success, .ui-action-info) {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     min-height: 42px; padding: 10px 15px; border: 1px solid var(--ui-line);
     border-radius: var(--ui-control-radius); background: #fff; color: var(--ui-brand);
@@ -267,18 +267,22 @@
     text-decoration: none; white-space: nowrap; cursor: pointer; box-shadow: none;
     transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
 }
-.ui-shell :is(.primary, .access-button.primary, .remuneration-action.input) { min-height: 44px; background: var(--ui-brand) !important; border-color: var(--ui-brand); color: #fff !important; box-shadow: 0 3px 6px rgb(112 76 58 / .1); }
-.ui-shell :is(.primary, .access-button.primary, .remuneration-action.input):hover:not(:disabled) { background: var(--ui-brand-hover) !important; border-color: var(--ui-brand-hover); }
+.ui-shell :is(.primary, .access-button.primary) { min-height: 44px; background: #2563eb !important; border-color: #2563eb !important; color: #fff !important; box-shadow: 0 3px 6px rgb(37 99 235 / .14); }
+.ui-shell :is(.primary, .access-button.primary):hover:not(:disabled) { background: #1d4ed8 !important; border-color: #1d4ed8 !important; }
 .ui-shell :is(.secondary, .access-button.secondary):hover:not(:disabled) { border-color: #c5b3a6 !important; background: var(--ui-soft) !important; color: var(--ui-brand) !important; }
-.ui-shell :is(.remuneration-action.detail, .ui-action-view) { color: var(--ui-blue) !important; background: var(--ui-blue-soft) !important; border-color: #cfdfec !important; }
-.ui-shell :is(.remuneration-action.edit, .action-edit, .ui-action-edit) { color: var(--ui-warning) !important; background: var(--ui-warning-soft) !important; border-color: #ecd6b2 !important; }
-.ui-shell :is(.action-delete, .ui-action-delete) { color: var(--ui-danger) !important; background: var(--ui-danger-soft) !important; border-color: #efcbc5 !important; }
-.ui-shell .ui-action-success { color: var(--ui-success) !important; background: var(--ui-success-soft) !important; border-color: #c5ddce !important; }
+.ui-shell .ui-action-create { color: #fff !important; background: #16a34a !important; border-color: #16a34a !important; }
+.ui-shell .ui-action-create:hover:not(:disabled) { color: #fff !important; background: #15803d !important; border-color: #15803d !important; }
+.ui-shell :is(.remuneration-action.detail, .ui-action-view) { color: #fff !important; background: #2563eb !important; border-color: #2563eb !important; }
+.ui-shell :is(.remuneration-action.edit, .action-edit, .ui-action-edit) { color: #fff !important; background: #d97706 !important; border-color: #d97706 !important; }
+.ui-shell :is(.action-delete, .ui-action-delete) { color: #fff !important; background: #dc2626 !important; border-color: #dc2626 !important; }
+.ui-shell .ui-action-success { color: #fff !important; background: #16a34a !important; border-color: #16a34a !important; }
+.ui-shell .ui-action-info { color: #fff !important; background: #0891b2 !important; border-color: #0891b2 !important; }
+.ui-shell .ui-action-info:hover:not(:disabled) { color: #fff !important; background: #0e7490 !important; border-color: #0e7490 !important; }
 .ui-shell :is(.ui-action-view, .ui-action-edit, .ui-action-delete, .ui-action-success):hover:not(:disabled) { box-shadow: inset 0 0 0 1px currentColor; }
 .ui-shell :is(.remuneration-action, .access-button.compact, .membership-actions button) { min-height: 38px; padding: 8px 12px; font-size: 12px; }
 .ui-shell :is(.primary, .secondary, .access-button, .remuneration-action) .material-symbols-outlined { flex-shrink: 0; font-size: 18px; }
 .ui-shell :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 3px solid #a37b5e; outline-offset: 3px; }
-.ui-shell :is(button, .access-button):disabled, .ui-shell [aria-disabled="true"] { cursor: not-allowed; opacity: .48; box-shadow: none !important; transform: none !important; }
+.ui-shell :is(button, .access-button):disabled, .ui-shell [aria-disabled="true"] { border-color: #d1d5db !important; background: #d1d5db !important; color: #6b7280 !important; cursor: not-allowed; opacity: 1; box-shadow: none !important; transform: none !important; }
 .ui-shell :is(.link, .text-button, .remuneration-guide-go) { color: var(--ui-brand) !important; font-size: 12px; font-weight: 600; line-height: 1.5; text-underline-offset: 4px; }
 .ui-shell .link { min-height: 36px; padding: 6px 2px; }
 .ui-shell :is(.link, .text-button):hover { text-decoration: underline; }
@@ -474,7 +478,6 @@
 .ui-shell .treatment-foot { align-items: center; flex-wrap: wrap; gap: 14px; padding-top: 16px; }
 .ui-shell .treatment-foot small { color: var(--ui-muted); font-size: 11px; }
 .ui-shell .treatment-foot b { margin-top: 4px; font-size: 17px; }
-.ui-shell .treatment-actions { flex-wrap: wrap; }
 .ui-shell .treatment-foot .recipe-info-button { flex: 0 0 40px; width: 40px; height: 42px; padding: 0; }
 .ui-shell .recipe-info-button::before { content: none; display: none; }
 .ui-shell .recipe-info-button .material-symbols-outlined { font-size: 20px; }
@@ -484,6 +487,9 @@
 .ui-shell .recipe-modal .recipe-product-search { margin: 0; }
 .ui-shell .recipe-product.selected { border-color: #cab5a5; background: #faf5f0; }
 .ui-shell #treatment .treatment-card-grid { padding: 0; }
+.ui-shell #treatment #treatment-bundle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .ui-shell .membership-event { padding: 20px 0; }
 .ui-shell .member-row > em.membership-expired { background: #fff0f0; color: #b4494c; }
 .ui-shell .membership-event h3 { font-size: 16px; }
@@ -627,11 +633,11 @@
 .ui-shell #reservation-modal .reservation-item-title .reservation-item-name { display:block; color:var(--ui-text); font-size:13px; line-height:1.25; }
 .ui-shell #reservation-modal .reservation-item-title .reservation-item-summary { display:block; overflow:hidden; color:var(--ui-muted); font-size:10px; font-weight:400; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
 .ui-shell #reservation-modal .reservation-modal-box { width:min(1120px,calc(100vw - 44px)); max-height:calc(100dvh - 32px); }
-.ui-shell #reservation-modal #add-reservation-item { border-color:#a78139!important; background:#a78139!important; color:#fff!important; }
+.ui-shell #reservation-modal #add-reservation-item { border-color:#16a34a!important; background:#16a34a!important; color:#fff!important; }
 .ui-shell #reservation-modal #add-reservation-item:hover { border-color:#896a2e!important; background:#896a2e!important; }
 .ui-shell #reservation-modal .staff-block-head .add-staff { display:inline-flex; min-height:28px; align-items:center; gap:4px; padding:5px 8px; border:1px solid #d7c18c; background:#fff9eb; color:#85651f; font-size:10px; font-weight:700; text-decoration:none; }
 .ui-shell #reservation-modal .staff-block-head .add-staff .material-symbols-outlined { font-size:14px; }
-.ui-shell #reservation-modal .remove-reservation-item { border-color:#a65353!important; background:#a65353!important; color:#fff!important; }
+.ui-shell #reservation-modal .remove-reservation-item { border-color:#dc2626!important; background:#dc2626!important; color:#fff!important; }
 .ui-shell #reservation-modal .remove-reservation-item:hover { border-color:#874040!important; background:#874040!important; }
 
 /* Navigasi memakai satu palet cokelat gelap, tan, dan krem. */
@@ -1322,86 +1328,344 @@
 /* Preview: seluruh tombol menggunakan sudut kotak. */
 .ui-shell button { border-radius: 0 !important; }
 
-/* Treatment actions: muted colors that stay distinct without looking loud. */
-.ui-shell .treatment-foot .commission-edit {
-    border-color: #8b6159 !important;
-    background: #8b6159 !important;
-    color: #fff !important;
+/* Treatment and bundle actions have separate geometry; colors stay semantic. */
+.ui-shell .treatment-foot {
+    align-items: stretch;
+    flex-direction: column;
 }
-.ui-shell .treatment-foot .commission-edit:hover:not(:disabled) {
-    border-color: #744e47 !important;
-    background: #744e47 !important;
+.ui-shell .treatment-foot :is(.treatment-standard-actions, .treatment-bundle-actions) {
+    display: grid;
+    width: 100%;
+    gap: 6px;
 }
-.ui-shell .treatment-foot .recipe-info-button {
-    border-color: #60798a !important;
-    background: #60798a !important;
-    color: #fff !important;
+.ui-shell .treatment-foot :is(.treatment-standard-actions, .treatment-bundle-actions) > button {
+    min-width: 0;
+    min-height: 38px;
+    padding: 7px 8px;
+    font-size: 11px;
+    white-space: nowrap;
 }
-.ui-shell .treatment-foot .recipe-info-button:hover:not(:disabled) {
-    border-color: #4d6677 !important;
-    background: #4d6677 !important;
+.ui-shell .treatment-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
 }
-.ui-shell .treatment-foot .recipe-button {
-    border-color: #78815d !important;
-    background: #78815d !important;
-    color: #fff !important;
+.ui-shell .treatment-card-top .recipe-info-button {
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
 }
-.ui-shell .treatment-foot .recipe-button:hover:not(:disabled) {
-    border-color: #626b4b !important;
-    background: #626b4b !important;
+.ui-shell .treatment-card-top .recipe-info-button .material-symbols-outlined { font-size: 18px; }
+.ui-shell .treatment-standard-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 40px;
 }
-
-/* Solid muted palette for reusable content actions. */
+.ui-shell .treatment-bundle-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 40px;
+    grid-template-areas: "price treatment order delete";
+}
+.ui-shell .treatment-bundle-actions .bundle-price-edit { grid-area: price; }
+.ui-shell .treatment-bundle-actions .bundle-treatment-edit { grid-area: treatment; }
+.ui-shell .treatment-bundle-actions .bundle-order-edit { grid-area: order; }
+.ui-shell .treatment-bundle-actions .bundle-delete { grid-area: delete; }
+.ui-shell .treatment-bundle-actions > button {
+    justify-content: center;
+}
+.ui-shell .treatment-foot .treatment-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 0;
+}
+.ui-shell .treatment-foot .treatment-delete .material-symbols-outlined {
+    font-size: 18px;
+}
+/* Global semantic action palette. */
 .ui-shell :is(.secondary, .dashed, .access-button.secondary, .sales-page, .product-page, .member-page, .treatment-page) {
-    border-color: #80695d !important;
-    background: #80695d !important;
+    border-color: #6b7280 !important;
+    background: #6b7280 !important;
     color: #fff !important;
 }
 .ui-shell :is(.secondary, .dashed, .access-button.secondary, .sales-page, .product-page, .member-page, .treatment-page):hover:not(:disabled) {
-    border-color: #695449 !important;
-    background: #695449 !important;
+    border-color: #4b5563 !important;
+    background: #4b5563 !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-view, .remuneration-action.detail, .sales-reprint-button, .sales-return-receipt) {
-    border-color: #60798a !important;
-    background: #60798a !important;
+    border-color: #2563eb !important;
+    background: #2563eb !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-view, .remuneration-action.detail, .sales-reprint-button, .sales-return-receipt):hover:not(:disabled) {
-    border-color: #4d6677 !important;
-    background: #4d6677 !important;
+    border-color: #1d4ed8 !important;
+    background: #1d4ed8 !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-edit, .action-edit, .remuneration-action.edit) {
-    border-color: #a78139 !important;
-    background: #a78139 !important;
+    border-color: #d97706 !important;
+    background: #d97706 !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-edit, .action-edit, .remuneration-action.edit):hover:not(:disabled) {
-    border-color: #8d6a2c !important;
-    background: #8d6a2c !important;
+    border-color: #b45309 !important;
+    background: #b45309 !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-delete, .action-delete) {
-    border-color: #a65353 !important;
-    background: #a65353 !important;
+    border-color: #dc2626 !important;
+    background: #dc2626 !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-delete, .action-delete):hover:not(:disabled) {
-    border-color: #8c4444 !important;
-    background: #8c4444 !important;
+    border-color: #b91c1c !important;
+    background: #b91c1c !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-success, .remuneration-action.input) {
-    border-color: #607b68 !important;
-    background: #607b68 !important;
+    border-color: #16a34a !important;
+    background: #16a34a !important;
     color: #fff !important;
 }
 .ui-shell :is(.ui-action-success, .remuneration-action.input):hover:not(:disabled) {
-    border-color: #4d6655 !important;
-    background: #4d6655 !important;
+    border-color: #15803d !important;
+    background: #15803d !important;
     color: #fff !important;
 }
+
+/* Treatment page: Selésa's warm, low-noise operational action system. */
+.ui-shell #treatment {
+    --treatment-action-primary: #754c3b;
+    --treatment-action-primary-hover: #634031;
+    --treatment-action-secondary: #ede4dd;
+    --treatment-action-setting: #f4efea;
+    --treatment-action-text: #573a2d;
+    --treatment-action-border: #ded0c5;
+    --treatment-action-delete-bg: #fce8e6;
+    --treatment-action-delete: #b42318;
+    --treatment-action-info-bg: #e8e1dc;
+    --treatment-action-info: #62554d;
+}
+.ui-shell #treatment :is(
+    #open-treatment,
+    #open-treatment-bundle,
+    .treatment-standard-actions > button,
+    .treatment-bundle-actions > button,
+    .treatment-card-top .recipe-info-button
+) {
+    min-height: 40px;
+    padding: 9px 13px;
+    border: 1px solid var(--treatment-action-border) !important;
+    border-radius: 0 !important;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.2;
+    box-shadow: none !important;
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.ui-shell #treatment #open-treatment {
+    min-height: 44px;
+    border-color: var(--treatment-action-primary) !important;
+    background: var(--treatment-action-primary) !important;
+    color: #fff !important;
+}
+.ui-shell #treatment #open-treatment:hover:not(:disabled) {
+    border-color: var(--treatment-action-primary-hover) !important;
+    background: var(--treatment-action-primary-hover) !important;
+}
+.ui-shell #treatment #open-treatment-bundle {
+    min-height: 44px;
+    border-color: var(--treatment-action-border) !important;
+    background: var(--treatment-action-secondary) !important;
+    color: var(--treatment-action-text) !important;
+}
+.ui-shell #treatment #open-treatment-bundle:hover:not(:disabled) {
+    border-color: #cdbbad !important;
+    background: #e4d8cf !important;
+}
+.ui-shell #treatment :is(
+    .treatment-price-edit,
+    .bundle-price-edit
+) {
+    border-color: #ead2b8 !important;
+    background: #f8e8d5 !important;
+    color: #864b18 !important;
+}
+.ui-shell #treatment :is(
+    .treatment-price-edit,
+    .bundle-price-edit
+):hover:not(:disabled) {
+    border-color: #dcb98e !important;
+    background: #f3dbc0 !important;
+    color: #6f390c !important;
+}
+.ui-shell #treatment .commission-edit {
+    border-color: #dcd0e8 !important;
+    background: #eee7f5 !important;
+    color: #674a7c !important;
+}
+.ui-shell #treatment .commission-edit:hover:not(:disabled) {
+    border-color: #c7b5d8 !important;
+    background: #e4d9ee !important;
+    color: #513563 !important;
+}
+.ui-shell #treatment :is(.treatment-standard-actions .recipe-button, .bundle-treatment-edit) {
+    border-color: #cddde0 !important;
+    background: #e5eef0 !important;
+    color: #35606a !important;
+}
+.ui-shell #treatment :is(.treatment-standard-actions .recipe-button, .bundle-treatment-edit):hover:not(:disabled) {
+    border-color: #b3cdd1 !important;
+    background: #d9e7e9 !important;
+    color: #294d55 !important;
+}
+.ui-shell #treatment .bundle-order-edit {
+    border-color: #d4dbc5 !important;
+    background: #ebefe2 !important;
+    color: #53613a !important;
+}
+.ui-shell #treatment .bundle-order-edit:hover:not(:disabled) {
+    border-color: #bec9aa !important;
+    background: #e0e7d4 !important;
+    color: #404b2c !important;
+}
+.ui-shell #treatment :is(.treatment-delete, .bundle-delete) {
+    border-color: #f2c9c4 !important;
+    background: var(--treatment-action-delete-bg) !important;
+    color: var(--treatment-action-delete) !important;
+}
+.ui-shell #treatment :is(.treatment-delete, .bundle-delete):hover:not(:disabled) {
+    border-color: #e9aaa3 !important;
+    background: #f8d8d4 !important;
+    color: #8f1c13 !important;
+}
+.ui-shell #treatment :is(.recipe-info-button, .bundle-ingredients) {
+    border-color: #d8ccc4 !important;
+    background: var(--treatment-action-info-bg) !important;
+    color: var(--treatment-action-info) !important;
+}
+.ui-shell #treatment .treatment-card-top .recipe-info-button {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    padding: 0;
+    border-radius: 0 !important;
+}
+.ui-shell #treatment :is(.recipe-info-button, .bundle-ingredients):hover:not(:disabled) {
+    border-color: #c5b7ae !important;
+    background: #ded5cf !important;
+    color: #493e37 !important;
+}
+.ui-shell #treatment :is(button, .recipe-info-button):disabled {
+    border-color: #ded8d3 !important;
+    background: #eeeae7 !important;
+    color: #99908a !important;
+    opacity: 1;
+}
+.ui-shell #treatment .treatment-card {
+    transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.ui-shell #treatment .treatment-card:hover {
+    border-color: #cdb9aa;
+    box-shadow: 0 8px 20px rgb(87 58 45 / .08);
+    transform: translateY(-2px);
+}
+.ui-shell #treatment .category {
+    border: 1px solid transparent;
+    transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+.ui-shell #treatment .treatment-category-tone-0 { border-color: #ead3c5; background: #f8e8de; color: #81513d; }
+.ui-shell #treatment .treatment-category-tone-1 { border-color: #d8dfca; background: #edf1e5; color: #566440; }
+.ui-shell #treatment .treatment-category-tone-2 { border-color: #d8cfe3; background: #f0eaf5; color: #69517d; }
+.ui-shell #treatment .treatment-category-tone-3 { border-color: #cddde0; background: #e8f0f1; color: #41616a; }
+.ui-shell #treatment .treatment-category-tone-4 { border-color: #eadfbd; background: #f7f0db; color: #79622d; }
+.ui-shell #treatment .treatment-bundle-card > .category { border-color: #d8dfca; background: #edf1e5; color: #566440; }
+
+/* Treatment CRUD colors: bright, predictable, and identical by action type. */
+.ui-shell #treatment :is(#open-treatment, #open-treatment-bundle) {
+    border-color: #16a34a !important;
+    background: #16a34a !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(#open-treatment, #open-treatment-bundle):hover:not(:disabled) {
+    border-color: #15803d !important;
+    background: #15803d !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(
+    .treatment-price-edit,
+    .commission-edit,
+    .treatment-standard-actions .recipe-button,
+    .bundle-price-edit,
+    .bundle-treatment-edit,
+    .bundle-order-edit
+) {
+    border-color: #d97706 !important;
+    background: #d97706 !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(
+    .treatment-price-edit,
+    .commission-edit,
+    .treatment-standard-actions .recipe-button,
+    .bundle-price-edit,
+    .bundle-treatment-edit,
+    .bundle-order-edit
+):hover:not(:disabled) {
+    border-color: #b45309 !important;
+    background: #b45309 !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(.recipe-info-button, .bundle-ingredients) {
+    border-color: #2563eb !important;
+    background: #2563eb !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(.recipe-info-button, .bundle-ingredients):hover:not(:disabled) {
+    border-color: #1d4ed8 !important;
+    background: #1d4ed8 !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(.treatment-delete, .bundle-delete) {
+    border-color: #dc2626 !important;
+    background: #dc2626 !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(.treatment-delete, .bundle-delete):hover:not(:disabled) {
+    border-color: #b91c1c !important;
+    background: #b91c1c !important;
+    color: #fff !important;
+}
+.ui-shell #treatment :is(button, .recipe-info-button):disabled {
+    border-color: #d1d5db !important;
+    background: #d1d5db !important;
+    color: #6b7280 !important;
+}
+.ui-shell #treatment .treatment-card-top .recipe-info-trigger {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #75675e;
+    cursor: pointer;
+}
+.ui-shell #treatment .treatment-card-top .recipe-info-trigger .material-symbols-outlined {
+    display: block;
+    font-size: 20px;
+    line-height: 1;
+}
+.ui-shell #treatment .treatment-card-top .recipe-info-trigger:hover,
+.ui-shell #treatment .treatment-card-top .recipe-info-trigger:focus-visible { color: #573a2d; }
+.ui-shell #treatment .treatment-card-top .recipe-info-trigger.is-disabled { color: #aaa19b; cursor: default; }
 
 /* Customer Survey: commission cancellation follow-up. */
 .ui-shell .commission-followup-modal { width: min(760px, calc(100vw - 40px)); }
