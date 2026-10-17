@@ -14,7 +14,7 @@ class RemunerationReportService
      * from their original tables. Payroll components stay a deliberate, manual
      * input per employee and payroll period.
      */
-    public function report(Authenticatable $user, CarbonImmutable $from, CarbonImmutable $to): array
+    public function report(Authenticatable $user, CarbonImmutable $from, CarbonImmutable $to, bool $includeCommissionDetails = true): array
     {
         abort_unless($user->can('payroll.view'), 403);
 
@@ -33,7 +33,7 @@ class RemunerationReportService
             ->orderBy('name')
             ->get(['id', 'code', 'name', 'position', 'is_service_provider']);
 
-        $commissionDetails = DB::table('reservation_item_staff as assignment')
+        $commissionQuery = DB::table('reservation_item_staff as assignment')
             ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
             ->join('reservation_items as item', 'item.id', '=', 'assignment.reservation_item_id')
             ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
@@ -45,7 +45,9 @@ class RemunerationReportService
             ->join('customers as customer', 'customer.id', '=', 'transaction.customer_id')
             ->where('transaction.status', 'paid')
             ->whereNull('assignment.commission_voided_at')
-            ->whereBetween('transaction.transacted_at', [$from->startOfDay(), $to->endOfDay()])
+            ->whereBetween('transaction.transacted_at', [$from->startOfDay(), $to->endOfDay()]);
+        $commissionDetails = $includeCommissionDetails
+            ? (clone $commissionQuery)
             ->orderBy('transaction.transacted_at')
             ->orderBy('employee.name')
             ->get([
@@ -68,13 +70,26 @@ class RemunerationReportService
                 'quantity' => (float) $item->quantity,
                 'commission' => (int) $item->commission_amount,
             ])
-            ->values();
-        $commissionByEmployee = $commissionDetails
-            ->groupBy('employee_id')
-            ->map(fn ($items): array => [
-                'commission' => (int) $items->sum('commission'),
-                'treatment_count' => (float) $items->sum('quantity'),
-            ]);
+            ->values()
+            : collect();
+        $commissionByEmployee = $includeCommissionDetails
+            ? $commissionDetails
+                ->groupBy('employee_id')
+                ->map(fn ($items): array => [
+                    'commission' => (int) $items->sum('commission'),
+                    'treatment_count' => (float) $items->sum('quantity'),
+                ])
+            : (clone $commissionQuery)
+                ->groupBy('employee.id')
+                ->get([
+                    'employee.id as employee_id',
+                    DB::raw('SUM(assignment.commission_amount) as commission'),
+                    DB::raw('SUM(transactionItem.quantity) as treatment_count'),
+                ])
+                ->mapWithKeys(fn (object $item): array => [(int) $item->employee_id => [
+                    'commission' => (int) $item->commission,
+                    'treatment_count' => (float) $item->treatment_count,
+                ]]);
 
         $attendance = DB::table('employee_attendances as attendance')
             ->join('employees as employee', 'employee.id', '=', 'attendance.employee_id')

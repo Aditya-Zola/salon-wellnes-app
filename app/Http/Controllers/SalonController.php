@@ -93,7 +93,7 @@ class SalonController extends Controller
     {
         [$from, $to] = $this->remunerationRange($request);
 
-        return response()->json($this->remuneration->report($request->user(), $from, $to));
+        return response()->json($this->remuneration->report($request->user(), $from, $to, false));
     }
 
     public function remunerationArchives(Request $request): JsonResponse

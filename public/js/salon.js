@@ -4795,8 +4795,6 @@ function confirmRemunerationArchive() {
 
 function openRemunerationDetail(employee) {
     if (!remunerationReport) return;
-    const commissions = array(remunerationReport.commission_details)
-        .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
     const attendance = array(remunerationReport.attendance)
         .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
     const wrapper = document.createElement('div');
@@ -4804,9 +4802,6 @@ function openRemunerationDetail(employee) {
     const attendanceRows = attendance.length
         ? attendance.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><b>${item.status === 'off' ? 'Libur' : 'Masuk'}</b><span>${escapeHtml(item.notes || '-')}</span></li>`).join('')
         : '<li class="empty-state">Tidak ada catatan kehadiran pada periode ini.</li>';
-    const commissionRows = commissions.length
-        ? commissions.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><span><b>${escapeHtml(item.treatment_name)}</b><small>${escapeHtml(item.customer_name)} · ${escapeHtml(item.transaction_number)}</small></span><strong>${money(item.commission)}</strong></li>`).join('')
-        : '<li class="empty-state">Belum ada komisi dari transaksi lunas.</li>';
     const manualRows = [
         ['GP / JHK', `${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari × ${money(employee.daily_rate)} = ${money(employee.base_salary)}`],
         ['Lembur / uang makan', `${money(employee.overtime)} + ${money(employee.meal_allowance)}`],
@@ -4821,7 +4816,6 @@ function openRemunerationDetail(employee) {
         <div class="remuneration-detail-body">
             <div class="remuneration-detail-totals"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Pendapatan kotor</small><b>${money(employee.gross_income)}</b></span><span><small>Total potongan</small><b>-${money(employee.total_deduction)}</b></span><span><small>Pendapatan bersih</small><b>${money(employee.net_salary)}</b></span></div>
             <section><div class="remuneration-detail-section-head"><h3>Input remunerasi</h3><strong>${employee.has_payroll_input ? 'Tersimpan' : 'Belum diinput'}</strong></div><ul class="remuneration-detail-list remuneration-input-list">${manualRows}</ul></section>
-            <section><div class="remuneration-detail-section-head"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission">${commissionRows}</ul></section>
             <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.recorded_off_days || 0)} libur tercatat</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
         </div>
     </section>`;
