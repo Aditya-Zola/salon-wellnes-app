@@ -25,9 +25,7 @@ class LoginTest extends TestCase
             'X-Forwarded-Proto' => 'https',
         ])
             ->assertOk()
-            ->assertSee('href="https://localhost/css/login.css', false)
-            ->assertSee('href="https://localhost/css/login-redesign.css', false)
-            ->assertSee('href="https://localhost/css/typography.css"', false);
+            ->assertSee('href="https://localhost/build/assets/login-', false);
     }
 
     public function test_user_can_login_with_username_and_password_only(): void

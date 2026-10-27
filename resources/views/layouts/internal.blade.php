@@ -5,18 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Selesa Salon - Sistem Operasional')</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,300,0,-25&display=block" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('css/salon.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/redesign.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/material-icons.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/ui-system.css') }}?v={{ filemtime(public_path('css/ui-system.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/member-history.css') }}?v={{ md5_file(public_path('css/member-history.css')) }}">
+    @vite('resources/css/salon.css')
 </head>
 <body class="ui-shell">
 <div class="app">
@@ -28,7 +19,10 @@
                 <h1>@yield('heading')</h1>
                 <p>@yield('subtitle')</p>
             </div>
-            @yield('header-action')
+            <div class="header-actions">
+                @yield('header-action')
+                @include('partials.header-profile')
+            </div>
         </header>
 
         <div class="access-content">

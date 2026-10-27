@@ -1080,19 +1080,16 @@ function renderReservations() {
                 : 'Belum dibayar';
         const therapists = reservationStaffSummary(reservation);
         const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
-        const cancelAction = canCancelReservation(reservation)
-            ? `<button type="button" class="queue-cancel-reservation" data-id="${Number(reservation.id)}">Batalkan</button>`
-            : '';
-        const completeAction = canUpdateReservations && unfinishedItems.length
-            ? `<button type="button" class="queue-complete-reservation" data-id="${Number(reservation.id)}">Selesaikan</button>`
-            : '';
-        const addTreatmentAction = !isAlreadyPaid(reservation) && canUpdateReservations
-            ? `<button type="button" class="queue-add-treatment" data-id="${Number(reservation.id)}">Tambah treatment</button>`
-            : '';
-        const editTimeAction = canUpdateReservations && unfinishedItems.length
-            ? `<button type="button" class="queue-edit-time" data-id="${Number(reservation.id)}">Ubah jam</button>`
-            : '';
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button>${cancelAction || completeAction || addTreatmentAction || editTimeAction ? `<div class="reservation-queue-actions">${addTreatmentAction}${editTimeAction}${cancelAction}${completeAction}</div>` : ''}</article>`;
+        const action = (name, className, enabled, reason) => `<button type="button" class="${className}" data-id="${Number(reservation.id)}"${enabled ? '' : ` disabled title="${escapeHtml(reason)}"`}>${name}</button>`;
+        const noAccess = 'Anda tidak memiliki akses untuk mengubah reservasi.';
+        const finished = unfinishedItems.length === 0;
+        const actions = [
+            action('Tambah treatment', 'queue-add-treatment ui-action-create', canUpdateReservations && !isAlreadyPaid(reservation), !canUpdateReservations ? noAccess : 'Reservasi sudah lunas.'),
+            action('Ubah jam', 'queue-edit-time ui-action-edit', canUpdateReservations && !finished, !canUpdateReservations ? noAccess : 'Tidak ada treatment yang dapat diubah jamnya.'),
+            action('Batalkan', 'queue-cancel-reservation ui-action-delete', canCancelReservation(reservation), !canUpdateReservations ? noAccess : 'Reservasi ini tidak dapat dibatalkan.'),
+            action('Selesaikan', 'queue-complete-reservation ui-action-success', canUpdateReservations && !finished, !canUpdateReservations ? noAccess : 'Semua treatment sudah selesai atau dibatalkan.'),
+        ].join('');
+        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button><div class="reservation-queue-actions">${actions}</div></article>`;
     }).join('');
     if (queue) {
         const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
@@ -2118,24 +2115,27 @@ function openReceiptPrintChoice(receipt, options = {}) {
         <button type="button" class="save-therapist-ratings">Simpan rating therapist</button>
     </section>` : '';
     wrapper.innerHTML = showSuccessAnimation
-        ? `<div class="modal-box transaction-success-modal" role="status">
+        ? `<div class="modal-box transaction-success-modal is-survey-collapsed" role="status">
             <div class="transaction-success-left">
                 <button type="button" class="quick-close transaction-success-close" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
                 <div class="transaction-success-body">
                     <span class="transaction-success-emblem" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
                     <h2>Transaksi berhasil</h2><p>${escapeHtml(description)}</p>
                     <div class="transaction-success-meta">${transactionMeta}</div>
+                    <p class="transaction-survey-note">Customer Survey tersimpan sebagai draft. Isi sekarang atau nanti dari halaman Customer Survey.</p>
                 </div>
                 <div class="transaction-success-actions">
                     <button type="button" class="primary success-print-button" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
                     <button type="button" class="secondary success-print-button" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
+                    <button type="button" class="secondary success-survey-open">Isi survey sekarang</button>
                 </div>
             </div>
-            <button type="button" class="customer-survey-toggle" aria-expanded="true" aria-label="Sembunyikan Customer Survey"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button>
+            <button type="button" class="customer-survey-toggle" aria-expanded="false" aria-label="Tampilkan Customer Survey"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button>
             ${surveyPanel}
         </div>`
         : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
+    wrapper.querySelector('.success-survey-open')?.addEventListener('click', () => wrapper.querySelector('.customer-survey-toggle')?.click());
     wrapper.querySelector('.customer-survey-toggle')?.addEventListener('click', (event) => {
         const button = event.currentTarget;
         const modal = wrapper.querySelector('.transaction-success-modal');
@@ -2652,7 +2652,7 @@ async function loadCustomerSurveyPage(page = 1) {
     const summaryBox = document.getElementById('customer-survey-therapist-summary');
     if (summaryBox) {
         const visibleTherapists = customerSurveySummaryExpanded ? therapistSummary : therapistSummary.slice(0, 6);
-        summaryBox.innerHTML = `<div class="customer-survey-summary-head"><div><h3>Penilaian total therapist</h3><p>Akumulasi dari seluruh Customer Survey yang sudah diisi.</p></div></div><div class="customer-survey-summary-grid">${visibleTherapists.map((therapist) => `<article><b>${escapeHtml(therapist.employee_name)}</b><strong>${Number(therapist.average_score || 0).toFixed(1)}<small>/ 5</small></strong><span>${Number(therapist.total_surveys || 0)} survey masuk</span></article>`).join('') || '<p class="empty-state">Belum ada penilaian therapist.</p>'}</div>${therapistSummary.length > 6 ? `<button type="button" class="customer-survey-summary-toggle secondary">${customerSurveySummaryExpanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${therapistSummary.length} terapis`}</button>` : ''}`;
+        summaryBox.innerHTML = `<div class="customer-survey-summary-head"><div><h3>Penilaian total therapist</h3><p>Akumulasi dari seluruh Customer Survey yang sudah diisi.</p></div></div><div class="customer-survey-summary-grid">${visibleTherapists.map((therapist) => `<article><b>${escapeHtml(therapist.employee_name)}</b><strong>${Number(therapist.average_score || 0).toFixed(1)}<small>/ 5</small></strong><span>${Number(therapist.total_surveys || 0)} survey masuk</span></article>`).join('') || '<p class="customer-survey-summary-empty">Belum ada penilaian therapist.</p>'}</div>${therapistSummary.length > 6 ? `<button type="button" class="customer-survey-summary-toggle secondary">${customerSurveySummaryExpanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${therapistSummary.length} terapis`}</button>` : ''}`;
         summaryBox.querySelector('.customer-survey-summary-toggle')?.addEventListener('click', () => {
             customerSurveySummaryExpanded = !customerSurveySummaryExpanded;
             loadCustomerSurveyPage(page).catch((error) => toast(error.message, true));
@@ -3154,6 +3154,11 @@ function renderStock() {
             if (menu && willOpen) {
                 menu.hidden = false;
                 button.setAttribute('aria-expanded', 'true');
+                const anchor = button.getBoundingClientRect();
+                const height = menu.getBoundingClientRect().height;
+                menu.style.left = `${Math.max(8, Math.min(anchor.right - 180, innerWidth - 188))}px`;
+                menu.style.right = 'auto';
+                menu.style.top = `${anchor.bottom + height + 8 > innerHeight ? Math.max(8, anchor.top - height - 6) : anchor.bottom + 6}px`;
             }
         };
     });
@@ -4986,7 +4991,7 @@ function renderRevenueTrend(dashboard) {
                 : { day: '2-digit', month: 'short', year: 'numeric' }).format(itemDate);
 
         return {
-            px: revenue.length === 1 ? 50 : 3 + (index * (94 / (revenue.length - 1))),
+            px: revenue.length === 1 ? 50 : 7 + (index * (86 / (revenue.length - 1))),
             py: scale ? 8 + ((maximum - Number(item.total || 0)) / scale * 84) : 92,
             total: Number(item.total || 0),
             label: item.label,
@@ -5058,7 +5063,6 @@ function renderDashboard() {
         const totalInflow = paymentMethodsRevenue.reduce((sum, payment) => sum + Number(payment.inflow || 0), 0);
         paymentRevenueList.innerHTML = paymentMethodsRevenue.length ? paymentMethodsRevenue.map((payment) => {
             const inflow = Number(payment.inflow || 0);
-            const outflow = Number(payment.outflow || 0);
             const net = Number(payment.net ?? payment.total ?? 0);
             const key = Boolean(payment.is_cash) ? 'cash' : payment.type;
             const meta = paymentTypeMeta[key] || { icon: 'payments' };
@@ -5067,14 +5071,11 @@ function renderDashboard() {
             return `<article class="payment-revenue-item">
                 <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(methodName)}</b><small>${percent}% dari pendapatan hari ini</small></span></div>
                 <strong>${money(net)}</strong>
-                <div class="payment-revenue-track" aria-label="Dana masuk ${money(inflow)}"><i style="width:${percent}%"></i></div>
             </article>`;
         }).join('') : '<p class="empty-state">Belum ada metode pembayaran aktif.</p>';
     }
 
     const low = Number(dashboard.low_stock_count || 0);
-    set('dashboard-welcome-date', new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()));
-    set('dashboard-welcome-summary', `Hari ini ada ${Number(dashboard.reservations_today || 0)} reservasi${canViewProducts ? ` dan ${low} produk dengan stok menipis` : ''}.`);
     set('metric-low-stock', `${low} produk`);
     set('metric-stock-note', low ? 'Perlu ditambah' : 'Stok aman');
     const badge = document.querySelector('.bell sup');
@@ -5095,18 +5096,20 @@ function renderDashboard() {
         if (treatmentPeriod && firstDate) {
             treatmentPeriod.textContent = new Intl.DateTimeFormat('id-ID', { month: 'short', year: 'numeric' }).format(firstDate).toUpperCase();
         }
-        const width = Math.max(390, treatments.length * 31);
-        performance.innerHTML = treatments.length ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-bar-scroll"><div class="treatment-bar-inner" style="--treatment-chart-width:${width}px;--treatment-chart-count:${treatments.length}"><div class="treatment-bar-yaxis"><span>${maximum}</span><span>${Math.round(maximum / 2)}</span><span>0</span></div><div class="treatment-bar-plot">${treatments.map((item, index) => {
+        const points = treatments.map((item, index) => {
             const count = Number(item.total || 0);
-            const height = maximum ? Math.max(4, Math.round((count / maximum) * 100)) : 4;
             const date = new Date(`${item.date}T12:00:00`);
             const dateLabel = Number.isNaN(date.getTime())
                 ? item.date
                 : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
-            const tooltip = `${dateLabel} \u00b7 ${count.toLocaleString('id-ID')} treatment`;
-            const positionClass = `${index === 0 ? ' is-first' : ''}${index === treatments.length - 1 ? ' is-current is-last' : ''}`;
-            return `<button type="button" class="treatment-day-bar${positionClass}" style="--bar-height:${height}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"><span>${count || ''}</span><i></i></button>`;
-        }).join('')}</div></div></div>` : '<p class="empty-state">Belum ada treatment yang dibayar pada bulan ini.</p>';
+            return {
+                x: treatments.length === 1 ? 500 : (index / (treatments.length - 1)) * 1000,
+                y: 152 - (count / maximum) * 140,
+                date: Number.isNaN(date.getTime()) ? item.date : date.getDate(),
+                tooltip: `${dateLabel} \u00b7 ${count.toLocaleString('id-ID')} treatment`,
+            };
+        });
+        performance.innerHTML = total > 0 ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-line-chart"><div class="treatment-line-yaxis"><span>${maximum}</span><span>${maximum > 1 ? Math.round(maximum / 2) : ''}</span><span>0</span></div><div class="treatment-line-main"><div class="treatment-line-plot"><svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.map(({ x, y }) => `${x},${y}`).join(' ')}"></polyline></svg>${points.map(({ x, y, tooltip }) => `<button type="button" class="treatment-line-point" style="left:${x / 10}%;top:${y / 160 * 100}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></button>`).join('')}</div><div class="treatment-line-dates">${points.map(({ x, date }, index) => index === 0 || index === points.length - 1 || (index % 5 === 0 && index < points.length - 3) ? `<small style="left:${x / 10}%">${escapeHtml(String(date))}</small>` : '').join('')}</div></div></div>` : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><b>Belum ada data treatment</b><p>Data treatment yang sudah dibayar akan ditampilkan di sini.</p></div>';
 
         let tooltip = document.getElementById('treatment-chart-tooltip');
         if (!tooltip) {
@@ -5125,7 +5128,7 @@ function renderDashboard() {
             tooltip.style.left = `${left}px`;
             tooltip.style.top = `${Math.max(10, y)}px`;
         };
-        performance.querySelectorAll('.treatment-day-bar').forEach((bar) => {
+        performance.querySelectorAll('.treatment-line-point').forEach((bar) => {
             const showTooltip = (event) => {
                 tooltip.textContent = bar.dataset.tooltip || '';
                 positionTooltip(event.clientX, event.clientY - 14);
@@ -5145,16 +5148,14 @@ function renderDashboard() {
     const popularTreatments = document.getElementById('popular-treatments');
     if (popularTreatments) {
         const items = array(dashboard.treatment_most_frequent_current_month);
-        const maximum = Math.max(1, ...items.map((item) => Number(item.total || 0)));
         popularTreatments.innerHTML = items.length
             ? items.map((item, index) => {
                 const total = Number(item.total || 0);
                 const quantity = total.toLocaleString('id-ID', { maximumFractionDigits: 2 });
-                const width = Math.max(3, Math.round((total / maximum) * 100));
 
-                return `<article class="performance-item"><span class="performance-rank">${index + 1}</span><div><b>${escapeHtml(item.name || 'Treatment')}</b><small>${quantity} treatment dibayar</small><i><em style="width:${width}%"></em></i></div><strong>${quantity}×</strong></article>`;
+                return `<article class="performance-item"><span class="performance-rank">${index + 1}</span><div><b>${escapeHtml(item.name || 'Treatment')}</b></div><strong>${quantity}×</strong></article>`;
             }).join('')
-            : '<p class="empty-state">Belum ada treatment yang dibayar bulan ini.</p>';
+            : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">bar_chart</span><b>Belum ada data treatment</b><p>Data treatment teratas akan ditampilkan di sini.</p></div>';
     }
 
     const treatmentStockAlerts = document.getElementById('treatment-stock-alerts');
@@ -5293,6 +5294,20 @@ function closeReservationTreatmentPickers(except = null) {
     });
 }
 
+// Measure against the scrolling dialog, not the page behind it.
+function positionReservationPicker(label, menu) {
+    label.classList.remove('opens-up');
+    menu.style.maxHeight = '';
+    const bounds = label.closest('.reservation-form')?.getBoundingClientRect();
+    const footer = label.closest('.reservation-form')?.querySelector('.reservation-footer')?.getBoundingClientRect();
+    const anchor = label.getBoundingClientRect();
+    const above = anchor.top - Math.max(16, bounds?.top || 0) - 10;
+    const below = Math.min(innerHeight - 16, bounds?.bottom || innerHeight, footer?.top || innerHeight) - anchor.bottom - 10;
+    const opensUp = below < Math.min(menu.scrollHeight, 248) && above > below;
+    label.classList.toggle('opens-up', opensUp);
+    menu.style.maxHeight = `${Math.max(0, Math.min(248, opensUp ? above : below))}px`;
+}
+
 function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
     const label = card.querySelector('.treatment-picker-label');
     const select = card.querySelector('.item-treatment');
@@ -5307,7 +5322,7 @@ function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
         : `<button type="button" class="treatment-search-option${Number(item.id) === selectedId ? ' selected' : ''}" data-treatment-id="${Number(item.id)}" role="option" aria-selected="${Number(item.id) === selectedId}"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.category_name || item.category?.name || item.category || 'Treatment')} &middot; ${money(treatmentPrice(item))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment atau bundle tidak ditemukan.</p>';
     results.hidden = !showResults;
     label.classList.toggle('open', showResults);
-    label.classList.toggle('opens-up', showResults && results.getBoundingClientRect().bottom > window.innerHeight - 16);
+    if (showResults) positionReservationPicker(label, results);
 
     results.querySelectorAll('[data-treatment-id]').forEach((option) => {
         option.addEventListener('click', () => {
@@ -5463,7 +5478,7 @@ function toggleReservationTherapistPicker(row) {
     menu.hidden = false;
     label.classList.add('open');
     picker.setAttribute('aria-expanded', 'true');
-    label.classList.toggle('opens-up', menu.getBoundingClientRect().bottom > window.innerHeight - 16);
+    positionReservationPicker(label, menu);
 }
 
 function renderReservationTherapistPicker(row, availability) {
@@ -7306,11 +7321,32 @@ document.getElementById('stocktake-form')?.addEventListener('submit', submitStoc
 document.getElementById('stocktake-search')?.addEventListener('input', renderStocktake);
 document.getElementById('stocktake-category')?.addEventListener('change', renderStocktake);
 
+function closeProductActionMenus() {
+    document.querySelectorAll('.product-action-menu').forEach((menu) => { menu.hidden = true; });
+    document.querySelectorAll('.product-action-trigger').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+}
+
+document.addEventListener('scroll', (event) => {
+    if (!event.target.closest?.('.product-action-menu')) closeProductActionMenus();
+    if (event.target.matches?.('.reservation-form')) {
+        event.target.querySelectorAll('.treatment-picker-label.open, .therapist-picker-label.open').forEach((label) => {
+            positionReservationPicker(label, label.querySelector('.treatment-search-results, .therapist-picker-menu'));
+        });
+    }
+}, true);
+window.addEventListener('resize', closeProductActionMenus);
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        closeProductActionMenus();
+        closeReservationTreatmentPickers();
+        closeReservationTherapistPickers();
+    }
+});
+
 document.addEventListener('click', (event) => {
     if (event.target.closest('.go-stock-alerts')) openPage('stok');
     if (!event.target.closest('.product-row-actions')) {
-        document.querySelectorAll('.product-action-menu').forEach((menu) => { menu.hidden = true; });
-        document.querySelectorAll('.product-action-trigger').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+        closeProductActionMenus();
     }
 });
 

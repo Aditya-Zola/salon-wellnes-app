@@ -56,10 +56,6 @@
 @endphp
 
 <aside class="sidebar">
-    <a class="brand dashboard-brand" href="{{ route('dashboard') }}" aria-label="Selesa Salon - Dashboard">
-        <img src="{{ asset('images/selesa-logo.png') }}?v={{ filemtime(public_path('images/selesa-logo.png')) }}" alt="Selesa Salon, Spa, Wellness, Nail, dan Eyelash" width="170" height="56">
-    </a>
-
     <nav id="navigation" aria-label="Navigasi utama">
         @foreach ($modules as $module)
             @can($module['permission'])

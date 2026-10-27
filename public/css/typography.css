@@ -1,5 +1,5 @@
 :root {
-    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     /* Satu skala tipografi untuk seluruh aplikasi operasional. */
     --font-size-caption: 11px;
     --font-size-label: 12px;
@@ -79,4 +79,9 @@ b {
     stroke-linecap: round;
     stroke-linejoin: round;
     vector-effect: non-scaling-stroke;
+}
+
+.stat-value,
+.currency-value {
+    font-variant-numeric: tabular-nums;
 }
