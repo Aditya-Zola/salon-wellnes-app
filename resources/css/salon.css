@@ -1,0 +1,527 @@
+@layer theme, base, legacy, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+/* Keep feature geometry in a lower layer; shared components have one owner. */
+@import '../../public/css/salon.css' layer(legacy);
+@import '../../public/css/redesign.css' layer(legacy);
+@import '../../public/css/material-icons.css' layer(legacy);
+@import '../../public/css/typography.css' layer(legacy);
+@import '../../public/css/mockup-dashboard.css' layer(legacy);
+@import '../../public/css/access-control.css' layer(legacy);
+@import '../../public/css/scheduling.css' layer(legacy);
+@import '../../public/css/interface-clarity.css' layer(legacy);
+@import '../../public/css/ui-system.css' layer(legacy);
+@import '../../public/css/member-history.css' layer(legacy);
+@import '../../public/css/bundle-workflow.css' layer(legacy);
+@import './salon-theme.css';
+
+@source '../views/**/*.blade.php';
+@source '../../public/js/salon.js';
+/* These legacy component names are not Tailwind display utilities. */
+@source not inline("table");
+
+@layer components {
+    .ui-shell :where(*:not(.material-symbols-outlined)) {
+        font-family: var(--font-primary);
+    }
+
+    .ui-shell {
+        @apply bg-canvas text-ink font-sans antialiased;
+        background-image: none;
+    }
+    .ui-shell main { padding: 0 32px 32px; }
+    .ui-shell main > header {
+        @apply bg-white border-b border-line;
+        min-height: 88px; margin: 0 -32px 24px; padding: 18px 32px;
+        box-shadow: 0 2px 12px rgb(37 99 235 / .025);
+    }
+    .ui-shell main > header h1 { @apply text-2xl font-semibold tracking-tight; }
+    .ui-shell main > header p { @apply text-muted text-xs; }
+    .ui-shell .jakarta-clock strong { white-space: nowrap; }
+    .ui-shell .header-actions { gap: 20px; }
+    .ui-shell .header-profile { @apply flex items-center gap-3 border-l border-line pl-5; }
+    .ui-shell .header-profile > span {
+        @apply grid place-items-center bg-brand-soft text-brand rounded-full font-semibold;
+        width: 40px; height: 40px; font-size: 12px;
+    }
+    .ui-shell .header-profile strong, .ui-shell .header-profile small { display: block; }
+    .ui-shell .header-profile strong { @apply text-ink text-xs font-semibold; }
+    .ui-shell .header-profile small { @apply text-muted; margin-top: 4px; font-size: 11px; }
+    .ui-shell :is(.page, .access-content) { max-width: 1600px; }
+
+    .ui-shell .sidebar {
+        @apply bg-white border-r border-line;
+        height: 100dvh; overflow: hidden;
+        box-shadow: 4px 0 24px rgb(37 99 235 / .025);
+    }
+    .ui-shell .dashboard-brand { width: 174px; padding: 0 10px 24px; flex-shrink: 0; }
+    .ui-shell .dashboard-brand img { filter: none; opacity: 1; }
+    .ui-shell .dashboard-brand::after { display: none; }
+    .ui-shell .sidebar nav {
+        flex: 1; min-height: 0; align-content: start; gap: 4px;
+        margin-top: 54px;
+        overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+    }
+    .ui-shell .sidebar nav .material-symbols-outlined { color: inherit; font-size: 21px; }
+    .ui-shell .sidebar nav :is(button, a, .access-menu summary) {
+        @apply text-ink font-medium rounded-xl;
+        min-height: 44px; box-shadow: none; transform: none;
+        transition: background-color .18s, color .18s, box-shadow .18s;
+    }
+    .ui-shell .sidebar nav :is(button, a, .access-menu summary):hover,
+    .ui-shell .sidebar .access-menu[open] > summary { @apply bg-brand-soft text-brand; }
+    .ui-shell .sidebar nav :is(button, a, .access-menu summary).active {
+        @apply bg-brand text-white;
+        background-image: var(--ui-glossy-gradient);
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / .25), 0 4px 12px rgb(37 99 235 / .16);
+    }
+    .ui-shell .sidebar nav :is(button, a, .access-menu summary).active::before { display: none; }
+    .ui-shell .access-submenu { @apply border-line; }
+    .ui-shell .account { @apply bg-white border-line shadow-none; flex-shrink: 0; margin-top: 16px; }
+    .ui-shell .account :is(strong, .logout) { @apply text-ink; }
+    .ui-shell .account small { @apply text-muted; }
+    .ui-shell .account i { @apply bg-brand-soft text-brand; }
+    .ui-shell .account .logout:hover { @apply bg-brand-soft text-brand; }
+    .ui-shell .sidebar-toggle {
+        @apply fixed grid place-items-center bg-white text-brand border border-line rounded-xl shadow-none cursor-pointer;
+        padding: 0;
+        left: calc(var(--ui-sidebar-width) - 48px);
+    }
+    .ui-shell .sidebar-toggle:hover { @apply bg-brand-soft text-brand; }
+    @media (min-width: 761px) {
+        .ui-shell.sidebar-is-collapsed .sidebar-toggle { left: 21px; }
+        .ui-shell.sidebar-is-collapsed .dashboard-brand,
+        .ui-shell.sidebar-is-collapsed .sidebar nav span,
+        .ui-shell.sidebar-is-collapsed .access-menu summary > i,
+        .ui-shell.sidebar-is-collapsed .account > div,
+        .ui-shell.sidebar-is-collapsed .account form,
+        .ui-shell.sidebar-is-collapsed .access-submenu { display: none; }
+        .ui-shell.sidebar-is-collapsed .sidebar nav { margin-top: 54px; }
+        .ui-shell.sidebar-is-collapsed .sidebar nav :is(button, a, summary) { justify-content: center; padding-inline: 0; gap: 0; }
+        .ui-shell.sidebar-is-collapsed .account { justify-content: center; }
+    }
+
+    .ui-shell :is(.card, .analytics-card, .payment-revenue-card, .treatment-card, .access-card,
+        .remuneration-toolbar, .remuneration-summary > article, .remuneration-archive-card,
+        .page > .toolbar, .stocktake-overview article, .remuneration-guide-page, .permission-group) {
+        @apply bg-white bg-none border border-line rounded-2xl;
+        box-shadow: var(--ui-shadow);
+    }
+    .ui-shell :is(.card-head, .analytics-head, .access-card-head) { gap: 16px; margin-bottom: 18px; }
+    .ui-shell :is(.card-head h3, .toolbar h3, .analytics-head h3, .access-card-head h2) {
+        @apply text-ink text-base font-semibold tracking-tight;
+    }
+    .ui-shell :is(.card-head p, .toolbar p, .analytics-head p) { @apply text-muted text-xs leading-relaxed; }
+    .ui-shell .card > .toolbar { @apply border-0 rounded-none bg-transparent shadow-none; }
+    .ui-shell #dashboard .welcome {
+        @apply relative overflow-hidden border border-line rounded-2xl;
+        min-height: 148px; padding: 28px 32px; margin-bottom: 24px;
+        background: linear-gradient(115deg, #f7fbff, #e0efff 75%, #dbeafe);
+        box-shadow: inset 0 1px 0 #fff, var(--ui-shadow);
+    }
+    .ui-shell #dashboard .welcome::after {
+        content: ''; position: absolute; right: -64px; top: -130px;
+        width: 360px; height: 360px; border: 48px solid rgb(96 165 250 / .09);
+        border-radius: 50%; pointer-events: none;
+    }
+    .ui-shell #dashboard .welcome > div { position: relative; z-index: 1; }
+    .ui-shell #dashboard .welcome small { @apply text-brand font-semibold; letter-spacing: .02em; }
+    .ui-shell #dashboard .welcome h2 { @apply text-ink font-bold; margin: 10px 0; font-size: clamp(24px, 2vw, 32px); }
+    .ui-shell #dashboard .welcome p { @apply text-muted; max-width: 760px; }
+    .ui-shell .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+    .ui-shell .metrics article {
+        @apply relative overflow-hidden bg-white border border-line rounded-2xl;
+        min-height: 156px; padding: 24px 20px; gap: 16px;
+        box-shadow: inset 0 1px 0 #fff, var(--ui-shadow);
+        transition: border-color .18s, box-shadow .18s, transform .18s;
+    }
+    .ui-shell .metrics article:hover { @apply border-sky; box-shadow: var(--ui-shadow-hover); transform: translateY(-2px); }
+    .ui-shell .dashboard-metric { --metric-soft: #e4f0ff; --metric-ink: #2563eb; }
+    .ui-shell .metric-arrivals { --metric-soft: #e0f7f1; --metric-ink: #0f8a70; }
+    .ui-shell .metric-revenue { --metric-soft: #f1e8ff; --metric-ink: #7e22ce; }
+    .ui-shell .metric-inventory { --metric-soft: #fff0df; --metric-ink: #b45309; }
+    .ui-shell .dashboard-metric::after {
+        content: ''; position: absolute; right: -24px; bottom: -44px; width: 128px; height: 128px;
+        border-radius: 32px; transform: rotate(30deg); background: var(--metric-soft); opacity: .45; pointer-events: none;
+    }
+    .ui-shell .metrics article > i.material-symbols-outlined {
+        @apply rounded-2xl;
+        width: 48px; height: 48px; flex-basis: 48px;
+        background: var(--metric-soft, var(--ui-soft)); color: var(--metric-ink, var(--ui-brand));
+    }
+    .ui-shell .metrics article > div { position: relative; z-index: 1; }
+    .ui-shell .metrics strong { @apply text-ink font-bold tabular-nums; font-size: clamp(23px, 1.8vw, 32px); }
+    .ui-shell .metrics span { @apply text-muted; }
+    .ui-shell #dashboard .analytics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .ui-shell #dashboard .revenue-analytics { grid-column: 1 / -1; }
+    .ui-shell .analytics-period { @apply bg-surface-soft text-brand border border-line rounded-xl; white-space: nowrap; }
+    .ui-shell .dashboard-section-title { @apply flex items-start gap-3; }
+    .ui-shell .dashboard-section-title > .material-symbols-outlined {
+        @apply grid place-items-center bg-brand-soft text-brand rounded-2xl shrink-0;
+        width: 44px; height: 44px; font-size: 24px;
+    }
+    .ui-shell .payment-revenue-card > .analytics-head { padding: 24px 24px 0; }
+    .ui-shell .payment-revenue-summary strong { @apply text-ink; }
+    .ui-shell .payment-revenue-summary > span { @apply bg-brand-soft text-brand rounded-lg; padding: 6px 10px; margin-top: 8px; }
+    .ui-shell #dashboard .payment-revenue-list {
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
+        margin: 20px 24px 24px; border: 0;
+    }
+    .ui-shell #dashboard .payment-revenue-item {
+        @apply bg-surface-soft border border-line rounded-xl;
+        min-width: 0; padding: 16px 20px;
+    }
+    .ui-shell #dashboard .payment-revenue-item > strong { font-size: 22px; font-weight: 700; margin: 14px 0 0; }
+    .ui-shell .payment-method-label { gap: 12px; }
+    .ui-shell .payment-method-label > i { @apply bg-brand-soft text-brand rounded-xl; width: 44px; height: 44px; font-size: 24px; }
+    .ui-shell .payment-method-label :is(b, small) { white-space: normal; overflow-wrap: anywhere; }
+    .ui-shell .payment-method-label small { @apply text-muted; }
+    .ui-shell .dashboard-empty-state {
+        @apply grid content-center justify-items-center border border-line rounded-xl bg-surface-soft text-muted text-center;
+        grid-template-columns: minmax(0, 1fr); width: 100%; min-height: 208px; gap: 8px; padding: 28px 20px;
+    }
+    .ui-shell .dashboard-empty-state > .material-symbols-outlined { color: #89a9d0; font-size: 36px; margin-bottom: 4px; }
+    .ui-shell .dashboard-empty-state b { @apply text-ink font-semibold; font-size: 14px; }
+    .ui-shell .dashboard-empty-state p { margin: 0; font-size: 12px; line-height: 1.6; }
+    .ui-shell :is(.treatment-bar-chart, .performance-list):has(> .dashboard-empty-state) { margin-top: 20px; height: auto; min-height: 0; }
+    .ui-shell .chart-line polyline { stroke: var(--ui-brand); }
+    .ui-shell .chart-point { border-color: var(--ui-brand); }
+    .ui-shell .treatment-bar-inner { width: 100%; height: 210px; }
+    .ui-shell .treatment-bar-scroll { overflow: visible; padding-right: 4px; }
+    .ui-shell .treatment-bar-yaxis { top: 20px; bottom: 22px; }
+    .ui-shell .treatment-bar-plot {
+        top: 20px; bottom: 22px; grid-template-columns: repeat(var(--treatment-chart-count), minmax(0, 1fr));
+        gap: clamp(2px, .4vw, 6px);
+        background: repeating-linear-gradient(to top, var(--ui-line) 0 1px, transparent 1px 50%);
+    }
+    .ui-shell .treatment-day-bar { grid-template-rows: minmax(0, 1fr); border-radius: 3px; }
+    .ui-shell .treatment-day-bar > span { position: absolute; top: -20px; width: 100%; }
+    .ui-shell .treatment-day-bar > small { position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--ui-muted); }
+    .ui-shell .treatment-day-bar i { @apply bg-sky bg-none; min-height: 0; }
+    .ui-shell .treatment-day-bar.is-current i { @apply bg-brand; }
+    .ui-shell .treatment-line-chart { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; margin-top: 16px; }
+    .ui-shell .treatment-line-yaxis { display: flex; height: 160px; flex-direction: column; justify-content: space-between; padding: 6px 0; color: var(--ui-muted); font-size: 10px; text-align: right; }
+    .ui-shell .treatment-line-main { min-width: 0; }
+    .ui-shell .treatment-line-plot { position: relative; height: 160px; background: linear-gradient(to bottom, transparent calc(50% - 1px), var(--ui-line) 50%, transparent calc(50% + 1px)), linear-gradient(to top, var(--ui-line) 1px, transparent 1px); }
+    .ui-shell .treatment-line-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .ui-shell .treatment-line-plot polyline { fill: none; stroke: var(--ui-brand); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .ui-shell .treatment-line-point { position: absolute; z-index: 1; width: 12px; height: 12px; padding: 0; border: 2px solid var(--ui-brand); border-radius: 50%; background: #fff; cursor: pointer; transform: translate(-50%, -50%); }
+    .ui-shell .treatment-line-point:hover, .ui-shell .treatment-line-point:focus-visible { outline: 3px solid var(--ui-brand-soft); outline-offset: 1px; }
+    .ui-shell .treatment-line-dates { position: relative; height: 22px; }
+    .ui-shell .treatment-line-dates small { position: absolute; top: 5px; color: var(--ui-muted); font-size: 10px; transform: translateX(-50%); }
+    .ui-shell .treatment-line-dates small:first-child { transform: none; }
+    .ui-shell .treatment-line-dates small:last-child { transform: translateX(-100%); }
+    .ui-shell .performance-item { grid-template-columns: 30px minmax(0, 1fr) auto; }
+    .ui-shell .performance-item b { font-size: 13px; }
+    .ui-shell .performance-item > strong { color: var(--ui-ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+    .ui-shell :is(.sales-view-tabs, .calendar-mode-tabs, .revenue-period-filter) { @apply bg-surface-soft; }
+    .ui-shell :is(.sales-view-tabs, .calendar-mode-tabs, .revenue-period-filter) button.active { @apply bg-white text-brand; }
+    .ui-shell .dashboard-operational-card { padding: 0; }
+
+    .ui-shell button { @apply rounded-xl; }
+    .ui-shell :is(.primary, .secondary, .access-button, .ui-action-create, .ui-action-view,
+        .ui-action-edit, .ui-action-delete, .ui-action-success, .ui-action-info, .remuneration-action,
+        .commission-edit, .recipe-button, .product-edit, .dashed, .ui-pagination-button,
+        .link.add-staff, .ui-action-warning, .ui-action-neutral) {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl font-semibold shadow-none;
+        min-height: 40px; padding: 9px 14px; border: 1px solid transparent; font-size: 12px; line-height: 1.4; cursor: pointer;
+        transition: background-color .18s, border-color .18s, color .18s, box-shadow .18s, filter .18s;
+    }
+    .ui-shell :is(.primary, .ui-action-create, .remuneration-action.input) {
+        @apply bg-none text-white;
+        background-color: #087f64; border-color: #087f64;
+    }
+    .ui-shell :is(.primary, .ui-action-create, .remuneration-action.input):hover:not(:disabled) {
+        @apply bg-none text-white;
+        background-color: #06664f; border-color: #06664f; filter: none;
+    }
+    .ui-shell :is(.secondary, .dashed, .access-button.secondary, .sales-page, .product-page, .member-page, .treatment-page, .link.add-staff) {
+        @apply bg-white bg-none border-slate-300 text-slate-600 shadow-none;
+    }
+    .ui-shell :is(.secondary, .dashed, .access-button.secondary, .sales-page, .product-page, .member-page, .treatment-page, .link.add-staff):hover:not(:disabled) {
+        @apply bg-slate-100 border-slate-400 text-ink;
+    }
+    .ui-shell :is(.ui-action-view, .ui-action-info, .remuneration-action.detail, .recipe-info-button,
+        .bundle-ingredients, .sales-reprint-button, .sales-return-receipt, .ui-pagination-button) {
+        @apply bg-surface-soft bg-none border-line text-brand;
+    }
+    .ui-shell :is(.ui-action-edit, .action-edit, .remuneration-action.edit, .treatment-price-edit,
+        .commission-edit, .recipe-button, .bundle-price-edit, .bundle-treatment-edit, .bundle-order-edit) {
+        @apply bg-none;
+        background-color: var(--ui-warning-soft); border-color: #f3d49e; color: #92400e;
+    }
+    .ui-shell :is(.ui-action-delete, .action-delete, .treatment-delete, .bundle-delete) {
+        @apply bg-none;
+        background-color: var(--ui-danger-soft); border-color: #f3bcc3; color: var(--ui-danger);
+    }
+    .ui-shell .ui-action-success { background: var(--ui-success-soft); border-color: #b3e2d5; color: var(--ui-success); }
+    .ui-shell .ui-action-warning { background: var(--ui-warning-soft); border-color: #fbd4a5; color: #92400e; }
+    .ui-shell .ui-action-neutral { @apply bg-slate-100 bg-none border-slate-200 text-slate-600; }
+    .ui-shell :is(.ui-action-view, .ui-action-info, .remuneration-action.detail, .recipe-info-button,
+        .bundle-ingredients, .sales-reprint-button, .sales-return-receipt, .ui-pagination-button):hover:not(:disabled) {
+        @apply bg-brand-soft border-sky text-brand;
+    }
+    .ui-shell :is(.ui-action-edit, .action-edit, .remuneration-action.edit, .treatment-price-edit,
+        .commission-edit, .recipe-button, .bundle-price-edit, .bundle-treatment-edit, .bundle-order-edit):hover:not(:disabled) {
+        background-color: #ffedd5; border-color: #d97706; color: #7c2d12;
+    }
+    .ui-shell :is(.ui-action-delete, .action-delete, .treatment-delete, .bundle-delete):hover:not(:disabled) {
+        background-color: var(--ui-danger-soft); border-color: var(--ui-danger); color: var(--ui-danger);
+    }
+    .ui-shell .ui-action-success:hover:not(:disabled) { border-color: var(--ui-success); }
+    .ui-shell :is(.ui-action-view, .ui-action-info, .ui-action-edit, .ui-action-delete, .ui-action-success,
+        .remuneration-action, .recipe-button, .recipe-info-button, .bundle-ingredients,
+        .sales-reprint-button, .sales-return-receipt, .treatment-price-edit, .commission-edit,
+        .bundle-price-edit, .bundle-treatment-edit, .bundle-order-edit, .treatment-delete, .bundle-delete,
+        .action-edit, .action-delete, .ui-pagination-button):hover:not(:disabled) { filter: brightness(.97); }
+    .ui-shell :is(button, .access-button):disabled, .ui-shell [aria-disabled="true"] {
+        @apply bg-slate-100 bg-none border-line text-slate-500 shadow-none;
+        cursor: not-allowed; filter: none; transform: none;
+    }
+    .ui-shell :is(button, .access-button)[aria-busy="true"], .ui-shell button.is-loading { cursor: progress; opacity: .75; }
+    .ui-shell :is(.access-button.compact, .remuneration-action, .ui-pagination-button) { min-height: 40px; padding: 8px 12px; }
+    .ui-shell :is(.primary, .secondary, .access-button, .ui-action-create) .material-symbols-outlined { font-size: 20px; }
+    .ui-shell :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+        outline: 2px solid var(--ui-brand); outline-offset: 3px;
+    }
+    .ui-shell :is(.page, .modal, .access-content) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]), select, textarea) {
+        @apply bg-white border-line text-ink rounded-xl;
+    }
+    .ui-shell :is(.page, .modal, .access-content) :is(input, select, textarea):focus {
+        border-color: var(--ui-brand); box-shadow: var(--ui-ring);
+    }
+    .ui-shell :is(input, textarea)::placeholder { @apply text-slate-400; }
+    .ui-shell :is(.page-search, .activity-search) { @apply bg-white border-line rounded-xl; }
+    .ui-shell :is(.treatment-search, .bundle-treatment-search, .reservation-member-trigger, .therapist-picker) { @apply bg-white border-line rounded-xl text-ink; }
+    .ui-shell :is(.page-search, .activity-search, .treatment-search, .bundle-treatment-search):focus-within {
+        border-color: var(--ui-brand); box-shadow: var(--ui-ring);
+    }
+    .ui-shell :is(.page-search, .activity-search) input { border: 0; background: transparent; }
+    .ui-shell :is(.page-search, .activity-search) input:focus { box-shadow: none; }
+    .ui-shell :is(.treatment-search, .bundle-treatment-search, .reservation-member-search) > input {
+        border: 0; background: transparent; box-shadow: none;
+    }
+    .ui-shell :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--ui-brand); }
+    .ui-shell #reservation-modal .reservation-customer-type > label { @apply border-line rounded-xl; }
+    .ui-shell #reservation-modal .reservation-customer-type > label:has(input:checked) { @apply bg-brand-soft border-brand; }
+    .ui-shell #reservation-modal .reservation-item-card { @apply border-line rounded-2xl; border-left-color: var(--ui-brand); }
+    .ui-shell :is(.page .table .tr.th, .access-table th) { @apply bg-surface-soft text-muted; }
+    .ui-shell .page .table .tr > *, .ui-shell .access-table :is(th, td) { @apply border-line; }
+    .ui-shell :is(.page .table .tr:not(.th), .access-table tbody tr):hover { @apply bg-surface-soft; }
+    .ui-shell :is(.modal-box, .payment-method-modal-dialog, .notification-panel, .treatment-search-results,
+        .reservation-member-results, .therapist-picker-menu, .product-action-menu) { @apply bg-white border-line rounded-2xl; box-shadow: var(--ui-shadow-hover); }
+    .ui-shell .modal { backdrop-filter: none; }
+    .ui-shell :is(.treatment-search-option, .reservation-member-option):is(:hover, .selected) { @apply bg-brand-soft text-brand; }
+    .ui-shell :is(.pill, .count-badge, .role-badge, .sales-payment, .finance-source, .badge) { @apply bg-brand-soft text-brand rounded-lg; }
+    .ui-shell .ui-status-success { background: var(--ui-success-soft); color: #086451; }
+    .ui-shell .ui-status-warning { background: var(--ui-warning-soft); color: #92400e; }
+    .ui-shell .ui-status-danger { background: var(--ui-danger-soft); color: #b91c2c; }
+    .ui-shell .ui-status-neutral { @apply bg-slate-100 text-slate-600; }
+    .ui-shell :is(.notice, .alert-info) { @apply bg-surface-soft border-line text-ink rounded-xl; }
+    .ui-shell :is(.alert-error, #toast.error) { background: var(--ui-danger-soft); border-color: #f3bcc3; color: #b91c2c; }
+    .ui-shell :is(.success-toast, #toast:not(.error)) { background: var(--ui-success-soft); border-color: #b3e2d5; color: #086451; }
+    .ui-shell :is(.success-toast, #toast) { border-radius: var(--ui-control-radius); box-shadow: var(--ui-shadow-hover); }
+
+    /* Operational layouts share the same spacing and keep actions reachable. */
+    .ui-shell .page .table { width: 100%; display: block; scrollbar-color: #94a3b8 #f1f5f9; }
+    .ui-shell .page .table .tr { width: 100%; min-height: 64px; }
+    .ui-shell .page .table .tr > * { padding: 12px 14px; border-right: 0; }
+    .ui-shell .page .table .tr.th { min-height: 44px; }
+    .ui-shell :is(.payroll-row-actions, .remuneration-row-actions) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .ui-shell :is(.payroll-row-actions, .remuneration-row-actions) > button { width: 100%; min-width: 0; white-space: normal; }
+    .ui-shell #penggajian .payroll-table .tr { min-width: 1080px; grid-template-columns: minmax(160px,1.15fr) repeat(2,minmax(135px,1fr)) repeat(3,minmax(155px,1fr)) 150px; }
+    .ui-shell #remunerasi .remuneration-table .tr { min-width: 1120px; grid-template-columns: minmax(170px,1.1fr) repeat(5,minmax(150px,1fr)) 150px; }
+    .ui-shell #stok .stock-list-card { padding: 0; overflow: hidden; }
+    .ui-shell #stok .stock-list-card > .stock-table { overflow-x: auto; }
+    .ui-shell #stok .stock-table .tr { min-width: 880px; grid-template-columns: minmax(220px,1.7fr) repeat(4,minmax(135px,1fr)) 120px; }
+    .ui-shell #stok > .stock-list-toolbar { padding: 16px; }
+    .ui-shell #stok .stock-toolbar-actions { justify-content: flex-start; }
+    .ui-shell #stok .stock-action-group { width: 100%; max-width: none; display: flex; flex-wrap: wrap; gap: 8px; }
+    .ui-shell #stok .stock-toolbar-actions .page-search { flex: 1 1 240px; width: auto; }
+    .ui-shell #stok .stock-sort-control { flex: 0 1 200px; border-color: var(--ui-line); color: var(--ui-muted); }
+    .ui-shell #stok .stock-sort { height: 40px; background: transparent; }
+    .ui-shell .product-action-trigger { border-color: #cbd5e1; color: var(--ui-ink); min-height: 38px; }
+    .ui-shell .product-action-menu { position: fixed; width: 180px; z-index: 70; }
+    .ui-shell .product-action-menu .product-edit { color: #92400e; }
+    .ui-shell .product-action-menu .product-stock-in { color: #087f64; }
+    .ui-shell .product-action-menu .product-stock-out { color: #b91c2c; }
+    .ui-shell .product-action-menu button { min-height: 40px; font-size: 12px; }
+    .ui-shell .product-action-menu button:hover { background: var(--ui-surface-soft); }
+    .ui-shell .metrics.three { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .ui-shell .metrics .green { --metric-soft: #e0f7f1; --metric-ink: #087f64; }
+    .ui-shell .metrics .rose { --metric-soft: #fff0f2; --metric-ink: #b91c2c; }
+    .ui-shell .metrics .gold { --metric-soft: #fff4e5; --metric-ink: #92400e; }
+    .ui-shell .sidebar .access-menu[open] > summary:not(.active) { background: #f8fafc; color: var(--ui-ink); }
+    .ui-shell .sidebar .access-submenu :is(a, button).active { background: var(--ui-soft); color: var(--ui-brand); box-shadow: none; }
+    .ui-shell .page > *, .ui-shell .two-column > * { min-width: 0; }
+    .ui-shell .finance-page { grid-template-columns: minmax(0,1fr); }
+    .ui-shell .card-head { flex-wrap: wrap; }
+    .ui-shell .member-list-actions { flex-wrap: wrap; min-width: 0; }
+    .ui-shell .member-list-actions input { flex: 1 1 160px; min-width: 0; max-width: 100%; }
+    .ui-shell .stocktake-page-toolbar, .ui-shell .stocktake-page-actions { flex-wrap: wrap; }
+    .ui-shell .stocktake-card-head { flex-wrap: wrap; }
+    .ui-shell #stocktake-form { position: relative; display: block; max-width: 100%; overflow-x: auto; }
+    .ui-shell #member-list .member-row { grid-template-columns: 38px minmax(0,1fr) auto auto; }
+    .ui-shell #member-list .membership-actions { grid-column: auto; flex-wrap: wrap; justify-content: flex-end; }
+    @media (max-width: 760px) {
+        .ui-shell #member-list .member-row { grid-template-columns: 38px minmax(0,1fr) auto; }
+        .ui-shell #member-list .membership-actions { grid-column: 2 / -1; justify-content: flex-start; }
+    }
+    .ui-shell .payment-reconciliation { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .ui-shell .payment-reconciliation > span { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+    .ui-shell .membership-actions .member-history-button { background: var(--ui-soft); color: var(--ui-brand); border-color: var(--ui-line); }
+    .ui-shell:has(.modal.open) .sidebar-toggle { visibility: hidden; }
+    .ui-shell .reservation-queue-card { padding: 0; }
+    .ui-shell .reservation-queue-card > .card-head { margin: 0; padding: 16px 20px; }
+    .ui-shell .reservation-queue-day > header { background: var(--ui-surface-soft); color: var(--ui-ink); }
+    .ui-shell .reservation-queue-row { grid-template-columns: minmax(0,1fr); }
+    .ui-shell .reservation-queue-day .calendar-queue-item { border-radius: 0; background: #fff; text-align: left; }
+    .ui-shell .reservation-queue-day .calendar-queue-item:hover { background: var(--ui-surface-soft); }
+    .ui-shell .reservation-queue-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: center; gap: 8px; padding: 0 14px 14px; }
+    .ui-shell .reservation-queue-actions button { width: 100%; min-width: 0; min-height: 38px; margin: 0; padding: 8px; text-align: center; line-height: 1.25; }
+    .ui-shell .link.add-staff { background: var(--ui-success-soft); color: #086451; border-color: #b3e2d5; }
+    .ui-shell #reservation-modal :is(.reservation-item-card, .reservation-bundle-card) { contain: none; overflow: visible; }
+    .ui-shell #reservation-modal .reservation-item-card:has(.open) { z-index: 5; }
+    .ui-shell .therapist-picker-option:is(:hover, .selected) { background: var(--ui-soft); color: var(--ui-ink); }
+    .ui-shell .modal :is(footer, form > footer) { background: #fff; }
+    .ui-shell .reservation-work-status { flex-wrap: wrap; }
+    .ui-shell .reservation-work-status > small { flex: 1 1 220px; min-width: 0; }
+    .ui-shell .reservation-work-status > button { max-width: 100%; white-space: normal; }
+
+    @media (min-width: 1200px) {
+        .ui-shell .reservation-queue-row:has(.reservation-queue-actions) { grid-template-columns: minmax(0,1fr) 160px; }
+        .ui-shell .reservation-queue-actions { grid-template-columns: minmax(0,1fr); padding: 12px; gap: 6px; }
+    }
+
+    @media (max-width: 1199px) {
+        .ui-shell .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .ui-shell .metrics.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .ui-shell #dashboard .analytics-grid { grid-template-columns: minmax(0, 1fr); }
+        .ui-shell .header-profile { display: none; }
+        .ui-shell #reservation-queue-list { grid-template-columns: minmax(0,1fr); }
+    }
+    @media (max-width: 760px) {
+        .ui-shell main { padding: 0 16px 24px; }
+        .ui-shell main > header { margin: 0 -16px 20px; padding: 18px 16px 18px 64px; gap: 12px; }
+        .ui-shell main > header h1 { @apply text-xl; }
+        .ui-shell .header-actions { gap: 12px; }
+        .ui-shell .header-profile { display: none; }
+        .ui-shell #dashboard .welcome { min-height: 0; padding: 24px; }
+        .ui-shell #dashboard .payment-revenue-list { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 16px; gap: 12px; }
+        .ui-shell #dashboard .payment-revenue-item { padding: 16px; }
+        .ui-shell .payment-revenue-card > .analytics-head { padding: 20px 20px 0; }
+        .ui-shell .sidebar-toggle, .ui-shell.sidebar-is-collapsed .sidebar-toggle { position: absolute; top: 23px; left: 16px; }
+        .ui-shell.sidebar-mobile-open .sidebar-toggle { @apply bg-white border-line text-brand; position: fixed; left: min(222px, calc(100vw - 104px)); }
+        .ui-shell .metrics { gap: 12px; }
+        .ui-shell .metrics article { padding: 16px; }
+        .ui-shell #stok .stock-action-group > * { flex: 1 1 140px; }
+        .ui-shell #reservation-modal .staff-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr) 34px; }
+        .ui-shell #reservation-modal .staff-row > .therapist-picker-label { grid-column: 1 / -1; }
+    }
+    @media (max-width: 380px) {
+        .ui-shell .header-actions .jakarta-clock { display: none; }
+        .ui-shell .metrics, .ui-shell .metrics.three { grid-template-columns: minmax(0, 1fr); }
+        .ui-shell #dashboard .payment-revenue-list { grid-template-columns: minmax(0, 1fr); }
+        .ui-shell .payment-reconciliation { grid-template-columns: minmax(0,1fr); }
+    }
+
+    .ui-shell #dashboard .dashboard-overview-card {
+        overflow: hidden; border: 1px solid var(--ui-line); border-radius: 20px;
+        background: #fff; box-shadow: var(--ui-shadow);
+    }
+    .ui-shell #dashboard .dashboard-overview-card > * { margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+    .ui-shell #dashboard .dashboard-overview-card > * + * { border-top: 1px solid var(--ui-line); }
+    .ui-shell #dashboard .welcome { min-height: 0; padding: 28px 32px; }
+    .ui-shell #dashboard .welcome::after { display: none; }
+    .ui-shell #dashboard .dashboard-overview-card > .welcome { padding: 0; }
+    .ui-shell #dashboard .dashboard-overview-card > .welcome img {
+        display: block; width: 100%; height: 220px;
+        object-fit: cover; object-position: center;
+    }
+    @media (max-width: 760px) {
+        .ui-shell #dashboard .dashboard-overview-card > .welcome img { height: 160px; object-position: 32% center; }
+    }
+    .ui-shell #dashboard .dashboard-metrics { gap: 0; }
+    .ui-shell #dashboard .dashboard-metrics article {
+        min-height: 140px; border: 0; border-right: 1px solid var(--ui-line); border-radius: 0;
+        background: transparent; box-shadow: none; transform: none;
+    }
+    .ui-shell #dashboard .dashboard-metrics article:last-child { border-right: 0; }
+    .ui-shell #dashboard .dashboard-metrics article:hover { background: var(--ui-surface-soft); box-shadow: none; transform: none; }
+    .ui-shell #dashboard .payment-revenue-card > .analytics-head { padding: 24px 28px 0; }
+    .ui-shell #dashboard .payment-revenue-list { gap: 0; margin: 16px 28px 24px; border: 1px solid var(--ui-line); border-radius: 12px; overflow: hidden; }
+    .ui-shell #dashboard .payment-revenue-item { border: 0; border-right: 1px solid var(--ui-line); border-radius: 0; background: transparent; }
+    .ui-shell #dashboard .payment-revenue-item:last-child { border-right: 0; }
+    .ui-shell #dashboard .analytics-grid { gap: 0; margin: 0; }
+    .ui-shell #dashboard .analytics-grid > .analytics-card { min-height: 0; padding: 24px 28px; border: 0; border-radius: 0; box-shadow: none; }
+    .ui-shell #dashboard .analytics-grid > .analytics-card:nth-child(odd) { border-right: 1px solid var(--ui-line); }
+    .ui-shell #dashboard .analytics-grid > .revenue-analytics { border-top: 1px solid var(--ui-line); border-right: 0; }
+    .ui-shell #dashboard .dashboard-operational-card { border: 0; border-radius: 0; }
+    .ui-shell #dashboard .therapist-rating-overview { padding: 24px 28px; }
+    @media (max-width: 1199px) {
+        .ui-shell #dashboard .dashboard-metrics article:nth-child(2) { border-right: 0; }
+        .ui-shell #dashboard .dashboard-metrics article:nth-child(-n+2) { border-bottom: 1px solid var(--ui-line); }
+        .ui-shell #dashboard .analytics-grid > .analytics-card { border-right: 0; }
+        .ui-shell #dashboard .analytics-grid > .analytics-card + .analytics-card { border-top: 1px solid var(--ui-line); }
+    }
+    @media (max-width: 760px) {
+        .ui-shell #dashboard .welcome { padding: 24px 20px; }
+        .ui-shell #dashboard .payment-revenue-card > .analytics-head { padding: 20px 20px 0; }
+        .ui-shell #dashboard .payment-revenue-list { margin: 16px 20px 20px; }
+        .ui-shell #dashboard .payment-revenue-item:nth-child(2n) { border-right: 0; }
+        .ui-shell #dashboard .payment-revenue-item:nth-child(-n+2) { border-bottom: 1px solid var(--ui-line); }
+        .ui-shell #dashboard .analytics-grid > .analytics-card,
+        .ui-shell #dashboard .therapist-rating-overview { padding: 20px; }
+    }
+    @media (max-width: 380px) {
+        .ui-shell #dashboard .dashboard-metrics article { border-right: 0; border-bottom: 1px solid var(--ui-line); }
+        .ui-shell #dashboard .dashboard-metrics article:last-child { border-bottom: 0; }
+        .ui-shell #dashboard .payment-revenue-item { border-right: 0; border-bottom: 1px solid var(--ui-line); }
+        .ui-shell #dashboard .payment-revenue-item:last-child { border-bottom: 0; }
+    }
+    .ui-shell .transaction-success-modal.is-survey-collapsed {
+        width: min(440px, calc(100vw - 28px)); height: auto; min-height: 0;
+        display: block; border: 1px solid var(--ui-line); background: #fff; box-shadow: var(--ui-shadow-hover);
+    }
+    .ui-shell .transaction-success-modal.is-survey-collapsed .transaction-success-left {
+        position: relative; width: 100%; height: auto; min-height: 0; transform: none; border: 0;
+    }
+    .ui-shell .transaction-success-modal.is-survey-collapsed .customer-survey-panel { display: none; }
+    .ui-shell .transaction-success-modal:not(.is-survey-collapsed) .success-survey-open { display: none; }
+    .ui-shell .transaction-survey-note { max-width: 300px; margin-top: 16px; color: var(--ui-muted); font-size: 12px; font-weight: 400; line-height: 1.5; }
+    .ui-shell .success-survey-open { grid-column: 1 / -1; min-height: 40px; }
+    .ui-shell .save-customer-survey { background: #087f64; border-color: #087f64; }
+    .ui-shell .save-customer-survey:hover:not(:disabled) { background: #06664f; border-color: #06664f; }
+    @media (max-width: 760px) {
+        .ui-shell .transaction-success-modal .survey-therapist-list { grid-auto-flow: row; grid-auto-columns: auto; overflow-x: visible; }
+        .ui-shell .transaction-success-modal .survey-choice-grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .ui-shell .customer-survey-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 18px; }
+    .ui-shell .customer-survey-filters { display: flex; align-items: end; justify-content: flex-start; flex-wrap: wrap; gap: 10px; }
+    .ui-shell .customer-survey-filters > #customer-survey-search { flex: 1 1 220px; width: auto; }
+    .ui-shell .customer-survey-filters > #customer-survey-status { min-height: 44px; }
+    .ui-shell .customer-survey-summary-empty { margin: 0; padding: 4px 0; color: var(--ui-muted); font-size: 12px; }
+    @media (max-width: 600px) {
+        .ui-shell .customer-survey-filters > :is(input, select, label) { flex: none; width: 100%; }
+        .ui-shell .customer-survey-filters > #customer-survey-search { flex: none; width: 100%; height: 44px; }
+        .ui-shell #customer-survey-list .tr {
+            min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px;
+            margin-bottom: 10px; padding: 14px; border: 1px solid var(--ui-line); border-radius: 12px;
+        }
+        .ui-shell #customer-survey-list .tr > span:first-child,
+        .ui-shell #customer-survey-list .tr > span:nth-child(2),
+        .ui-shell #customer-survey-list .tr > span:nth-child(3) { grid-column: 1 / -1; }
+        .ui-shell #customer-survey-list .tr > span:nth-child(2)::before { content: 'Telepon · '; color: var(--ui-muted); }
+        .ui-shell #customer-survey-list .tr > span:nth-child(3)::before { content: 'Treatment · '; color: var(--ui-muted); }
+        .ui-shell #customer-survey-list .customer-survey-actions { grid-column: 2; grid-row: 4; }
+    }
+}
+
+/* Material Symbols' unlayered font stylesheet otherwise overrides grid centering. */
+.ui-shell #dashboard :is(.dashboard-section-title > .material-symbols-outlined, .payment-method-label > i.material-symbols-outlined) {
+    display: grid;
+    place-items: center;
+    text-align: center;
+    line-height: 1;
+}

@@ -5,20 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Selesa Salon - Sistem Operasional</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,300,0,-25&display=block" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('css/salon.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/redesign.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/material-icons.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/typography.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/mockup-dashboard.css') }}?v={{ filemtime(public_path('css/mockup-dashboard.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/access-control.css') }}?v={{ filemtime(public_path('css/access-control.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/sidebar-polish.css') }}?v={{ filemtime(public_path('css/sidebar-polish.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/scheduling.css') }}?v={{ filemtime(public_path('css/scheduling.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/interface-clarity.css') }}?v={{ filemtime(public_path('css/interface-clarity.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/ui-system.css') }}?v={{ filemtime(public_path('css/ui-system.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/member-history.css') }}?v={{ md5_file(public_path('css/member-history.css')) }}">
-    <link rel="stylesheet" href="{{ asset('css/bundle-workflow.css') }}?v={{ md5_file(public_path('css/bundle-workflow.css')) }}">
+    @vite('resources/css/salon.css')
     <style>
         @cannot('reservations.view') #reservasi-antrean,#reservasi-kalender,.go-reservation{display:none!important} @endcannot
         @cannot('therapist_attendance.view') #kehadiran-terapis,.dashboard-therapist-attendance,.go-therapist-attendance{display:none!important} @endcannot
@@ -50,23 +39,24 @@
     @include('partials.internal-sidebar')
 
     <main>
-        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><time class="jakarta-clock" id="jakarta-clock" aria-label="Waktu Jakarta"><span id="jakarta-clock-date">--</span><strong id="jakarta-clock-time">--.--.-- WIB</strong></time><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div></div></header>
+        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><time class="jakarta-clock" id="jakarta-clock" aria-label="Waktu Jakarta"><span id="jakarta-clock-date">--</span><strong id="jakarta-clock-time">--.--.-- WIB</strong></time><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div>@include('partials.header-profile')</div></header>
 
         <section class="page active" id="dashboard">
-            <div class="welcome"><div><small id="dashboard-welcome-date">OPERASIONAL HARI INI</small><h2>Selamat datang, {{ auth()->user()->name }}.</h2><p id="dashboard-welcome-summary">Ringkasan aktivitas dan layanan salon hari ini.</p></div></div>
+            <div class="dashboard-overview-card">
+            <div class="welcome"><img src="{{ asset('images/dashboard-banner.png') }}" alt="Selesa Salon, Spa, Wellness, Nail, dan Eyelash" width="2172" height="724"></div>
             <div class="metrics dashboard-metrics">
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="" aria-label="Buka reservasi hari ini"><i class="material-symbols-outlined clay">calendar_month</i><div><small>Reservasi hari ini</small><strong id="metric-reservations">0</strong><span id="metric-serving">0 sedang dilayani</span></div></article>
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="arrived" aria-label="Buka daftar pelanggan yang sudah datang"><i class="material-symbols-outlined green">groups</i><div><small>Pelanggan datang</small><strong id="metric-arrived">0</strong><span id="metric-arrival-rate">0% dari reservasi</span></div></article>
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="keuangan-arus-kas" aria-label="Buka arus kas hari ini"><i class="material-symbols-outlined gold">payments</i><div><small>Pendapatan hari ini</small><strong id="metric-revenue">Rp0</strong><span id="metric-revenue-trend">Belum ada transaksi</span></div></article>
-                <article class="dashboard-metric" role="button" tabindex="0" data-target="stok" aria-label="Buka daftar produk dengan stok menipis"><i class="material-symbols-outlined rose">inventory_2</i><div><small>Stok menipis</small><strong id="metric-low-stock">0 produk</strong><span id="metric-stock-note">Stok aman</span></div></article>
+                <article class="dashboard-metric metric-reservations" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="" aria-label="Buka reservasi hari ini"><i class="material-symbols-outlined clay">calendar_month</i><div><small>Reservasi hari ini</small><strong id="metric-reservations">0</strong><span id="metric-serving">0 sedang dilayani</span></div></article>
+                <article class="dashboard-metric metric-arrivals" role="button" tabindex="0" data-target="reservasi-antrean" data-reservation-status="arrived" aria-label="Buka daftar pelanggan yang sudah datang"><i class="material-symbols-outlined green">groups</i><div><small>Pelanggan datang</small><strong id="metric-arrived">0</strong><span id="metric-arrival-rate">0% dari reservasi</span></div></article>
+                <article class="dashboard-metric metric-revenue" role="button" tabindex="0" data-target="keuangan-arus-kas" aria-label="Buka arus kas hari ini"><i class="material-symbols-outlined gold">payments</i><div><small>Pendapatan hari ini</small><strong id="metric-revenue">Rp0</strong><span id="metric-revenue-trend">Belum ada transaksi</span></div></article>
+                <article class="dashboard-metric metric-inventory" role="button" tabindex="0" data-target="stok" aria-label="Buka daftar produk dengan stok menipis"><i class="material-symbols-outlined rose">inventory_2</i><div><small>Stok menipis</small><strong id="metric-low-stock">0 produk</strong><span id="metric-stock-note">Stok aman</span></div></article>
             </div>
             <article class="payment-revenue-card" aria-labelledby="payment-revenue-title">
-                <div class="analytics-head"><div><h3 id="payment-revenue-title">Arus pembayaran hari ini</h3><p>Dana masuk dan refund per nama metode pembayaran</p></div><div class="payment-revenue-summary"><small>Arus bersih hari ini</small><strong id="payment-revenue-total">Rp0</strong><span id="payment-revenue-note">0 metode pembayaran</span></div></div>
+                <div class="analytics-head"><div class="dashboard-section-title"><i class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</i><div><h3 id="payment-revenue-title">Arus pembayaran hari ini</h3><p>Dana masuk dan refund per nama metode pembayaran</p></div></div><div class="payment-revenue-summary"><small>Arus bersih hari ini</small><strong id="payment-revenue-total">Rp0</strong><span id="payment-revenue-note">0 metode pembayaran</span></div></div>
                 <div class="payment-revenue-list" id="payment-revenue-list"></div>
             </article>
             <div class="analytics-grid">
-                <article class="analytics-card treatment-volume"><div class="analytics-head"><div><h3>Treatment harian</h3><p>Jumlah treatment yang sudah dibayar pada bulan berjalan</p></div><span class="analytics-period" id="treatment-volume-period">BULAN INI</span></div><div class="treatment-bar-chart" id="treatment-performance"></div></article>
-                <article class="analytics-card popular-treatment"><div class="analytics-head"><div><h3>Treatment sering dilakukan</h3><p>Lima treatment teratas dari transaksi lunas bulan berjalan</p></div><span class="analytics-period">BULAN INI</span></div><div class="performance-list" id="popular-treatments"></div></article>
+                <article class="analytics-card treatment-volume"><div class="analytics-head"><div class="dashboard-section-title"><i class="material-symbols-outlined" aria-hidden="true">spa</i><div><h3>Treatment harian</h3><p>Jumlah treatment yang sudah dibayar pada bulan berjalan</p></div></div><span class="analytics-period" id="treatment-volume-period">BULAN INI</span></div><div class="treatment-bar-chart" id="treatment-performance"></div></article>
+                <article class="analytics-card popular-treatment"><div class="analytics-head"><div class="dashboard-section-title"><i class="material-symbols-outlined" aria-hidden="true">bar_chart</i><div><h3>Treatment sering dilakukan</h3><p>Lima treatment teratas dari transaksi lunas bulan berjalan</p></div></div><span class="analytics-period">BULAN INI</span></div><div class="performance-list" id="popular-treatments"></div></article>
                 <article class="analytics-card revenue-analytics"><div class="analytics-head"><div><h3>Tren pendapatan</h3><p id="revenue-chart-description">Transaksi dibayar pada minggu berjalan</p></div><div class="revenue-period-filter" role="group" aria-label="Filter periode tren pendapatan"><button type="button" class="active" data-revenue-period="week" aria-pressed="true">Minggu</button><button type="button" data-revenue-period="month" aria-pressed="false">Bulan</button><button type="button" data-revenue-period="year" aria-pressed="false">Tahun</button></div></div><div class="line-chart" id="revenue-chart"></div></article>
             </div>
             <div class="card dashboard-operational-card">
@@ -77,6 +67,7 @@
             @can('employees.view')
                 <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Customer Survey</h3><p>Rekap kepuasan pelanggan dari transaksi bulan berjalan.</p></div><button type="button" class="link open-therapist-ratings">Lihat semua →</button></div><div id="customer-survey-overview"></div></article>
             @endcan
+            </div>
         </section>
 
         <section class="page reservation-page" id="reservasi-antrean">
