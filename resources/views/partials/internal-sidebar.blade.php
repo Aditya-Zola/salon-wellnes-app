@@ -4,16 +4,6 @@
     $modules = [
         ['page' => 'membership', 'label' => 'Membership', 'icon' => 'workspace_premium', 'permission' => 'memberships.view'],
         ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard', 'permission' => 'dashboard.view'],
-        [
-            'page' => 'reservasi',
-            'label' => 'Reservasi',
-            'icon' => 'calendar_month',
-            'permission' => 'reservations.view',
-            'children' => [
-                ['page' => 'reservasi-antrean', 'label' => 'Antrean Hari Ini'],
-                ['page' => 'reservasi-kalender', 'label' => 'Kalender'],
-            ],
-        ],
         ['page' => 'kehadiran-terapis', 'label' => 'Kehadiran Terapis', 'icon' => 'how_to_reg', 'permission' => 'therapist_attendance.view'],
         [
             'page' => 'stok',
@@ -26,6 +16,16 @@
             ],
         ],
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
+        [
+            'page' => 'reservasi',
+            'label' => 'Reservasi',
+            'icon' => 'calendar_month',
+            'permission' => 'reservations.view',
+            'children' => [
+                ['page' => 'reservasi-antrean', 'label' => 'Antrean Hari Ini'],
+                ['page' => 'reservasi-kalender', 'label' => 'Kalender'],
+            ],
+        ],
         ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
         ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
         ['page' => 'customer-survey', 'label' => 'Customer Survey', 'icon' => 'assignment', 'permission' => 'sales.view'],
@@ -49,13 +49,22 @@
                 ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
                 ['page' => 'penggajian', 'label' => 'Penggajian'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
-                ['page' => 'penilaian-terapis', 'label' => 'Customer Survey', 'permission' => 'employees.view'],
             ],
         ],
     ];
 @endphp
 
 <aside class="sidebar">
+    <div class="sidebar-brand"><img src="{{ asset('images/selesa-logo.png') }}" alt="Selesa Salon"></div>
+    <div class="sidebar-user">
+        <strong title="{{ $user->username }}">{{ $user->username }}</strong>
+        <form method="POST" action="{{ route('logout') }}">
+            @csrf
+            <button type="submit" class="logout" title="Keluar dari sistem" aria-label="Keluar dari sistem">
+                <span class="material-symbols-outlined" aria-hidden="true">logout</span>
+            </button>
+        </form>
+    </div>
     <nav id="navigation" aria-label="Navigasi utama">
         @foreach ($modules as $module)
             @can($module['permission'])
@@ -145,19 +154,6 @@
         @endcan
     </nav>
 
-    <div class="account">
-        <i>{{ strtoupper(substr($user->name, 0, 2)) }}</i>
-        <div>
-            <strong>{{ $user->name }}</strong>
-            <small>{{ $user->role_name }}</small>
-        </div>
-        <form method="POST" action="{{ route('logout') }}">
-            @csrf
-            <button type="submit" class="logout" title="Keluar dari sistem" aria-label="Keluar dari sistem">
-                <b class="material-symbols-outlined" aria-hidden="true">logout</b><span>Logout</span>
-            </button>
-        </form>
-    </div>
 </aside>
 
 <div class="sidebar-scrim" id="sidebar-scrim" aria-hidden="true"></div>

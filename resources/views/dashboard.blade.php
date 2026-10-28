@@ -39,7 +39,7 @@
     @include('partials.internal-sidebar')
 
     <main>
-        <header><div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><time class="jakarta-clock" id="jakarta-clock" aria-label="Waktu Jakarta"><span id="jakarta-clock-date">--</span><strong id="jakarta-clock-time">--.--.-- WIB</strong></time><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div>@include('partials.header-profile')</div></header>
+        <header class="dashboard-header"><div class="dashboard-header-copy" hidden><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Ringkasan operasional salon hari ini</p></div><div class="header-actions"><time class="jakarta-clock" id="jakarta-clock" aria-label="Waktu Jakarta"><span id="jakarta-clock-date">--</span><strong id="jakarta-clock-time">--.--.-- WIB</strong></time><div class="notification-menu"><button type="button" class="bell notification-toggle" id="notification-toggle" title="Pemberitahuan" aria-label="Buka pemberitahuan" aria-expanded="false" aria-controls="notification-panel"><span class="material-symbols-outlined" aria-hidden="true">notifications</span><sup id="notification-count" hidden>0</sup></button><section class="notification-panel" id="notification-panel" aria-label="Pemberitahuan" hidden><div class="notification-panel-head"><div><b>Pemberitahuan</b><small>Aktivitas pada sesi ini</small></div><button type="button" class="notification-clear" id="notification-clear">Bersihkan</button></div><div class="notification-list" id="notification-list"><p class="notification-empty">Belum ada pemberitahuan.</p></div></section></div></div></header>
 
         <section class="page active" id="dashboard">
             <div class="dashboard-overview-card">
@@ -65,7 +65,7 @@
                 <section class="dashboard-operational-item dashboard-therapist-attendance"><div class="card-head"><div><h3>Kehadiran terapis</h3><p>Status ketersediaan terapis hari ini</p></div><button class="link go-therapist-attendance">Kelola →</button></div><div class="therapist-availability" id="therapist-availability"></div></section>
             </div>
             @can('employees.view')
-                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Customer Survey</h3><p>Rekap kepuasan pelanggan dari transaksi bulan berjalan.</p></div><button type="button" class="link open-therapist-ratings">Lihat semua →</button></div><div id="customer-survey-overview"></div></article>
+                <article class="card therapist-rating-overview"><div class="card-head"><div><h3>Customer Survey</h3><p>Rekap kepuasan pelanggan dari transaksi bulan berjalan.</p></div>@can('sales.view')<button type="button" class="link open-therapist-ratings">Lihat semua →</button>@endcan</div><div id="customer-survey-overview"></div></article>
             @endcan
             </div>
         </section>
@@ -256,21 +256,6 @@
             <article class="card remuneration-table-card"><div class="card-head"><div><h3>Per karyawan</h3><p>Komisi terambil dari transaksi lunas; komponen gaji berasal dari input manual.</p></div></div><div class="table remuneration-table" id="remuneration-table"></div></article>
             <div class="notice">ⓘ Tanggal gajian dan cutoff hanya penanda periode. Sistem tidak menghapus atau mereset gaji, komisi, bonus, maupun keterlambatan.</div>
         </section>
-
-        @can('employees.view')
-        <section class="page therapist-rating-page" id="penilaian-terapis">
-            <div class="therapist-rating-page-grid">
-                <article class="card therapist-rating-board">
-                    <div class="card-head"><div><h3>Customer Survey</h3><p>Rekap jawaban pelanggan bulan berjalan.</p></div><span class="analytics-period">BULAN INI</span></div>
-                    <div id="customer-survey-summary"></div>
-                </article>
-                <aside class="card therapist-live-reviews">
-                    <div class="card-head"><div><h3>Masukan pelanggan</h3><p>Ulasan tertulis terbaru.</p></div></div>
-                    <div class="therapist-live-window" aria-live="polite"><div id="customer-survey-feedback"><p class="empty-state">Belum ada masukan pelanggan.</p></div></div>
-                </aside>
-            </div>
-        </section>
-        @endcan
 
         <section class="page remuneration-archive-page" id="arsip-remunerasi">
             <div class="remuneration-archive-toolbar card">
