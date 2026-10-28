@@ -126,7 +126,6 @@ const copy = {
     penggajian: ['Penggajian', 'Komponen gaji per karyawan dan periode'],
     remunerasi: ['Remunerasi', 'Rekap data dan export Excel remunerasi'],
     'arsip-remunerasi': ['Arsip Remunerasi', 'Riwayat hasil final per tahun dan bulan'],
-    'penilaian-terapis': ['Customer Survey', 'Rekap kepuasan pelanggan dan masukan setelah transaksi'],
     log: ['Log Aktivitas', 'Jejak perubahan penting seluruh pengguna'],
 };
 
@@ -708,7 +707,7 @@ function statusClass(status) {
 }
 
 function openPage(id) {
-    const pageId = ({ reservasi: 'reservasi-antrean', keuangan: 'keuangan-arus-kas' })[id] || id;
+    const pageId = ({ reservasi: 'reservasi-antrean', keuangan: 'keuangan-arus-kas', 'penilaian-terapis': 'customer-survey' })[id] || id;
     const navigationPage = ({ 'stok-opname': 'stok', 'arsip-remunerasi': 'remunerasi' })[pageId] || pageId;
     const nav = document.querySelector(`#navigation [data-page="${navigationPage}"]`);
     const page = document.getElementById(pageId);
@@ -2246,7 +2245,7 @@ function openTherapistReviews(therapist) {
     const list = document.getElementById('therapist-live-review-list');
     if (!list) return;
 
-    openPage('penilaian-terapis');
+    openPage('customer-survey');
     if (title) title.textContent = `Review ${therapist.name || 'terapis'}`;
     if (subtitle) subtitle.textContent = `${reviews.length} ulasan tertulis pada bulan berjalan.`;
     list.innerHTML = reviews.length
@@ -3103,7 +3102,7 @@ function renderStock() {
                 <span class="stock-amount"><b>${formatStockQuantity(minimum)} <small>${escapeHtml(unitLabel)}</small></b></span>
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
                 <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unitLabel)}</small></span>
-                <span class="product-row-actions">${canUpdateProducts || canStocktakeProducts ? `<button type="button" class="product-action-trigger" data-id="${Number(product.id)}" aria-haspopup="menu" aria-expanded="false"><span>Aksi</span><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button><span class="product-action-menu" role="menu" hidden>${canUpdateProducts ? `<button type="button" class="product-edit" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit produk</button>` : ''}${canStocktakeProducts ? `<button type="button" class="product-stock-in product-stock-action" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">add_box</span>Stok masuk</button><button type="button" class="product-stock-out product-stock-action" data-id="${Number(product.id)}" role="menuitem" ${stock > 0 ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">remove_shopping_cart</span>Stok keluar</button>` : ''}</span>` : '<span>-</span>'}</span>
+                <span class="product-row-actions">${canUpdateProducts || canStocktakeProducts ? `<button type="button" class="product-action-trigger" data-id="${Number(product.id)}" aria-label="Aksi produk ${escapeHtml(product.name)}" aria-haspopup="menu" aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button><span class="product-action-menu" role="menu" hidden>${canUpdateProducts ? `<button type="button" class="product-edit" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit produk</button>` : ''}${canStocktakeProducts ? `<button type="button" class="product-stock-in product-stock-action" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">add</span>Stok masuk</button><button type="button" class="product-stock-out product-stock-action" data-id="${Number(product.id)}" role="menuitem" ${stock > 0 ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">remove</span>Stok keluar</button>` : ''}</span>` : '<span>-</span>'}</span>
             </div>`;
         }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
     }
@@ -5103,13 +5102,15 @@ function renderDashboard() {
                 ? item.date
                 : new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
             return {
-                x: treatments.length === 1 ? 500 : (index / (treatments.length - 1)) * 1000,
+                x: treatments.length === 1 ? 500 : 70 + (index / (treatments.length - 1)) * 860,
                 y: 152 - (count / maximum) * 140,
                 date: Number.isNaN(date.getTime()) ? item.date : date.getDate(),
                 tooltip: `${dateLabel} \u00b7 ${count.toLocaleString('id-ID')} treatment`,
             };
         });
-        performance.innerHTML = total > 0 ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-line-chart"><div class="treatment-line-yaxis"><span>${maximum}</span><span>${maximum > 1 ? Math.round(maximum / 2) : ''}</span><span>0</span></div><div class="treatment-line-main"><div class="treatment-line-plot"><svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.map(({ x, y }) => `${x},${y}`).join(' ')}"></polyline></svg>${points.map(({ x, y, tooltip }) => `<button type="button" class="treatment-line-point" style="left:${x / 10}%;top:${y / 160 * 100}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></button>`).join('')}</div><div class="treatment-line-dates">${points.map(({ x, date }, index) => index === 0 || index === points.length - 1 || (index % 5 === 0 && index < points.length - 3) ? `<small style="left:${x / 10}%">${escapeHtml(String(date))}</small>` : '').join('')}</div></div></div>` : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><b>Belum ada data treatment</b><p>Data treatment yang sudah dibayar akan ditampilkan di sini.</p></div>';
+        const line = points.map(({ x, y }) => `${x},${y}`).join(' ');
+        const area = `${points[0]?.x || 0},152 ${line} ${points.at(-1)?.x || 0},152`;
+        performance.innerHTML = total > 0 ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-line-chart"><div class="treatment-line-yaxis"><span>${maximum}</span><span>${maximum > 1 ? Math.round(maximum / 2) : ''}</span><span>0</span></div><div class="treatment-line-main"><div class="treatment-line-plot"><svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="treatment-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map(({ x, y, tooltip }) => `<button type="button" class="treatment-line-point" style="left:${x / 10}%;top:${y / 160 * 100}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></button>`).join('')}</div><div class="treatment-line-dates">${points.map(({ x, date }, index) => index === 0 || index === points.length - 1 || (index % 5 === 0 && index < points.length - 3) ? `<small style="left:${x / 10}%">${escapeHtml(String(date))}</small>` : '').join('')}</div></div></div>` : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><b>Belum ada data treatment</b><p>Data treatment yang sudah dibayar akan ditampilkan di sini.</p></div>';
 
         let tooltip = document.getElementById('treatment-chart-tooltip');
         if (!tooltip) {
@@ -5218,13 +5219,29 @@ function renderDashboard() {
         const survey = dashboard.customer_survey_summary_current_month || {};
         const total = Number(survey.total || 0);
         const label = (counts, key, fallback = 'Belum ada') => `${Number(counts?.[key] || 0)} ${fallback}`;
-        const miniSurveyChart = (title, items) => {
+        const miniSurveyChart = (title, items, compact = false) => {
+            if (compact) {
+                const colors = items.length === 4 ? ['#0f8a70', '#70b9a5', '#d9a05b', '#dc3545'] : ['#0f8a70', '#d9a05b', '#dc3545'];
+                const total = items.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+                let offset = 0;
+                const slices = items.map(([, count], index) => {
+                    const start = offset;
+                    offset += total ? (Number(count || 0) / total) * 100 : 0;
+                    return `${colors[index]} ${start}% ${offset}%`;
+                });
+                return `<article class="customer-survey-mini-chart is-donut"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-donut-content"><div class="customer-survey-donut" style="--chart-fill:${total ? `conic-gradient(${slices.join(',')})` : '#e2e8f0'}" role="img" aria-label="${escapeHtml(title)}: ${total} penilaian"><strong>${total}</strong></div><ul>${items.map(([name, count], index) => `<li><i style="background:${colors[index]}"></i><span>${escapeHtml(name)}</span><b>${Number(count || 0)}</b></li>`).join('')}</ul></div></article>`;
+            }
             const highest = Math.max(1, ...items.map(([, count]) => Number(count || 0)));
             return `<article class="customer-survey-mini-chart"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-bars">${items.map(([name, count]) => `<div title="${escapeHtml(name)}: ${Number(count || 0)}"><span style="height:${Math.max(5, (Number(count || 0) / highest) * 100)}%"></span><small>${escapeHtml(name)} <b>${Number(count || 0)}</b></small></div>`).join('')}</div></article>`;
         };
-        const therapistRows = array(survey.therapists).map((therapist) => `<article class="customer-survey-therapist"><b>${escapeHtml(therapist.name)}</b><small>${Number(therapist.total)} penilaian · ${Number(therapist.very_satisfied)} sangat baik</small><div><span style="width:${Number(therapist.total) ? (Number(therapist.very_satisfied) / Number(therapist.total)) * 100 : 0}%"></span></div></article>`).join('') || '<p class="empty-state">Belum ada penilaian pelayanan therapist.</p>';
-        const summaryMarkup = total ? `<div class="customer-survey-metrics"><article><b>${total}</b><small>survey masuk</small></article><article><b>${label(survey.return_intent, 'yes', 'ingin kembali')}</b><small>niat kembali</small></article><article><b>${label(survey.facility, 'very_suitable', 'fasilitas sangat sesuai')}</b><small>fasilitas</small></article></div><div class="customer-survey-breakdown">${miniSurveyChart('Fasilitas', [['Sesuai', survey.facility?.very_suitable], ['Standar', survey.facility?.standard], ['Kurang', survey.facility?.poor]])}${miniSurveyChart('Resepsionis', [['Sangat baik', survey.reception?.very_good], ['Baik', survey.reception?.good], ['Biasa', survey.reception?.neutral], ['Buruk', survey.reception?.bad]])}${miniSurveyChart('Harga', [['Cocok', survey.price?.fair], ['Worth it', survey.price?.worth_it], ['Mahal', survey.price?.expensive]])}${miniSurveyChart('Kembali', [['Ya', survey.return_intent?.yes], ['Mungkin', survey.return_intent?.maybe], ['Tidak', survey.return_intent?.no]])}</div><h4>Pelayanan therapist</h4><div class="customer-survey-therapists">${therapistRows}</div>` : '<p class="empty-state">Belum ada Customer Survey pada bulan ini.</p>';
-        surveySummaryTargets.forEach((target) => { target.innerHTML = summaryMarkup; });
+        const summaryMarkup = (compact) => {
+            const therapistRows = array(survey.therapists).map((therapist) => compact
+                ? `<article class="customer-survey-therapist is-compact"><b>${escapeHtml(therapist.name)}</b><ul class="customer-survey-therapist-counts"><li title="Sangat baik dan standar">Baik <strong>${Number(therapist.very_satisfied || 0) + Number(therapist.standard || 0)}</strong></li><li>Kurang <strong>${Number(therapist.dissatisfied || 0)}</strong></li><li>Buruk <strong>${Number(therapist.very_dissatisfied || 0)}</strong></li></ul></article>`
+                : `<article class="customer-survey-therapist"><b>${escapeHtml(therapist.name)}</b><small>${Number(therapist.total)} penilaian · ${Number(therapist.very_satisfied)} sangat baik</small><div><span style="width:${Number(therapist.total) ? (Number(therapist.very_satisfied) / Number(therapist.total)) * 100 : 0}%"></span></div></article>`).join('') || '<p class="empty-state">Belum ada penilaian pelayanan therapist.</p>';
+            const metrics = compact ? '' : `<div class="customer-survey-metrics"><article><b>${total}</b><small>survey masuk</small></article><article><b>${label(survey.return_intent, 'yes', 'ingin kembali')}</b><small>niat kembali</small></article><article><b>${label(survey.facility, 'very_suitable', 'fasilitas sangat sesuai')}</b><small>fasilitas</small></article></div>`;
+            return total ? `${metrics}<div class="customer-survey-breakdown">${miniSurveyChart('Fasilitas', [['Sesuai', survey.facility?.very_suitable], ['Standar', survey.facility?.standard], ['Kurang', survey.facility?.poor]], compact)}${miniSurveyChart('Resepsionis', [['Sangat baik', survey.reception?.very_good], ['Baik', survey.reception?.good], ['Biasa', survey.reception?.neutral], ['Buruk', survey.reception?.bad]], compact)}${miniSurveyChart('Harga', [['Cocok', survey.price?.fair], ['Worth it', survey.price?.worth_it], ['Mahal', survey.price?.expensive]], compact)}${miniSurveyChart('Kembali', [['Ya', survey.return_intent?.yes], ['Mungkin', survey.return_intent?.maybe], ['Tidak', survey.return_intent?.no]], compact)}</div><h4>Pelayanan therapist</h4><div class="customer-survey-therapists">${therapistRows}</div>` : '<p class="empty-state">Belum ada Customer Survey pada bulan ini.</p>';
+        };
+        surveySummaryTargets.forEach((target) => { target.innerHTML = summaryMarkup(target.id === 'customer-survey-overview'); });
         const feedbackTarget = document.getElementById('customer-survey-feedback');
         if (feedbackTarget) {
             const feedbacks = array(survey.feedbacks);
@@ -6811,7 +6828,7 @@ document.getElementById('product-import-file')?.addEventListener('change', (even
 document.getElementById('open-cash-entry')?.addEventListener('click', openCashEntryForm);
 document.getElementById('open-payroll')?.addEventListener('click', openPayrollForm);
 document.getElementById('open-remuneration-archives')?.addEventListener('click', () => openPage('arsip-remunerasi'));
-document.querySelector('.open-therapist-ratings')?.addEventListener('click', () => openPage('penilaian-terapis'));
+document.querySelector('.open-therapist-ratings')?.addEventListener('click', () => openPage('customer-survey'));
 document.getElementById('back-to-remuneration')?.addEventListener('click', () => openPage('remunerasi'));
 document.getElementById('remuneration-archive-year')?.addEventListener('change', () => loadRemunerationArchives().catch((error) => toast(error.message, true)));
 document.getElementById('finalize-remuneration')?.addEventListener('click', confirmRemunerationArchive);

@@ -21,7 +21,6 @@
             </div>
             <div class="header-actions">
                 @yield('header-action')
-                @include('partials.header-profile')
             </div>
         </header>
 

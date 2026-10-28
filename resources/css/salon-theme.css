@@ -43,7 +43,7 @@
     --ui-primary-gradient: linear-gradient(135deg, #2563eb 0%, #60a5fa 100%);
     /* A quiet shade keeps white labels readable over the sky-blue end. */
     --ui-glossy-gradient: linear-gradient(90deg, transparent, rgb(20 50 105 / .45)), var(--ui-primary-gradient);
-    --ui-sidebar-width: 256px;
+    --ui-sidebar-width: 208px;
     --ink: var(--ui-ink);
     --muted: var(--ui-muted);
     --line: var(--ui-line);
