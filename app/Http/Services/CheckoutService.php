@@ -13,6 +13,114 @@ class CheckoutService
 {
     public function __construct(private readonly ActivityLogger $logger) {}
 
+    public function refundCancelledDeposit(int $reservationId, array $data, Request $request): array
+    {
+        abort_unless($request->user()?->can('cashier.process'), 403);
+
+        return DB::transaction(function () use ($reservationId, $data, $request): array {
+            $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+            abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+            abort_unless($reservation->status === 'cancelled', 422, 'Pengembalian DP hanya untuk reservasi yang dibatalkan seluruhnya.');
+            abort_if(DB::table('transactions')->where('reservation_id', $reservationId)->where('status', 'paid')->exists(), 422, 'Transaksi lunas harus melalui retur.');
+            $existing = DB::table('reservation_deposit_refunds')->where('reservation_id', $reservationId)->first();
+            if ($existing) {
+                return ['id' => (int) $existing->id, 'amount' => (int) $existing->amount, 'idempotent_replay' => true];
+            }
+
+            $amount = (int) DB::table('reservation_deposits')->where('reservation_id', $reservationId)->where('status', 'confirmed')->sum('amount');
+            abort_unless($amount > 0, 422, 'Tidak ada DP yang sudah diterima untuk dikembalikan.');
+            $method = DB::table('payment_methods')->where('id', $data['payment_method_id'])->whereNull('archived_at')->lockForUpdate()->first();
+            abort_unless($method && $method->is_active, 422, 'Jenis bayar pengembalian tidak tersedia.');
+            if ($method->requires_reference && blank($data['reference_number'] ?? null)) {
+                throw ValidationException::withMessages(['reference_number' => ['Nomor referensi wajib diisi untuk jenis bayar ini.']]);
+            }
+
+            $now = now();
+            $id = DB::table('reservation_deposit_refunds')->insertGetId([
+                'reservation_id' => $reservationId,
+                'payment_method_id' => $method->id,
+                'amount' => $amount,
+                'reference_number' => $data['reference_number'] ?? null,
+                'refunded_by' => $request->user()->id,
+                'refunded_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $this->logger->log($request, 'reservation.deposit_refunded', 'reservation', $reservationId,
+                "Mengembalikan seluruh DP {$reservation->cancellation_number}",
+                ['refund_id' => $id, 'amount' => $amount, 'payment_method_id' => (int) $method->id]);
+
+            return ['id' => $id, 'amount' => $amount, 'idempotent_replay' => false];
+        }, 3);
+    }
+
+    public function payDeposit(int $reservationId, array $data, Request $request): array
+    {
+        abort_unless($request->user()?->can('cashier.process'), 403);
+
+        return DB::transaction(function () use ($reservationId, $data, $request): array {
+            $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+            abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+            $existing = DB::table('reservation_deposits')->where('reservation_id', $reservationId)->lockForUpdate()->first();
+            if ($existing) {
+                abort_unless($existing->status === 'confirmed', 409, 'Catatan DP ini tidak dapat diproses ulang.');
+
+                return $this->depositResult($existing, true);
+            }
+            abort_if($reservation->status === 'cancelled', 422, 'Reservasi yang dibatalkan tidak dapat dibayar.');
+            abort_if(DB::table('transactions')->where('reservation_id', $reservationId)->exists(), 422, 'Reservasi sudah memiliki transaksi pelunasan.');
+            $plan = DB::table('reservation_deposit_plans')->where('reservation_id', $reservationId)->lockForUpdate()->first();
+            abort_unless($plan, 422, 'Reservasi ini tidak memiliki rencana pembayaran DP.');
+            $total = (int) DB::table('reservation_items')->where('reservation_id', $reservationId)
+                ->where('work_status', '!=', 'cancelled')->sum('unit_price');
+            abort_if((int) $plan->amount <= 0 || (int) $plan->amount >= $total, 422, 'Periksa nominal DP dan treatment reservasi sebelum pembayaran.');
+            $method = DB::table('payment_methods')->where('id', (int) $data['payment_method_id'])
+                ->where('is_active', true)->whereNull('archived_at')->lockForUpdate()->first();
+            if (! $method) {
+                throw ValidationException::withMessages(['payment_method_id' => ['Metode pembayaran tidak tersedia atau tidak aktif.']]);
+            }
+            $now = now();
+            $receiptSnapshot = app(DepositReceiptService::class)->capture($reservationId);
+            $receiptSnapshot['cashier_name'] = $request->user()->name;
+            $receiptSnapshot['method_name'] = $method->name;
+            $depositId = DB::table('reservation_deposits')->insertGetId([
+                'reservation_id' => $reservationId,
+                'payment_method_id' => $method->id,
+                'amount' => $plan->amount,
+                'reference_number' => trim((string) ($data['reference_number'] ?? '')) ?: null,
+                'paid_at' => $now,
+                'status' => 'confirmed',
+                'notes' => $plan->notes,
+                'received_by' => $request->user()->id,
+                'receipt_snapshot' => json_encode($receiptSnapshot, JSON_THROW_ON_ERROR),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            DB::table('reservation_deposits')->where('id', $depositId)->update([
+                'number' => sprintf('%s%s%03d', DocumentNumberService::prefix('deposit_prefix', 'DP'), $now->format('Ymd'), $depositId),
+            ]);
+            $this->logger->log($request, 'reservation.deposit_received', 'reservation', $reservationId,
+                "Menerima DP Rp{$plan->amount} untuk reservasi {$reservation->booking_code}",
+                ['deposit_id' => $depositId, 'amount' => (int) $plan->amount, 'payment_method_id' => (int) $method->id]);
+
+            return $this->depositResult(DB::table('reservation_deposits')->find($depositId), false);
+        });
+    }
+
+    private function depositResult(object $deposit, bool $replay): array
+    {
+        return [
+            'id' => (int) $deposit->id,
+            'reservation_id' => (int) $deposit->reservation_id,
+            'amount' => (int) $deposit->amount,
+            'status' => $deposit->status,
+            'paid_at' => $deposit->paid_at,
+            'payment_method_id' => (int) $deposit->payment_method_id,
+            'payment_method_name' => DB::table('payment_methods')->where('id', $deposit->payment_method_id)->value('name'),
+            'idempotent_replay' => $replay,
+        ];
+    }
+
     public function checkout(array $data, Request $request): array
     {
         return DB::transaction(function () use ($data, $request): array {
@@ -64,6 +172,9 @@ class CheckoutService
                 ->lockForUpdate()
                 ->get(['amount']);
             $depositAmount = $this->sumMoney($deposits->map(fn (object $deposit): int => (int) $deposit->amount));
+            if ($depositAmount === 0 && DB::table('reservation_deposit_plans')->where('reservation_id', $reservationId)->exists()) {
+                throw ValidationException::withMessages(['reservation_id' => ['Proses pembayaran DP terlebih dahulu sebelum pelunasan.']]);
+            }
             if ($depositAmount >= $baseTotal) {
                 throw ValidationException::withMessages([
                     'reservation_id' => ['Total DP sama dengan atau melebihi total akhir. Periksa diskon atau harga reservasi sebelum pelunasan.'],
@@ -258,6 +369,7 @@ class CheckoutService
                 'id' => $transactionId,
                 'number' => $number,
                 'total' => $total,
+                'transacted_at' => $now->toDateTimeString(),
                 'base_total' => $baseTotal,
                 'discount_amount' => $discountAmount,
                 'deposit_amount' => $depositAmount,
@@ -778,6 +890,7 @@ class CheckoutService
         return [
             'id' => (int) $transaction->id,
             'number' => $transaction->number,
+            'transacted_at' => $transaction->transacted_at,
             'total' => (int) $transaction->total,
             'base_total' => (int) $transaction->total - (int) ($transaction->payment_charge_amount ?? 0),
             'payment_charge_amount' => (int) ($transaction->payment_charge_amount ?? 0),

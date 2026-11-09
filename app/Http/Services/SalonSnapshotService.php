@@ -221,6 +221,7 @@ class SalonSnapshotService
                 'customer.is_member',
                 'transaction.id as transaction_id',
                 'transaction.status as transaction_status',
+                'transaction.total as transaction_total',
             ]);
 
         if ($reservations->isEmpty()) {
@@ -360,7 +361,12 @@ class SalonSnapshotService
             ])
             ->keyBy('reservation_id');
 
-        return $reservations->map(function (object $reservation) use ($items, $products, $deposits, $maySeePhone, $maySeeTransactionDetails): array {
+        $depositPlans = DB::table('reservation_deposit_plans as plan')
+            ->leftJoin('payment_methods as method', 'method.id', '=', 'plan.payment_method_id')
+            ->whereIn('plan.reservation_id', $reservations->pluck('id'))
+            ->get(['plan.*', 'method.name as payment_method_name'])->keyBy('reservation_id');
+
+        return $reservations->map(function (object $reservation) use ($items, $products, $deposits, $depositPlans, $maySeePhone, $maySeeTransactionDetails): array {
             $reservationItems = collect($items->get($reservation->id, []))->map(function (array $item): array {
                 unset($item['reservation_id']);
 
@@ -388,12 +394,22 @@ class SalonSnapshotService
                 'deposit_amount' => (int) ($deposits->get($reservation->id)?->amount ?? 0),
                 'deposit' => ($deposit = $deposits->get($reservation->id)) ? [
                     'id' => (int) $deposit->id,
+                    'status' => 'confirmed',
                     'amount' => (int) $deposit->amount,
                     'payment_method_id' => (int) $deposit->payment_method_id,
                     'payment_method_name' => $deposit->payment_method_name,
                     'reference_number' => $deposit->reference_number,
                     'paid_at' => $deposit->paid_at,
-                ] : null,
+                ] : (($plan = $depositPlans->get($reservation->id)) ? [
+                    'id' => null,
+                    'plan_id' => (int) $plan->id,
+                    'status' => 'pending',
+                    'amount' => (int) $plan->amount,
+                    'payment_method_id' => $plan->payment_method_id ? (int) $plan->payment_method_id : null,
+                    'payment_method_name' => $plan->payment_method_name,
+                    'reference_number' => $plan->reference_number,
+                    'paid_at' => null,
+                ] : null),
                 'items' => $reservationItems,
                 'product_items' => collect($products->get($reservation->id, []))->map(function (array $item): array {
                     unset($item['reservation_id']);
@@ -415,6 +431,7 @@ class SalonSnapshotService
             if ($maySeeTransactionDetails) {
                 $result['transaction_id'] = $reservation->transaction_id ? (int) $reservation->transaction_id : null;
                 $result['transaction_status'] = $reservation->transaction_status;
+                $result['transaction_total'] = $reservation->transaction_total === null ? null : (int) $reservation->transaction_total;
             }
 
             return $result;
@@ -681,7 +698,7 @@ class SalonSnapshotService
                 $compactLike = '%'.$compactSearch.'%';
                 $builder->where(function ($nested) use ($like, $compactLike): void {
                     $nested->where('transaction.number', 'like', $like)
-                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(transaction.number, '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
+                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(".$nested->getGrammar()->wrap('transaction.number').", '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
                         ->orWhere('customer.name', 'like', $like);
                 });
             })
@@ -796,7 +813,7 @@ class SalonSnapshotService
         }
 
         return [
-            'data' => $transactions,
+            'data' => $this->withDeposits($transactions),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
@@ -837,8 +854,9 @@ class SalonSnapshotService
                 $compactLike = '%'.$compactSearch.'%';
                 $builder->where(function ($nested) use ($like, $compactLike): void {
                     $nested->where('sales_return.number', 'like', $like)
+                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(".DB::connection()->getQueryGrammar()->wrap('sales_return.number').", '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
                         ->orWhere('transaction.number', 'like', $like)
-                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(transaction.number, '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
+                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(".DB::connection()->getQueryGrammar()->wrap('transaction.number').", '-', ''), '_', ''), ' ', '') LIKE ?", [$compactLike])
                         ->orWhere('customer.name', 'like', $like);
                 });
             })
@@ -852,6 +870,7 @@ class SalonSnapshotService
             'sales_return.reason',
             'sales_return.reference_number',
             'sales_return.returned_at',
+            'transaction.id as transaction_id',
             'transaction.number as transaction_number',
             'customer.name as customer_name',
             'method.name as payment_method_name',
@@ -885,6 +904,7 @@ class SalonSnapshotService
             $items = $productItems->concat($treatmentItems)
                 ->groupBy('sales_return_id');
             $returns = $returns->map(function (object $salesReturn) use ($items): object {
+                $salesReturn->number = SalesReturnService::formatNumber($salesReturn->number);
                 $salesReturn->items = collect($items->get($salesReturn->id, []))->values();
 
                 return $salesReturn;
@@ -1147,7 +1167,7 @@ class SalonSnapshotService
                 ->pluck('name', 'id')
             : collect();
 
-        return $transactions->map(function (object $transaction) use ($payments, $items, $cashiers, $includeItems): object {
+        return $this->withDeposits($transactions)->map(function (object $transaction) use ($payments, $items, $cashiers, $includeItems): object {
             $transaction->payments = collect($payments->get($transaction->id, []))->values();
             $transaction->payment_method = $transaction->payments->pluck('payment_method_name')->join(' + ');
 
@@ -1158,6 +1178,18 @@ class SalonSnapshotService
 
             return $transaction;
         });
+    }
+
+    private function withDeposits(Collection $transactions): Collection
+    {
+        $deposits = DB::table('reservation_deposits')->whereIn('reservation_id', $transactions->pluck('reservation_id'))
+            ->where('status', 'confirmed')->get(['id', 'reservation_id', 'amount', 'paid_at'])->keyBy('reservation_id');
+        foreach ($transactions as $transaction) {
+            $transaction->deposit = $deposits->get($transaction->reservation_id);
+            $transaction->deposit_amount = (int) ($transaction->deposit?->amount ?? 0);
+        }
+
+        return $transactions;
     }
 
     private function salonContact(): array
@@ -1789,6 +1821,11 @@ class SalonSnapshotService
             ->select('refund_payment_method_id', DB::raw('SUM(total_amount) as total'))
             ->groupBy('refund_payment_method_id')
             ->pluck('total', 'refund_payment_method_id');
+        $depositRefunds = DB::table('reservation_deposit_refunds')
+            ->whereBetween('refunded_at', [$from->startOfDay(), $to->endOfDay()])
+            ->select('payment_method_id', DB::raw('SUM(amount) as total'))->groupBy('payment_method_id')->pluck('total', 'payment_method_id');
+        $outflows = $outflows->keys()->merge($depositRefunds->keys())->unique()
+            ->mapWithKeys(fn ($id): array => [$id => (int) $outflows->get($id, 0) + (int) $depositRefunds->get($id, 0)]);
         $usedMethodIds = $inflows->keys()
             ->merge($outflows->keys())
             ->map(fn ($id): int => (int) $id)

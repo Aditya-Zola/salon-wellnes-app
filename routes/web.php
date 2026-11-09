@@ -17,9 +17,19 @@ Route::middleware('auth')->group(function () {
         ->middleware('permission:dashboard.view')
         ->name('dashboard');
 
+    Route::get('/membership/{member}/riwayat', [SalonController::class, 'memberHistory'])
+        ->whereNumber('member')->middleware('permission:memberships.view|memberships.manage')->name('members.history');
+    Route::get('/reservasi/dibatalkan', [SalonController::class, 'cancelledReservations'])
+        ->middleware('permission:reservations.view')->name('reservations.cancelled');
+    Route::post('/reservasi/{reservation}/pengembalian-dp', [SalonController::class, 'refundCancelledDeposit'])
+        ->middleware('permission:cashier.process')->name('reservations.deposit-refund');
+
     Route::prefix('operasional')->name('operations.')->group(function () {
         Route::get('/data', [SalonController::class, 'data'])->name('data');
         Route::get('/penjualan', [SalonController::class, 'salesPage'])->middleware('permission:sales.view')->name('sales.page');
+        Route::get('/dp', [SalonController::class, 'depositHistory'])->middleware('permission:sales.view')->name('deposits.page');
+        Route::get('/dp/{deposit}', [SalonController::class, 'depositReceipt'])->middleware('permission:cashier.process|sales.view')->name('deposits.receipt');
+        Route::get('/dp/{deposit}/nota.pdf', [SalonController::class, 'depositPdf'])->middleware('permission:cashier.process|sales.view')->name('deposits.invoice.pdf');
         Route::get('/retur', [SalonController::class, 'salesReturnsPage'])->middleware('permission:sales.view')->name('sales.returns.page');
         Route::get('/produk', [SalonController::class, 'productsPage'])->middleware('permission:products.view')->name('products.page');
         Route::get('/produk/riwayat', [SalonController::class, 'stockHistoryPage'])->middleware('permission:products.view')->name('stock.history.page');
@@ -35,9 +45,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/reservasi', [SalonController::class, 'storeReservation'])->middleware('permission:reservations.create')->name('reservations.store');
         Route::post('/kasir/transaksi', [SalonController::class, 'storeReservation'])->middleware('permission:cashier.process')->name('cashier.transactions.store');
         Route::post('/reservasi/{reservation}/item', [SalonController::class, 'storeReservationItem'])->middleware('permission:cashier.process|reservations.update')->name('reservations.items.store');
+        Route::patch('/reservasi/{reservation}/item/{item}/ganti', [SalonController::class, 'replaceReservationItem'])->middleware('permission:reservations.update')->name('reservations.items.replace');
         Route::post('/reservasi/{reservation}/produk', [SalonController::class, 'storeReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.store');
         Route::delete('/reservasi/{reservation}/produk/{product}', [SalonController::class, 'destroyReservationProduct'])->middleware('permission:cashier.process')->name('reservations.products.destroy');
-        Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view|reservations.create')->name('reservations.therapists');
+        Route::get('/reservasi/terapis-tersedia', [SalonController::class, 'availableTherapists'])->middleware('permission:reservations.view|reservations.create|cashier.process')->name('reservations.therapists');
         Route::get('/therapist-kehadiran', [SalonController::class, 'therapistAttendance'])->middleware('permission:therapist_attendance.view')->name('therapists.attendance');
         Route::put('/therapist-kehadiran/{employee}', [SalonController::class, 'updateTherapistAttendance'])->middleware('permission:therapist_attendance.manage')->name('therapists.attendance.update');
         Route::patch('/reservasi/{reservation}/item/{item}/status', [SalonController::class, 'updateReservationItemStatus'])->middleware('permission:reservations.update')->name('reservations.items.status');
@@ -56,6 +67,7 @@ Route::middleware('auth')->group(function () {
         Route::delete('/treatment/bundle/{bundle}', [SalonController::class, 'destroyTreatmentBundle'])->middleware('permission:treatments.delete')->name('treatment-bundles.destroy');
         Route::patch('/treatment/{id}/harga', [SalonController::class, 'updateTreatmentPrice'])->middleware('permission:treatments.update')->name('treatments.price.update');
         Route::patch('/treatment/{id}/komisi', [SalonController::class, 'updateTreatmentCommission'])->middleware('permission:treatments.update')->name('treatments.commission.update');
+        Route::patch('/treatment/{id}/durasi', [SalonController::class, 'updateTreatmentDuration'])->middleware('permission:treatments.update')->name('treatments.duration.update');
         Route::put('/treatment/{id}/resep', [SalonController::class, 'updateRecipe'])->middleware('permission:treatments.update')->name('treatments.recipe');
         Route::delete('/treatment/{id}', [SalonController::class, 'destroyTreatment'])->middleware('permission:treatments.delete')->name('treatments.destroy');
         Route::get('/member', [SalonController::class, 'membersPage'])->middleware('permission:memberships.view|memberships.manage')->name('members.page');
@@ -66,6 +78,7 @@ Route::middleware('auth')->group(function () {
         Route::patch('/promo/{id}', [SalonController::class, 'updatePromotion'])->middleware('permission:memberships.manage')->name('promotions.update');
         Route::delete('/promo/{id}', [SalonController::class, 'destroyPromotion'])->middleware('permission:memberships.manage')->name('promotions.destroy');
         Route::post('/pembayaran', [SalonController::class, 'storePayment'])->middleware('permission:cashier.process')->name('payments.store');
+        Route::post('/reservasi/{reservation}/dp', [SalonController::class, 'storeDepositPayment'])->middleware('permission:cashier.process')->name('payments.deposit');
         Route::post('/penjualan/{transaction}/penilaian-therapist', [SalonController::class, 'storeTherapistRatings'])->middleware('permission:cashier.process')->name('sales.therapist-ratings.store');
         Route::post('/penjualan/{transaction}/customer-survey', [SalonController::class, 'storeCustomerSurvey'])->middleware('permission:cashier.process|sales.view')->name('sales.customer-survey.store');
         Route::post('/customer-survey/{survey}/batalkan-komisi', [SalonController::class, 'voidSurveyCommission'])->middleware('permission:sales.view')->name('customer-surveys.commission.void');
@@ -73,6 +86,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/penjualan/{transaction}/nota.pdf', [SalonController::class, 'invoicePdf'])->middleware('permission:cashier.process|sales.view')->name('sales.invoice.pdf');
         Route::post('/penjualan/{transaction}/retur', [SalonController::class, 'storeSalesReturn'])->middleware('permission:cashier.refund')->name('sales.returns.store');
         Route::get('/retur/{salesReturn}/struk.pdf', [SalonController::class, 'salesReturnPdf'])->middleware('permission:cashier.refund|sales.view')->name('sales.returns.receipt.pdf');
+        Route::get('/retur/{salesReturn}/nota.pdf', [SalonController::class, 'salesReturnPdf'])->defaults('format', 'nota')->middleware('permission:cashier.refund|sales.view')->name('sales.returns.invoice.pdf');
         Route::post('/keuangan/arus-kas', [SalonController::class, 'storeCashEntry'])->middleware('permission:finance.manage')->name('finance.cash-entries.store');
         Route::post('/penggajian', [SalonController::class, 'storePayroll'])->middleware('permission:payroll.manage')->name('payroll.store');
         Route::get('/penggajian/{id}/slip.pdf', [SalonController::class, 'payrollSlipPdf'])->middleware('permission:payroll.view')->name('payroll.slip.pdf');

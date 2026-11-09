@@ -42,6 +42,7 @@ class StoreReservationItemRequest extends FormRequest
             'staff' => ['required', 'array', 'min:1', 'max:10'],
             'staff.*.employee_id' => ['required', 'integer', 'exists:employees,id'],
             'staff.*.role' => ['required', Rule::in(['primary', 'assistant'])],
+            'staff.*.commission_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ];
     }
 }

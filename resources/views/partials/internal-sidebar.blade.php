@@ -2,9 +2,22 @@
     $user = auth()->user();
     $isDashboard = request()->routeIs('dashboard');
     $modules = [
-        ['page' => 'membership', 'label' => 'Membership', 'icon' => 'workspace_premium', 'permission' => 'memberships.view'],
-        ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard', 'permission' => 'dashboard.view'],
-        ['page' => 'kehadiran-terapis', 'label' => 'Kehadiran Terapis', 'icon' => 'how_to_reg', 'permission' => 'therapist_attendance.view'],
+        ['page' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'space_dashboard', 'permission' => 'dashboard.view'],
+        [
+            'page' => 'reservasi',
+            'label' => 'Reservasi',
+            'icon' => 'event_note',
+            'permission' => 'reservations.view',
+            'children' => [
+                ['page' => 'reservasi-antrean', 'label' => 'Antrean Hari Ini'],
+                ['page' => 'reservasi-kalender', 'label' => 'Kalender'],
+                ['page' => 'reservasi-batal', 'label' => 'Riwayat Dibatalkan', 'route' => 'reservations.cancelled'],
+            ],
+        ],
+        ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
+        ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
+        ['page' => 'membership', 'label' => 'Membership', 'icon' => 'loyalty', 'permission' => 'memberships.view'],
+        ['page' => 'kehadiran-terapis', 'label' => 'Kehadiran Terapis', 'icon' => 'badge', 'permission' => 'therapist_attendance.view'],
         [
             'page' => 'stok',
             'label' => 'Produk & Stok',
@@ -16,24 +29,9 @@
             ],
         ],
         ['page' => 'treatment', 'label' => 'Treatment', 'icon' => 'spa', 'permission' => 'treatments.view'],
+        ['page' => 'customer-survey', 'label' => 'Customer Survey', 'icon' => 'rate_review', 'permission' => 'sales.view'],
         [
-            'page' => 'reservasi',
-            'label' => 'Reservasi',
-            'icon' => 'calendar_month',
-            'permission' => 'reservations.view',
-            'children' => [
-                ['page' => 'reservasi-antrean', 'label' => 'Antrean Hari Ini'],
-                ['page' => 'reservasi-kalender', 'label' => 'Kalender'],
-            ],
-        ],
-        ['page' => 'kasir', 'label' => 'Kasir', 'icon' => 'point_of_sale', 'permission' => 'cashier.view'],
-        ['page' => 'penjualan', 'label' => 'Penjualan', 'icon' => 'receipt_long', 'permission' => 'sales.view'],
-        ['page' => 'customer-survey', 'label' => 'Customer Survey', 'icon' => 'assignment', 'permission' => 'sales.view'],
-        [
-            'page' => 'keuangan',
-            'label' => 'Keuangan',
-            'icon' => 'payments',
-            'permission' => 'finance.view',
+            'page' => 'keuangan', 'label' => 'Keuangan', 'icon' => 'account_balance', 'permission' => 'finance.view',
             'children' => [
                 ['page' => 'keuangan-arus-kas', 'label' => 'Arus Kas'],
                 ['page' => 'keuangan-laba-rugi', 'label' => 'Laba-Rugi'],
@@ -43,122 +41,93 @@
         [
             'page' => 'penggajian',
             'label' => 'Remunerasi',
-            'icon' => 'account_balance_wallet',
+            'icon' => 'wallet',
             'permission' => 'payroll.view',
             'children' => [
-                ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
                 ['page' => 'penggajian', 'label' => 'Penggajian'],
                 ['page' => 'remunerasi', 'label' => 'Rekap & Export Excel'],
+                ['page' => 'panduan-remunerasi', 'label' => 'Panduan Remunerasi'],
             ],
         ],
     ];
 @endphp
 
-<aside class="sidebar">
-    <div class="sidebar-brand"><img src="{{ asset('images/selesa-logo.png') }}" alt="Selesa Salon"></div>
-    <div class="sidebar-user">
-        <strong title="{{ $user->username }}">{{ $user->username }}</strong>
-        <form method="POST" action="{{ route('logout') }}">
-            @csrf
-            <button type="submit" class="logout" title="Keluar dari sistem" aria-label="Keluar dari sistem">
-                <span class="material-symbols-outlined" aria-hidden="true">logout</span>
-            </button>
-        </form>
-    </div>
-    <nav id="navigation" aria-label="Navigasi utama">
+<aside class="sidebar fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-sidebar-hover bg-sidebar p-3 text-sidebar-content">
+    <div class="sidebar-brand -mx-3 -mt-3 mb-3 flex h-[var(--app-header-height,5.25rem)] shrink-0 items-center justify-center border-b border-sidebar-hover bg-sidebar-header px-10 [&_img]:mx-auto [&_img]:w-28"><img class="brightness-0 invert" src="{{ asset('images/selesa-logo.png') }}" alt="Selesa Salon"></div>
+    <nav id="navigation" class="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Navigasi utama">
+        <ul class="menu w-full gap-1 p-0 text-[13px]">
         @foreach ($modules as $module)
             @can($module['permission'])
+                <li>
                 @if (!empty($module['children']))
-                    <details class="access-menu {{ match ($module['page']) { 'reservasi' => 'reservation-menu', 'stok' => 'stock-menu', 'keuangan' => 'finance-menu', default => '' } }}">
-                        <summary>
-                            <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
-                            <span>{{ $module['label'] }}</span>
-                            <i class="material-symbols-outlined">chevron_right</i>
-                        </summary>
-                        <div class="access-submenu">
+                    <details class="access-menu {{ match ($module['page']) { 'reservasi' => 'reservation-menu', 'stok' => 'stock-menu', 'keuangan' => 'finance-menu', default => '' } }}" @if($module['page'] === 'reservasi' && request()->routeIs('reservations.cancelled')) open @endif>
+                        <summary class="{{ $module['page'] === 'reservasi' && request()->routeIs('reservations.cancelled') ? 'active' : '' }}"><span class="material-symbols-rounded nav-icon" aria-hidden="true">{{ $module['icon'] }}</span><span>{{ $module['label'] }}</span></summary>
+                        <ul class="access-submenu text-sidebar-muted">
                             @foreach ($module['children'] as $child)
                                 @if (empty($child['permission']) || $user->can($child['permission']))
-                                @if ($isDashboard)
-                                    <button type="button" data-page="{{ $child['page'] }}">{{ $child['label'] }}</button>
-                                @else
-                                    <a href="{{ route('dashboard') }}#{{ $child['page'] }}">{{ $child['label'] }}</a>
-                                @endif
+                                <li>
+                                    @if (isset($child['route']))
+                                        <a class="{{ request()->routeIs($child['route']) ? 'active' : '' }}" href="{{ route($child['route']) }}">{{ $child['label'] }}</a>
+                                    @elseif ($isDashboard)
+                                        <button type="button" data-page="{{ $child['page'] }}">{{ $child['label'] }}</button>
+                                    @else
+                                        <a href="{{ route('dashboard') }}#{{ $child['page'] }}">{{ $child['label'] }}</a>
+                                    @endif
+                                </li>
                                 @endif
                             @endforeach
-                        </div>
+                        </ul>
                     </details>
                 @elseif ($isDashboard)
-                    <button type="button" class="{{ $module['page'] === 'dashboard' ? 'active' : '' }}" data-page="{{ $module['page'] }}">
-                        <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
-                        <span>{{ $module['label'] }}</span>
-                    </button>
+                    <button type="button" data-page="{{ $module['page'] }}"><span class="material-symbols-rounded nav-icon" aria-hidden="true">{{ $module['icon'] }}</span><span>{{ $module['label'] }}</span></button>
                 @else
-                    <a href="{{ route('dashboard') }}#{{ $module['page'] }}">
-                        <b class="material-symbols-outlined nav-icon">{{ $module['icon'] }}</b>
-                        <span>{{ $module['label'] }}</span>
-                    </a>
+                    <a class="{{ $module['page'] === 'membership' && request()->routeIs('members.history') ? 'active' : '' }}" href="{{ route('dashboard') }}#{{ $module['page'] }}"><span class="material-symbols-rounded nav-icon" aria-hidden="true">{{ $module['icon'] }}</span><span>{{ $module['label'] }}</span></a>
                 @endif
+                </li>
             @endcan
         @endforeach
-
-        @canany(['access.roles.view', 'access.users.view'])
-            <details class="access-menu" @if(request()->routeIs('access.*')) open @endif>
-                <summary class="{{ request()->routeIs('access.*') ? 'active' : '' }}">
-                    <b class="material-symbols-outlined nav-icon">admin_panel_settings</b>
-                    <span>Hak Akses</span>
-                    <i class="material-symbols-outlined">chevron_right</i>
-                </summary>
-                <div class="access-submenu">
-                    @can('access.roles.view')
-                        <a class="{{ request()->routeIs('access.roles.*') ? 'active' : '' }}" href="{{ route('access.roles.index') }}">
-                            <span>Peran</span>
-                        </a>
-                    @endcan
-                    @can('access.users.view')
-                        <a class="{{ request()->routeIs('access.users.*') ? 'active' : '' }}" href="{{ route('access.users.index') }}">
-                            <span>Pengguna & Karyawan</span>
-                        </a>
-                    @endcan
-                </div>
-            </details>
-        @endcanany
-
-        @can('settings.manage')
-            <details class="access-menu" @if(request()->routeIs('settings.*')) open @endif>
-                <summary class="{{ request()->routeIs('settings.*') ? 'active' : '' }}">
-                    <b class="material-symbols-outlined nav-icon">settings</b>
-                    <span>Pengaturan</span>
-                    <i class="material-symbols-outlined">chevron_right</i>
-                </summary>
-                <div class="access-submenu">
-                    <a class="{{ request()->routeIs('settings.sale*') ? 'active' : '' }}" href="{{ route('settings.sale') }}"><span>Penjualan</span></a>
-                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'edc' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'edc') }}"><span>EDC</span></a>
-                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'bank' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'bank') }}"><span>Bank</span></a>
-                    <a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === 'qris' ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', 'qris') }}"><span>QRIS</span></a>
-                </div>
-            </details>
-        @endcan
-
         @can('activity.view')
-            @if ($isDashboard)
-                <button type="button" data-page="log">
-                    <b class="material-symbols-outlined nav-icon">history</b>
-                    <span>Log Aktivitas</span>
-                </button>
-            @else
-                <a href="{{ route('dashboard') }}#log">
-                    <b class="material-symbols-outlined nav-icon">history</b>
-                    <span>Log Aktivitas</span>
-                </a>
-            @endif
+            <li>
+                @if ($isDashboard)<button type="button" data-page="log"><span class="material-symbols-rounded nav-icon" aria-hidden="true">history</span><span>Log Aktivitas</span></button>
+                @else<a href="{{ route('dashboard') }}#log"><span class="material-symbols-rounded nav-icon" aria-hidden="true">history</span><span>Log Aktivitas</span></a>@endif
+            </li>
         @endcan
+        @canany(['access.roles.view', 'access.users.view'])
+            <li><details class="access-menu" @if(request()->routeIs('access.*')) open @endif>
+                <summary class="{{ request()->routeIs('access.*') ? 'active' : '' }}"><span class="material-symbols-rounded nav-icon" aria-hidden="true">manage_accounts</span><span>Hak Akses</span></summary>
+                <ul class="access-submenu text-sidebar-muted">
+                    @can('access.roles.view')<li><a class="{{ request()->routeIs('access.roles.*') ? 'active' : '' }}" href="{{ route('access.roles.index') }}">Peran</a></li>@endcan
+                    @can('access.users.view')<li><a class="{{ request()->routeIs('access.users.*') ? 'active' : '' }}" href="{{ route('access.users.index') }}">Pengguna & Karyawan</a></li>@endcan
+                </ul>
+            </details></li>
+        @endcanany
+        @can('settings.manage')
+            <li><details class="access-menu" @if(request()->routeIs('settings.*')) open @endif>
+                <summary class="{{ request()->routeIs('settings.*') ? 'active' : '' }}"><span class="material-symbols-rounded nav-icon" aria-hidden="true">tune</span><span>Pengaturan</span></summary>
+                <ul class="access-submenu text-sidebar-muted">
+                    <li><a class="{{ request()->routeIs('settings.sale*') ? 'active' : '' }}" href="{{ route('settings.sale') }}">Penjualan</a></li>
+                    @foreach (['edc' => 'EDC', 'bank' => 'Bank', 'qris' => 'QRIS'] as $section => $label)
+                        <li><a class="{{ request()->routeIs('settings.payment-methods.*') && request()->route('section') === $section ? 'active' : '' }}" href="{{ route('settings.payment-methods.index', $section) }}">{{ $label }}</a></li>
+                    @endforeach
+                </ul>
+            </details></li>
+        @endcan
+        </ul>
     </nav>
-
+    <div class="sidebar-account mt-3 flex items-center justify-between gap-2 border-t border-sidebar-hover px-2 pt-3 text-sidebar-muted">
+        <div class="sidebar-user flex min-w-0 items-center gap-2">
+            <span class="grid size-8 shrink-0 place-items-center rounded-full bg-sidebar-header text-xs font-semibold text-sidebar-muted" aria-hidden="true">{{ strtoupper(substr($user->username, 0, 2)) }}</span>
+            <strong class="truncate text-xs" title="{{ $user->username }}">{{ $user->username }}</strong>
+        </div>
+        <form method="POST" action="{{ route('logout') }}">@csrf
+            <button type="submit" class="logout btn btn-ghost btn-square btn-sm text-sidebar-content hover:bg-sidebar-hover" title="Keluar dari sistem" aria-label="Keluar dari sistem"><span class="material-symbols-outlined" aria-hidden="true">logout</span></button>
+        </form>
+    </div>
 </aside>
 
 <div class="sidebar-scrim" id="sidebar-scrim" aria-hidden="true"></div>
 
-<button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Tutup sidebar" title="Tutup sidebar">
+<button type="button" class="sidebar-toggle btn btn-square btn-ghost fixed left-3 top-4 z-50 bg-sidebar-header text-sidebar-content hover:bg-sidebar-hover" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Tutup sidebar" title="Tutup sidebar">
     <span class="material-symbols-outlined" aria-hidden="true">menu_open</span>
 </button>
 
@@ -199,11 +168,18 @@
         updateToggle(!mobile.matches && !desktopCollapsed);
     };
 
-    sidebar.querySelectorAll('nav > button, nav > a, .access-menu > summary').forEach(item => {
-        const label = item.querySelector('span')?.textContent.trim();
+    sidebar.querySelectorAll('.menu > li > button, .menu > li > a, .access-menu > summary').forEach(item => {
+        const label = item.querySelector('span:not(.nav-icon)')?.textContent.trim();
         if (label) { item.title = label; item.setAttribute('aria-label', label); }
     });
     syncViewport();
+    document.addEventListener('DOMContentLoaded', () => {
+        const header = document.querySelector('.app > main > header');
+        if (!header) return;
+        new ResizeObserver(() => {
+            sidebar.style.setProperty('--app-header-height', `${header.getBoundingClientRect().height}px`);
+        }).observe(header);
+    });
     mobile.addEventListener('change', syncViewport);
     toggle.addEventListener('click', () => {
         if (mobile.matches) setMobileOpen(!document.body.classList.contains('sidebar-mobile-open'));

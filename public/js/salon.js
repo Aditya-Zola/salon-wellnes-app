@@ -12,6 +12,45 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
     "'": '&#039;',
 }[character]));
 
+// Shared daisyUI table; existing row markup keeps its data and action hooks.
+function dataTable(columns, markup, emptyMessage = 'Belum ada data.') {
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    const table = document.createElement('table');
+    table.className = `table table-zebra w-full ${columns.length >= 7 ? 'min-w-[70rem]' : 'min-w-[52rem]'}`;
+    const header = table.createTHead().insertRow();
+    header.className = 'bg-primary/10 text-xs text-primary';
+    columns.forEach((column) => {
+        const [label, align = 'left'] = Array.isArray(column) ? column : [column];
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.textContent = label;
+        cell.className = `py-3 font-semibold ${align === 'right' || label === 'Aksi' ? 'text-right' : 'text-left'}`;
+        header.append(cell);
+    });
+    const body = table.createTBody();
+    [...template.content.children].forEach((source) => {
+        const row = body.insertRow();
+        row.className = [...source.classList].filter((name) => name !== 'tr').join(' ');
+        if (source.classList.contains('stock-out-row')) row.classList.add('bg-error/5');
+        else if (source.classList.contains('stock-low-row')) row.classList.add('bg-warning/10');
+        [...source.children].forEach((content, index) => {
+            const column = columns[index];
+            const [label, align = 'left'] = Array.isArray(column) ? column : [column];
+            const cell = row.insertCell();
+            cell.className = `align-middle py-4 [&_small]:block [&_small]:mt-1 [&_small]:leading-relaxed [&_small]:whitespace-normal [&_small]:max-w-52 [&_b]:block ${align === 'right' ? 'text-right tabular-nums whitespace-nowrap' : label === 'Aksi' ? 'text-right' : 'min-w-32'}`;
+            cell.append(content);
+        });
+    });
+    if (!body.rows.length) {
+        const cell = body.insertRow().insertCell();
+        cell.colSpan = columns.length;
+        cell.className = 'py-12 text-center text-sm text-base-content/60';
+        cell.textContent = emptyMessage;
+    }
+    return table.outerHTML;
+}
+
 const compactInvoiceNumber = (value) => String(value ?? '').replace(/[-_\s]+/g, '');
 
 const localDate = () => {
@@ -70,6 +109,7 @@ let state = window.SALON_DATA || {};
 let revenueChartPeriod = 'week';
 let salesPageState = null;
 let salesReturnsPageState = null;
+let depositsPageState = null;
 let salesView = 'sales';
 let salesSearchTimer;
 let memberPageState = null;
@@ -81,6 +121,7 @@ let productPageState = null;
 let productSearchTimer;
 let stockHistoryPageState = null;
 let selectedReservation = null;
+let selectedCashierStage = 'settlement';
 let reservationMode = 'today';
 let reservationStatusGroup = null;
 let calendarMode = 'week';
@@ -151,7 +192,7 @@ function renderNotificationCenter() {
     if (clear) clear.hidden = notificationItems.length === 0;
     list.innerHTML = notificationItems.length
         ? notificationItems.map((item) => `<article class="notification-item${item.error ? ' error' : ''}"><span class="material-symbols-outlined" aria-hidden="true">${item.error ? 'error' : 'check_circle'}</span><div><b>${escapeHtml(item.message)}</b><small>${escapeHtml(item.time)}</small></div></article>`).join('')
-        : '<p class="notification-empty">Belum ada pemberitahuan.</p>';
+        : '<p class="notification-empty py-4 text-center text-sm text-base-content/60">Belum ada pemberitahuan.</p>';
 }
 
 function addNotification(message, error = false) {
@@ -186,18 +227,18 @@ function confirmAction({
     return new Promise((resolve) => {
         const previousFocus = document.activeElement;
         const dialog = document.createElement('div');
-        dialog.className = 'modal open action-confirm-overlay';
+        dialog.className = 'modal open action-confirm-overlay p-4';
         dialog.setAttribute('role', 'presentation');
-        dialog.innerHTML = `<section class="action-confirm" role="alertdialog" aria-modal="true" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-message">
-            <div class="action-confirm-icon" aria-hidden="true"><span class="material-symbols-outlined">${escapeHtml(icon)}</span></div>
-            <div class="action-confirm-copy">
+        dialog.innerHTML = `<section class="action-confirm modal-box max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto" role="alertdialog" aria-modal="true" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-message">
+            <div class="action-confirm-icon text-warning mb-4" aria-hidden="true"><span class="material-symbols-outlined">${escapeHtml(icon)}</span></div>
+            <div class="action-confirm-copy grid gap-3">
                 <span class="action-confirm-eyebrow">Konfirmasi tindakan</span>
                 <h2 id="action-confirm-title">${escapeHtml(title)}</h2>
                 <p id="action-confirm-message">${escapeHtml(message)}</p>
             </div>
-            <div class="action-confirm-actions">
-                <button type="button" class="secondary action-confirm-cancel">Batal</button>
-                <button type="button" class="primary action-confirm-submit"><span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(icon)}</span>${escapeHtml(confirmLabel)}</button>
+            <div class="action-confirm-actions flex flex-wrap justify-end gap-3 mt-5">
+                <button type="button" class="secondary action-confirm-cancel btn btn-secondary">Batal</button>
+                <button type="button" class="primary action-confirm-submit btn btn-primary"><span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(icon)}</span>${escapeHtml(confirmLabel)}</button>
             </div>
         </section>`;
 
@@ -273,7 +314,7 @@ async function refresh() {
     populateSelects();
     renderAll();
     financeFiltersNeedReset = false;
-    if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesPageState)?.meta?.current_page || 1);
+    if (canViewSales) await loadSalesPage((salesView === 'returns' ? salesReturnsPageState : salesView === 'deposits' ? depositsPageState : salesPageState)?.meta?.current_page || 1);
     if (canViewMemberships) await loadMembersPage(memberPageState?.meta?.current_page || 1);
     if (canViewSales && customerSurveyPageState) await loadCustomerSurveyPage(customerSurveyPageState.meta?.current_page || 1);
     if (canViewProducts) await loadProductsPage(productPageState?.meta?.current_page || 1);
@@ -609,31 +650,24 @@ function showReservationCalendarTooltip(anchor, reservation, item) {
     clearTimeout(reservationCalendarTooltipTimer);
     const tooltip = ensureReservationCalendarTooltip();
     const timing = reservationItemTiming(item, reservation);
-    const serviceStatus = reservationStatus(reservation);
-    const status = reservationCalendarStatus(reservation);
-    const paymentLabel = isAlreadyPaid(reservation) ? 'Lunas' : 'Belum dibayar';
     const staff = itemStaff(item).map(employeeName).join(', ') || '-';
-    const workStatus = workStatusLabels[automaticWorkStatus(item, reservation)] || '-';
     const scheduleDate = reservationItemDate(item, reservation);
     const date = new Date(`${scheduleDate}T12:00:00`);
     const dateLabel = Number.isNaN(date.getTime())
         ? scheduleDate
         : new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric', month: 'short' }).format(date);
 
-    tooltip.innerHTML = `<div class="reservation-calendar-tooltip-head">
-        <span>${escapeHtml(reservation.queue_number || reservation.booking_code || 'Reservasi')}</span>
-        <em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em>
+    tooltip.innerHTML = `<div class="grid gap-1 border-b border-base-300 pb-3">
+        <span class="text-xs font-semibold text-primary">${escapeHtml(reservation.queue_number || reservation.booking_code || 'Reservasi')}</span>
+        <strong class="text-base">${escapeHtml(reservationCustomerName(reservation))}</strong>
     </div>
-    <strong>${escapeHtml(reservationCustomerName(reservation))}</strong>
-    <p class="reservation-calendar-tooltip-time">${escapeHtml(dateLabel)} · ${escapeHtml(timing.startLabel)}–${escapeHtml(timing.endLabel)}</p>
-    <dl>
-        <div><dt>Treatment</dt><dd>${escapeHtml(itemTreatmentName(item))}</dd></div>
-        <div><dt>Therapist</dt><dd>${escapeHtml(staff)}</dd></div>
-        <div><dt>Status treatment</dt><dd>${escapeHtml(workStatus)}</dd></div>
-        <div><dt>Status layanan</dt><dd>${escapeHtml(statusLabel(serviceStatus))}</dd></div>
-        <div><dt>Pembayaran</dt><dd>${escapeHtml(paymentLabel)}</dd></div>
-    </dl>
-    <small>Klik untuk membuka detail lengkap</small>`;
+    <dl class="mt-3 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 [&>dt]:text-base-content/60 [&>dd]:min-w-0 [&>dd]:font-medium">
+        <dt>Treatment</dt><dd>${escapeHtml(itemTreatmentName(item))}</dd>
+        <dt>Terapis</dt><dd>${escapeHtml(staff)}</dd>
+        <dt>Tanggal</dt><dd>${escapeHtml(dateLabel)}</dd>
+        <dt>Jadwal</dt><dd>${escapeHtml(timing.startLabel)}–${escapeHtml(timing.endLabel)}</dd>
+        <dt>Siap kembali</dt><dd class="text-primary">${escapeHtml(itemReadyTime(item, reservation))}</dd>
+    </dl>`;
     tooltip.hidden = false;
     reservationCalendarTooltipAnchor?.removeAttribute('aria-describedby');
     reservationCalendarTooltipAnchor = anchor;
@@ -679,7 +713,16 @@ function isAlreadyPaid(reservation) {
 }
 
 function reservationDepositAmount(reservation) {
+    if (reservationDepositPending(reservation)) return 0;
     return Number(reservation?.deposit_amount ?? reservation?.deposit?.amount ?? 0);
+}
+
+function reservationDepositPending(reservation) {
+    return reservation?.deposit?.status === 'pending';
+}
+
+function reservationDepositPlannedAmount(reservation) {
+    return Number(reservation?.deposit?.amount ?? reservation?.deposit_amount ?? 0);
 }
 
 function reservationRemainingAmount(reservation) {
@@ -688,6 +731,7 @@ function reservationRemainingAmount(reservation) {
 
 function reservationPaymentLabel(reservation) {
     if (isAlreadyPaid(reservation)) return 'Lunas';
+    if (reservationDepositPending(reservation)) return 'DP menunggu konfirmasi kasir';
     const deposit = reservationDepositAmount(reservation);
     return deposit > 0
         ? `DP ${money(deposit)} · Sisa ${money(reservationRemainingAmount(reservation))}`
@@ -706,6 +750,20 @@ function statusClass(status) {
     return '';
 }
 
+function calendarStatusStyle(status) {
+    if (['paid', 'completed', 'finished'].includes(status)) return 'border-success/30 bg-success/10 text-success';
+    if (status === 'cancelled') return 'border-error/30 bg-error/10 text-error';
+    if (status === 'in_service') return 'border-accent/30 bg-accent/10 text-accent';
+    if (['arrived', 'waiting_payment'].includes(status)) return 'border-secondary/30 bg-secondary/10 text-secondary';
+    return 'border-primary/30 bg-primary/10 text-primary';
+}
+
+function statusBadgeStyle(status) {
+    return ({ paid: 'badge-success', completed: 'badge-success', finished: 'badge-success',
+        cancelled: 'badge-error', in_service: 'badge-accent', arrived: 'badge-secondary',
+        waiting_payment: 'badge-warning', scheduled: 'badge-primary' })[status] || 'badge-ghost';
+}
+
 function openPage(id) {
     const pageId = ({ reservasi: 'reservasi-antrean', keuangan: 'keuangan-arus-kas', 'penilaian-terapis': 'customer-survey' })[id] || id;
     const navigationPage = ({ 'stok-opname': 'stok', 'arsip-remunerasi': 'remunerasi' })[pageId] || pageId;
@@ -721,7 +779,7 @@ function openPage(id) {
     document.querySelectorAll('#navigation details').forEach((details) => {
         const containsActivePage = Boolean(details.querySelector('[data-page].active'));
         details.querySelector(':scope > summary')?.classList.toggle('active', containsActivePage);
-        if (containsActivePage) details.open = true;
+        details.open = containsActivePage;
     });
     const pageCopy = copy[pageId] || copy[navigationPage];
     document.getElementById('page-title').textContent = pageCopy[0];
@@ -813,14 +871,12 @@ function renderReservations() {
     if (short) {
         short.innerHTML = todayRows.slice(0, 5).map((reservation) => {
             const status = reservationStatus(reservation);
-            return `<div class="queue-row">
-                <strong class="queue-code">${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
-                <time class="queue-time">${escapeHtml(reservationTime(reservation))}</time>
-                <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))} · ${escapeHtml(reservationStaffSummary(reservation))}</small></span>
-                <em class="queue-status ${statusClass(status)}">${escapeHtml(statusLabel(status))}</em>
-                <span class="material-symbols-outlined">chevron_right</span>
+            return `<div class="queue-row grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-base-300 py-4 last:border-0">
+                <div class="flex flex-wrap items-center gap-2"><span class="queue-code badge badge-ghost badge-sm">${escapeHtml(reservation.queue_number || reservation.booking_code)}</span><time class="queue-time font-semibold text-primary">${escapeHtml(reservationTime(reservation))}</time></div>
+                <span class="queue-status badge badge-soft badge-sm ${statusClass(status)} ${statusBadgeStyle(status)}">${escapeHtml(statusLabel(status))}</span>
+                <div class="col-span-full min-w-0 space-y-1"><b class="block break-words">${escapeHtml(reservationCustomerName(reservation))}</b><small class="block leading-relaxed">${escapeHtml(reservationTreatmentSummary(reservation))} &middot; ${escapeHtml(reservationStaffSummary(reservation))}</small></div>
             </div>`;
-        }).join('') || '<p class="empty-state">Belum ada reservasi hari ini.</p>';
+        }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada reservasi hari ini.</p>';
     }
 
     const period = document.getElementById('calendar-period-label');
@@ -841,7 +897,7 @@ function renderReservations() {
             day.setDate(weekStart.getDate() + index);
             const active = dateKey(day) === today ? ' is-today' : '';
             const selectedDay = dateKey(day) === selectedDate ? ' is-selected' : '';
-            return `<button type="button" class="calendar-day-head calendar-day-open${active}${selectedDay}" data-date="${dateKey(day)}">${escapeHtml(dayFormat.format(day))}</button>`;
+            return `<button type="button" class="calendar-day-head calendar-day-open${active}${selectedDay} p-3 text-center border-b border-base-300 hover:bg-base-200" data-date="${dateKey(day)}">${escapeHtml(dayFormat.format(day))}</button>`;
         }).join('');
         const timeColumn = slots.map((slot) => {
             const hour = 9 + Math.floor(slot / 2);
@@ -929,8 +985,8 @@ function renderReservations() {
             const compact = (end - start) <= 30 || lanes > 1 ? ' is-compact' : '';
             const staff = itemStaff(item).map(employeeName).join(', ') || '-';
             const ariaLabel = `${timing.startLabel} sampai ${timing.endLabel}, ${reservationCustomerName(reservation)}, ${itemTreatmentName(item)}, therapist ${staff}, pembayaran ${paymentLabel}, layanan ${statusLabel(serviceStatus)}`;
-            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail${compact}" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="top:calc(${top}% + 1px);height:calc(${height}% - 2px);left:calc(${left}% + 2px);width:calc(${width}% - 4px)">
-                <span class="calendar-event-main"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span>
+            return `<button type="button" class="calendar-event ${statusClass(status)} status-${escapeHtml(status)} reservation-detail${compact} rounded border ${calendarStatusStyle(status)} p-1.5 text-left overflow-hidden text-xs" data-id="${Number(reservation.id)}" data-item-index="${itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="top:calc(${top}% + 1px);height:calc(${height}% - 2px);left:calc(${left}% + 2px);width:calc(${width}% - 4px)">
+                <span class="calendar-event-main flex flex-wrap gap-x-2 [&_b]:truncate"><time>${escapeHtml(timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(reservation))}</b></span>
                 <small>${escapeHtml(itemTreatmentName(item))}</small>
             </button>`;
         }).join('');
@@ -938,12 +994,12 @@ function renderReservations() {
             const top = ((start - openingMinutes) / visibleMinutes) * 100;
             const date = new Date(weekStart);
             date.setDate(weekStart.getDate() + day);
-            return `<button type="button" class="calendar-overflow" data-date="${dateKey(date)}" style="top:calc(${top}% + 2px);left:calc(${(day * 100) / 7}% + 4px)">+${count} jadwal</button>`;
+            return `<button type="button" class="calendar-overflow badge badge-primary absolute z-10" data-date="${dateKey(date)}" style="top:calc(${top}% + 2px);left:calc(${(day * 100) / 7}% + 4px)">+${count} jadwal</button>`;
         }).join('');
 
         if (calendarMode === 'week') {
             calendar.setAttribute('aria-label', 'Ringkasan kalender reservasi mingguan');
-            calendar.innerHTML = `<div class="calendar-week-hint">Tampilkan maksimal dua jadwal yang bertumpuk. Klik tanggal atau <b>+N jadwal</b> untuk melihat kolom therapist secara penuh.</div><div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner" aria-hidden="true"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}<span class="calendar-close-time">22.00</span></div>${dayColumns}<div class="calendar-events"><div class="calendar-empty-slots">${createSlots}</div>${weeklyEvents}${overflowIndicators}</div></div></div>`;
+            calendar.innerHTML = `<div class="calendar-grid"><div class="calendar-header"><div class="calendar-corner" aria-hidden="true"></div>${headers}</div><div class="calendar-body"><div class="calendar-time-column">${timeColumn}<span class="calendar-close-time">22.00</span></div>${dayColumns}<div class="calendar-events"><div class="calendar-empty-slots">${createSlots}</div>${weeklyEvents}${overflowIndicators}</div></div></div>`;
         } else {
             const therapists = selectedEmployee
                 ? serviceProviders().filter((employee) => Number(employee.id) === selectedEmployee)
@@ -1010,7 +1066,7 @@ function renderReservations() {
                 const concurrentClass = laneCount > 1 ? ' is-therapist-slot' : '';
                 const eventLeft = (lane / laneCount) * 100;
                 const eventWidth = 100 / laneCount;
-                return `<button type="button" class="calendar-event therapist-day-event${concurrentClass} ${statusClass(status)} status-${escapeHtml(status)} reservation-detail" data-id="${Number(entry.reservation.id)}" data-item-index="${entry.itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--event-left:${eventLeft}%;--event-width:${eventWidth}%;--service-ratio:100%"><span class="calendar-event-main"><time>${escapeHtml(entry.timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(entry.reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(entry.item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(entry.timing.endLabel)}</span></button>`;
+                return `<button type="button" class="calendar-event therapist-day-event${concurrentClass} ${statusClass(status)} status-${escapeHtml(status)} reservation-detail rounded border ${calendarStatusStyle(status)} p-1.5 text-left overflow-hidden text-xs" data-id="${Number(entry.reservation.id)}" data-item-index="${entry.itemIndex}" aria-label="${escapeHtml(ariaLabel)}" style="grid-column:${therapistIndex + 2};grid-row:${startRow} / span ${span};--event-left:${eventLeft}%;--event-width:${eventWidth}%;--service-ratio:100%"><span class="calendar-event-main flex flex-wrap gap-x-2 [&_b]:truncate"><time>${escapeHtml(entry.timing.startLabel)}</time><b>${escapeHtml(reservationCustomerName(entry.reservation))}</b></span><small class="calendar-event-treatment">${escapeHtml(itemTreatmentName(entry.item))}</small><span class="calendar-rest-label">Estimasi selesai ${escapeHtml(entry.timing.endLabel)}</span></button>`;
             };
             const dailyEvents = Array.from(therapistEvents.values()).flatMap(({ index, items }) => {
                 const ordered = items.slice().sort((first, second) => first.start - second.start || first.end - second.end);
@@ -1043,9 +1099,9 @@ function renderReservations() {
                     return laidOut.map(({ entry, lane }) => renderTherapistEvent(entry, index, lane, therapistSlotCapacity));
                 });
             }).join('');
-            const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty">Belum ada therapist aktif untuk ditampilkan.</p>';
+            const empty = dailyTherapists.length ? '' : '<p class="empty-state therapist-day-empty py-8 text-center text-sm text-base-content/60">Belum ada therapist aktif untuk ditampilkan.</p>';
             calendar.setAttribute('aria-label', 'Kalender harian per therapist');
-            calendar.innerHTML = `<div class="calendar-day-view-head"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${offColumnShades}${dailyEvents}</div>`;
+            calendar.innerHTML = `<div class="calendar-day-view-head text-sm text-base-content/60 mb-3"><div><b>${escapeHtml(new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected))}</b><small>Satu kolom adalah satu therapist. Klik slot kosong untuk membuat reservasi dengan therapist dan jam sudah terisi.</small></div><button type="button" class="secondary calendar-week-back btn btn-secondary">← Ringkasan mingguan</button></div>${empty}<div class="therapist-day-calendar" style="--therapist-count:${Math.max(1, dailyTherapists.length)}"><div class="therapist-day-corner">Jam</div>${dailyHeaders}${dailyTimes}${dailySlots}${offColumnShades}${dailyEvents}</div>`;
         }
         bindReservationCalendarTooltips(calendar, all);
         bindReservationCalendarCreateSlots(calendar);
@@ -1070,30 +1126,43 @@ function renderReservations() {
     if (queueDate) queueDate.textContent = `${new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected)} · Input terbaru di atas`;
     const renderQueueRows = (reservations) => reservations.map((reservation) => {
         const status = reservationQueueStatus(reservation);
-        const method = reservation.deposit?.payment_method_name;
-        const deposit = reservationDepositAmount(reservation);
-        const payment = isAlreadyPaid(reservation)
-            ? '<strong>Lunas</strong>'
-            : deposit > 0
-                ? `DP <strong>${money(deposit)}</strong> · Sisa <strong>${money(reservationRemainingAmount(reservation))}</strong>`
+        const pendingDeposit = reservationDepositPending(reservation);
+        const method = pendingDeposit ? null : reservation.deposit?.payment_method_name;
+        const deposit = reservationDepositPlannedAmount(reservation);
+        const payment = deposit > 0
+            ? `<span class="badge badge-soft badge-sm ${pendingDeposit ? 'badge-warning text-warning-content' : 'badge-success'}">Pembayaran DP: ${pendingDeposit ? 'Menunggu' : 'Dibayar'}</span><span class="badge badge-soft badge-sm ${isAlreadyPaid(reservation) ? 'badge-success' : 'badge-warning text-warning-content'}">Pembayaran LUNAS: ${isAlreadyPaid(reservation) ? 'Dibayar' : pendingDeposit ? 'Tunggu DP' : 'Menunggu'}</span>`
+            : isAlreadyPaid(reservation)
+                ? '<strong>Lunas</strong>'
                 : 'Belum dibayar';
         const therapists = reservationStaffSummary(reservation);
         const unfinishedItems = reservationItems(reservation).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
-        const action = (name, className, enabled, reason) => `<button type="button" class="${className}" data-id="${Number(reservation.id)}"${enabled ? '' : ` disabled title="${escapeHtml(reason)}"`}>${name}</button>`;
+        const action = (name, className, enabled, reason) => `<button type="button" class="${className} btn btn-sm ${className.includes('delete') ? 'btn-error' : className.includes('success') ? 'btn-success' : className.includes('edit') ? 'btn-accent' : 'btn-primary'}" data-id="${Number(reservation.id)}"${enabled ? '' : ` disabled title="${escapeHtml(reason)}"`}>${name}</button>`;
         const noAccess = 'Anda tidak memiliki akses untuk mengubah reservasi.';
         const finished = unfinishedItems.length === 0;
         const actions = [
             action('Tambah treatment', 'queue-add-treatment ui-action-create', canUpdateReservations && !isAlreadyPaid(reservation), !canUpdateReservations ? noAccess : 'Reservasi sudah lunas.'),
+            action('Ganti treatment', 'queue-replace-treatment ui-action-edit', canUpdateReservations && !isAlreadyPaid(reservation) && unfinishedItems.length > 0, 'Treatment yang selesai atau lunas tidak dapat diganti.'),
             action('Ubah jam', 'queue-edit-time ui-action-edit', canUpdateReservations && !finished, !canUpdateReservations ? noAccess : 'Tidak ada treatment yang dapat diubah jamnya.'),
             action('Batalkan', 'queue-cancel-reservation ui-action-delete', canCancelReservation(reservation), !canUpdateReservations ? noAccess : 'Reservasi ini tidak dapat dibatalkan.'),
             action('Selesaikan', 'queue-complete-reservation ui-action-success', canUpdateReservations && !finished, !canUpdateReservations ? noAccess : 'Semua treatment sudah selesai atau dibatalkan.'),
         ].join('');
-        return `<article class="reservation-queue-row"><button type="button" class="calendar-queue-item reservation-detail" data-id="${Number(reservation.id)}"><time>${escapeHtml(reservationTime(reservation))}</time><span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTreatmentSummary(reservation))}</small><small class="queue-therapist">Therapist: <strong>${escapeHtml(therapists)}</strong></small><small class="queue-payment">${payment}${method ? ` · ${escapeHtml(method)}` : ''}</small><em class="status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</em></span></button><div class="reservation-queue-actions">${actions}</div></article>`;
+        return `<article class="reservation-queue-row grid gap-4 border-b border-base-300 py-5 last:border-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <button type="button" class="calendar-queue-item reservation-detail grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-4 text-left" data-id="${Number(reservation.id)}">
+                <time class="rounded-box bg-primary/10 px-3 py-2 font-semibold tabular-nums text-primary">${escapeHtml(reservationTime(reservation))}</time>
+                <div class="grid min-w-0 gap-1.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2"><b class="break-words">${escapeHtml(reservationCustomerName(reservation))}</b><span class="badge badge-soft badge-sm ${statusBadgeStyle(status)} status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</span></div>
+                    <span class="text-sm text-base-content/70 break-words">${escapeHtml(reservationTreatmentSummary(reservation))}</span>
+                    <span class="queue-therapist text-xs text-base-content/60">Therapist: ${escapeHtml(therapists)}</span>
+                    <span class="queue-payment flex flex-wrap items-center gap-1 text-xs text-base-content/60">${payment}${method ? ` &middot; ${escapeHtml(method)}` : ''}</span>
+                </div>
+            </button>
+            <div class="reservation-queue-actions grid grid-cols-2 gap-2 lg:w-64">${actions}</div>
+        </article>`;
     }).join('');
     if (queue) {
         const todayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(selected);
         const nextDayLabel = new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(nextDate);
-        const dayPanel = (title, label, reservations, emptyMessage) => `<section class="reservation-queue-day"><header><div><b>${title}</b><small>${escapeHtml(label)} · Input terbaru di atas</small></div></header>${renderQueueRows(reservations) || `<p class="empty-state">${emptyMessage}</p>`}</section>`;
+        const dayPanel = (title, label, reservations, emptyMessage) => `<section class="reservation-queue-day grid gap-3 mb-5"><header class="mb-2"><div class="grid gap-1"><b class="text-base">${title}</b><small>${escapeHtml(label)} · Input terbaru di atas</small></div></header>${renderQueueRows(reservations) || `<p class="empty-state py-8 text-center text-sm text-base-content/60">${emptyMessage}</p>`}</section>`;
         queue.innerHTML = dayPanel('Antrean hari ini', todayLabel, todayRows, 'Belum ada reservasi pada tanggal ini.')
             + dayPanel('Reservasi hari berikutnya', nextDayLabel, nextDayRows, 'Belum ada reservasi untuk hari berikutnya.');
     }
@@ -1130,6 +1199,12 @@ function renderReservations() {
         button.onclick = () => {
             const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
             if (reservation) openReservationTimeEditor(reservation);
+        };
+    });
+    document.querySelectorAll('.queue-replace-treatment').forEach((button) => {
+        button.onclick = () => {
+            const reservation = all.find((item) => Number(item.id) === Number(button.dataset.id));
+            if (reservation) openCashierTreatmentPicker(reservation, true);
         };
     });
     document.querySelectorAll('.queue-cancel-reservation').forEach((button) => {
@@ -1177,7 +1252,7 @@ async function cancelReservation(reservation, detailModal = null) {
     const confirmed = await confirmAction({
         title: 'Batalkan reservasi?',
         message: depositAmount > 0
-            ? `Reservasi memiliki DP ${money(depositAmount)}. Reservasi akan dibatalkan, tetapi pengembalian DP harus dicatat terpisah. Alasan pembatalan wajib diisi.`
+            ? `DP ${money(depositAmount)} perlu dikembalikan penuh melalui kasir dari Riwayat Dibatalkan. Alasan pembatalan wajib diisi.`
             : 'Reservasi akan dibatalkan. Alasan pembatalan wajib diisi.',
         confirmLabel: 'Lanjutkan',
         icon: 'cancel',
@@ -1241,43 +1316,65 @@ async function cancelReservationTreatment(reservation, item, detailModal) {
 
 function openReservationDetail(reservation) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
+    wrapper.className = 'modal open quick-modal p-4';
     const items = reservationItems(reservation);
     const paid = isAlreadyPaid(reservation);
     const serviceStatus = reservationQueueStatus(reservation);
-    const paymentStatus = reservationPaymentLabel(reservation);
-    wrapper.innerHTML = `<div class="modal-box reservation-modal-box reservation-detail-modal">
-        <div class="modal-head">
+    const deposit = reservationDepositPlannedAmount(reservation);
+    const depositPaid = reservationDepositAmount(reservation);
+    const total = paid
+        ? reservation.transaction_total ?? null
+        : reservationSubtotal(reservation) + reservationProductItems(reservation).reduce((sum, item) => sum + Number(item.unit_price) * Number(item.quantity), 0);
+    const settlement = total === null ? null : Math.max(0, total - deposit);
+    const remaining = paid ? 0 : Math.max(0, total - depositPaid);
+    const paymentRow = (label, amount, confirmed) => `<div class="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-3"><dt class="text-base-content/60">${label}</dt><dd class="grid min-w-0 gap-1.5"><b class="tabular-nums">${amount === null ? '-' : money(amount)}</b><span class="w-fit rounded px-2 py-0.5 text-xs font-medium ${confirmed ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning-content'}">${confirmed ? 'Sudah dibayar' : 'Belum dibayar'}</span></dd></div>`;
+    wrapper.innerHTML = `<div class="modal-box reservation-modal-box reservation-detail-modal w-full max-w-5xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5">
             <div><h2>Detail ${escapeHtml(reservation.queue_number || reservation.booking_code)}</h2><p>${escapeHtml(reservationCustomerName(reservation))} · ${escapeHtml(reservationDate(reservation))}</p></div>
-            <button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+            <button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
         </div>
-        <div class="quick-info reservation-summary">
-            <p><span>Telepon</span><b>${escapeHtml(reservationPhone(reservation) || '-')}</b></p>
-            <p><span>Sumber booking</span><b>${escapeHtml(reservation.source || '-')}</b></p>
-            <p><span>Status layanan</span><b>${escapeHtml(statusLabel(serviceStatus))}</b></p>
-            <p><span>Pembayaran</span><b class="reservation-payment-status ${paid || reservationDepositAmount(reservation) > 0 ? 'paid' : 'unpaid'}">${paymentStatus}</b></p>
-            ${reservationDepositAmount(reservation) > 0 ? `<p><span>Metode DP</span><b>${escapeHtml(reservation.deposit?.payment_method_name || '-')}</b></p>` : ''}
-            <p><span>Catatan</span><b>${escapeHtml(reservation.general_notes || reservation.notes || '-')}</b></p>
-        </div>
-        <div class="reservation-detail-items">${items.map((item, index) => {
+        <div class="grid items-start gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <section class="reservation-summary min-w-0 rounded-box border border-base-300 bg-base-200/60 p-4">
+            <h3 class="mb-3 text-sm font-semibold">Ringkasan reservasi</h3>
+            <dl class="divide-y divide-base-300 text-sm [&>div]:grid [&>div]:grid-cols-[6.5rem_minmax(0,1fr)] [&>div]:gap-3 [&>div]:py-3 [&_dt]:text-base-content/60 [&_dd]:min-w-0 [&_dd]:font-medium [&_dd]:[overflow-wrap:anywhere]">
+                <div><dt>Telepon</dt><dd>${escapeHtml(reservationPhone(reservation) || '-')}</dd></div>
+                <div><dt>Sumber booking</dt><dd class="capitalize">${escapeHtml(reservation.source || '-')}</dd></div>
+                <div><dt>Status layanan</dt><dd>${escapeHtml(statusLabel(serviceStatus))}</dd></div>
+                <div><dt>Catatan</dt><dd class="whitespace-pre-line">${escapeHtml(reservation.general_notes || reservation.notes || '-')}</dd></div>
+            </dl>
+            <div class="mt-3 border-t border-base-300 pt-4">
+                <div class="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 class="text-sm font-semibold">Pembayaran</h3><span class="rounded px-2 py-1 text-xs font-semibold ${paid ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning-content'}">${paid ? 'Lunas' : 'Belum lunas'}</span></div>
+                <dl class="divide-y divide-base-300 text-sm">
+                    <div class="flex flex-wrap justify-between gap-2 py-3"><dt class="text-base-content/60">Total tagihan</dt><dd class="font-semibold tabular-nums">${total === null ? '-' : money(total)}</dd></div>
+                    ${deposit > 0 ? paymentRow('DP', deposit, depositPaid > 0) : ''}
+                    ${depositPaid > 0 ? `<div class="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-3"><dt class="text-base-content/60">Jenis bayar DP</dt><dd class="min-w-0 [overflow-wrap:anywhere]">${escapeHtml(reservation.deposit?.payment_method_name || '-')}</dd></div>` : ''}
+                    ${paymentRow(deposit > 0 ? 'Pelunasan' : 'Pembayaran', settlement, paid)}
+                    <div class="flex flex-wrap justify-between gap-2 py-3 font-semibold"><dt>Sisa tagihan</dt><dd class="tabular-nums ${paid ? 'text-success' : 'text-primary'}">${money(remaining)}</dd></div>
+                </dl>
+            </div>
+        </section>
+        <section class="min-w-0">
+        <h3 class="mb-3 text-sm font-semibold">Treatment <span class="badge badge-sm badge-primary ml-1">${items.length}</span></h3>
+        <div class="reservation-detail-items grid gap-3">${items.map((item, index) => {
             const currentStatus = automaticWorkStatus(item, reservation);
 
-            return `<article class="reservation-item-card">
-                <div class="reservation-item-title"><strong>${index + 1}. ${escapeHtml(itemTreatmentName(item))}</strong><b>${money(itemPrice(item))}</b></div>
-                <div class="reservation-detail-meta">
-                    <span>Mulai <b>${escapeHtml(itemStartTime(item, reservation))}</b></span>
-                    <span>Selesai <b>${escapeHtml(itemEndTime(item, reservation))}</b></span>
-                    <span>Otomatis selesai <b>${escapeHtml(itemAutoCompleteTime(item, reservation))}</b></span>
-                    <span>Therapist <b>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</b></span>
-                </div>
-                <div class="reservation-work-status"><span><small>Status treatment</small><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span><small>Gunakan tombol <b>Selesai</b> pada daftar antrean untuk menandai treatment selesai. Jika terlewat, sistem menutupnya 15 menit setelah estimasi selesai.</small>${!paid && canUpdateReservations && !['finished', 'cancelled'].includes(item.work_status) ? `<button type="button" class="reservation-item-cancel ui-action-delete" data-item-id="${Number(item.id)}">Batalkan treatment</button>` : ''}</div>
+            return `<article class="reservation-item-card min-w-0 rounded-box border border-base-300 p-4">
+                <div class="reservation-item-title grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-3 text-sm"><strong class="[overflow-wrap:anywhere]">${index + 1}. ${escapeHtml(itemTreatmentName(item))}</strong><b class="whitespace-nowrap text-primary">${money(itemPrice(item))}</b></div>
+                <dl class="reservation-detail-meta grid grid-cols-2 gap-x-4 gap-y-3 text-sm [&>div]:grid [&>div]:gap-1 [&_dt]:text-xs [&_dt]:text-base-content/60 [&_dd]:font-medium [&_dd]:[overflow-wrap:anywhere]">
+                    <div><dt>Mulai–selesai</dt><dd>${escapeHtml(itemStartTime(item, reservation))}–${escapeHtml(itemEndTime(item, reservation))}</dd></div>
+                    <div><dt>Terapis siap kembali</dt><dd>${escapeHtml(itemReadyTime(item, reservation))}</dd></div>
+                    <div><dt>Terapis</dt><dd>${escapeHtml(itemStaff(item).map(employeeName).join(', ') || '-')}</dd></div>
+                    <div><dt>Otomatis selesai</dt><dd>${escapeHtml(itemAutoCompleteTime(item, reservation))}</dd></div>
+                </dl>
+                <div class="reservation-work-status flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-3 text-sm"><span class="flex flex-wrap items-center gap-2"><span class="text-base-content/60">Status treatment</span><b class="status-${escapeHtml(currentStatus)}">${escapeHtml(workStatusLabels[currentStatus] || currentStatus)}</b></span>${!paid && canUpdateReservations && !['finished', 'cancelled'].includes(item.work_status) ? `<div class="flex flex-wrap gap-2"><button type="button" class="reservation-item-replace ui-action-edit btn btn-sm btn-accent" data-item-id="${Number(item.id)}">Ganti treatment</button><button type="button" class="reservation-item-cancel ui-action-delete btn btn-sm btn-error" data-item-id="${Number(item.id)}">Batalkan treatment</button></div>` : ''}</div>
             </article>`;
-        }).join('') || '<p class="empty-state">Belum ada treatment.</p>'}</div>
+        }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada treatment.</p>'}</div>
+        </section></div>
         <footer>${!paid && canUpdateReservations
-            ? '<button type="button" class="secondary reservation-add-treatment"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button>'
+            ? '<button type="button" class="secondary reservation-add-treatment btn btn-secondary"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah treatment</button>'
             : ''}${canCancelReservation(reservation)
-            ? '<button type="button" class="secondary reservation-cancel ui-action-delete">Batalkan reservasi</button>'
-            : ''}<button type="button" class="primary quick-close">Tutup</button></footer>
+            ? '<button type="button" class="secondary reservation-cancel ui-action-delete btn btn-sm btn-error">Batalkan reservasi</button>'
+            : ''}<button type="button" class="primary quick-close btn btn-error">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
@@ -1287,6 +1384,13 @@ function openReservationDetail(reservation) {
     wrapper.querySelector('.reservation-add-treatment')?.addEventListener('click', () => {
         wrapper.remove();
         openCashierTreatmentPicker(reservation);
+    });
+    wrapper.querySelectorAll('.reservation-item-replace').forEach((button) => {
+        button.onclick = () => {
+            const item = items.find((candidate) => Number(candidate.id) === Number(button.dataset.itemId));
+            wrapper.remove();
+            openCashierTreatmentPicker(reservation, true, item?.id);
+        };
     });
     wrapper.querySelectorAll('.reservation-item-cancel').forEach((button) => {
         button.onclick = () => {
@@ -1298,18 +1402,22 @@ function openReservationDetail(reservation) {
 
 function resetCashier() {
     selectedReservation = null;
+    selectedCashierStage = 'settlement';
     const receipt = document.getElementById('cashier-receipt');
+    receipt?.classList.remove('viewing-deposit');
+    document.getElementById('cashier-deposit-detail')?.setAttribute('hidden', '');
     receipt?.classList.add('empty');
-    if (receipt) receipt.hidden = true;
-    document.querySelector('#kasir .cashier-grid')?.classList.add('cashier-awaiting-selection');
+    document.getElementById('inline-payment')?.setAttribute('inert', '');
     document.getElementById('receipt-number').textContent = '—';
     document.getElementById('receipt-name').textContent = 'Pilih transaksi terlebih dahulu';
     document.querySelector('.receipt .member').textContent = '';
-    document.getElementById('receipt-items').innerHTML = '<p class="empty-state">Belum ada transaksi yang dipilih.</p>';
+    document.getElementById('receipt-items').innerHTML = '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada transaksi yang dipilih.</p>';
     document.getElementById('subtotal').textContent = money(0);
     document.getElementById('discount-value').textContent = money(0);
     document.getElementById('grand-total').textContent = money(0);
     document.getElementById('deposit-summary')?.setAttribute('hidden', '');
+    document.getElementById('remaining-summary')?.setAttribute('hidden', '');
+    document.querySelector('.totals .grand > span').textContent = 'Total pembayaran';
     document.getElementById('payment-total').textContent = money(0);
     document.getElementById('payment-description').textContent = 'Pilih transaksi';
     const customerName = document.getElementById('cashier-customer-name');
@@ -1358,42 +1466,58 @@ function renderCashier() {
     const box = document.getElementById('cashier-queue');
     if (!box) return;
 
-    box.innerHTML = rows.map((reservation) => `<button type="button" class="cashier-item ${Number(reservation.id) === Number(selectedReservation) ? 'active' : ''}" data-id="${Number(reservation.id)}">
-        <strong>${escapeHtml(reservation.queue_number || reservation.booking_code)}</strong>
-        <span><b>${escapeHtml(reservationCustomerName(reservation))}</b><small>${escapeHtml(reservationTime(reservation))} · ${escapeHtml(reservationTreatmentSummary(reservation))}</small></span>
-        <i class="material-symbols-outlined row-action">chevron_right</i>
-    </button>`).join('') || `<div class="cashier-empty-state">
+    box.innerHTML = rows.map((reservation) => {
+        const deposit = reservationDepositPlannedAmount(reservation);
+        const pendingDeposit = reservationDepositPending(reservation);
+        const subtotal = reservationSubtotal(reservation) + reservationProductItems(reservation).reduce((sum, item) => sum + Number(item.unit_price) * Number(item.quantity), 0);
+        const stages = deposit > 0 ? ['deposit', 'settlement'] : ['settlement'];
+        const number = reservation.queue_number || reservation.booking_code;
+        return `<article class="cashier-reservation grid gap-2 border-b border-base-300 py-3 first:pt-0 last:border-0 last:pb-0">
+            <div class="cashier-item-heading flex flex-wrap items-center gap-x-2"><strong>${escapeHtml(number)}</strong><b>${escapeHtml(reservationCustomerName(reservation))}</b></div>
+            <small class="cashier-item-details flex flex-wrap gap-x-2"><time>${escapeHtml(reservationTime(reservation))}</time><span>${escapeHtml(reservationTreatmentSummary(reservation))}</span></small>
+            <div class="grid gap-2 ${deposit > 0 ? 'sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2' : ''}">${stages.map((stage) => {
+                const isDeposit = stage === 'deposit';
+                const label = isDeposit ? 'Pembayaran DP' : 'Pembayaran LUNAS';
+                const active = Number(reservation.id) === Number(selectedReservation) && stage === selectedCashierStage;
+                return `<button type="button" class="cashier-item grid min-w-0 gap-2 rounded-box border border-base-300 p-3 text-left hover:bg-base-200 disabled:cursor-not-allowed ${active ? 'active' : ''}" data-id="${Number(reservation.id)}" data-stage="${stage}" aria-pressed="${active}" ${!isDeposit && pendingDeposit ? 'disabled' : ''} aria-label="${label}, ${escapeHtml(number)}, ${escapeHtml(reservationCustomerName(reservation))}">
+                    <span class="font-medium">${label}</span><span class="flex flex-wrap items-center justify-between gap-1"><strong class="cashier-stage-amount tabular-nums">${money(isDeposit ? deposit : Math.max(0, subtotal - deposit))}</strong><span class="badge badge-soft badge-sm ${isDeposit && !pendingDeposit ? 'badge-success' : 'badge-warning text-warning-content'}">${isDeposit ? pendingDeposit ? 'Menunggu' : 'Dibayar' : pendingDeposit ? 'Tunggu DP' : 'Menunggu'}</span></span>
+                </button>`;
+            }).join('')}</div>
+        </article>`;
+    }).join('') || `<div class="cashier-empty-state grid gap-4 py-8 text-center justify-items-center text-base-content/60">
         <span class="material-symbols-outlined" aria-hidden="true">point_of_sale</span>
         <h4>Belum ada transaksi aktif</h4>
         <p>Buat transaksi walk-in, lalu data pelanggan dan treatment akan langsung dibuka di kasir.</p>
-        <button type="button" class="secondary cashier-create-transaction"><span class="material-symbols-outlined" aria-hidden="true">add</span> Buat transaksi walk-in</button>
+        <button type="button" class="secondary cashier-create-transaction btn btn-secondary"><span class="material-symbols-outlined" aria-hidden="true">add</span> Buat transaksi walk-in</button>
     </div>`;
 
     document.querySelectorAll('.cashier-item').forEach((button) => {
-        button.onclick = () => selectCashier(Number(button.dataset.id));
+        button.onclick = () => selectCashier(Number(button.dataset.id), button.dataset.stage);
     });
 
     if (selectedReservation && rows.some((item) => Number(item.id) === Number(selectedReservation))) {
-        selectCashier(Number(selectedReservation));
+        selectCashier(Number(selectedReservation), selectedCashierStage);
     } else {
         resetCashier();
     }
 }
 
-function selectCashier(id) {
-    if (Number(selectedReservation) !== Number(id)) {
-        document.getElementById('manual-discount').value = '';
-    }
-    selectedReservation = id;
-    document.querySelectorAll('.cashier-item').forEach((element) => {
-        element.classList.toggle('active', Number(element.dataset.id) === Number(id));
-    });
-
+function selectCashier(id, stage = 'settlement') {
     const reservation = array(state.reservations).find((item) => Number(item.id) === Number(id));
     if (!reservation) {
         resetCashier();
         return;
     }
+    if (Number(selectedReservation) !== Number(id)) {
+        document.getElementById('manual-discount').value = '';
+    }
+    selectedReservation = id;
+    selectedCashierStage = reservationDepositPending(reservation) || (stage === 'deposit' && reservationDepositPlannedAmount(reservation) > 0) ? 'deposit' : 'settlement';
+    document.querySelectorAll('.cashier-item').forEach((element) => {
+        const active = Number(element.dataset.id) === Number(id) && element.dataset.stage === selectedCashierStage;
+        element.classList.toggle('active', active);
+        element.setAttribute('aria-pressed', String(active));
+    });
 
     const discountSelect = document.getElementById('discount');
     if (!reservation.is_member && discountSelect) discountSelect.value = '0';
@@ -1405,27 +1529,78 @@ function selectCashier(id) {
     const discountAmount = selectedDiscountAmount(serviceSubtotal);
     const total = subtotal - discountAmount;
     const depositAmount = reservationDepositAmount(reservation);
+    const plannedDeposit = reservationDepositPlannedAmount(reservation);
+    const pendingDeposit = reservationDepositPending(reservation);
     const remainingTotal = Math.max(0, total - depositAmount);
+    const viewingDeposit = selectedCashierStage === 'deposit' && plannedDeposit > 0;
 
     const receipt = document.getElementById('cashier-receipt');
     receipt?.classList.remove('empty');
-    if (receipt) receipt.hidden = false;
-    document.querySelector('#kasir .cashier-grid')?.classList.remove('cashier-awaiting-selection');
+    receipt?.classList.toggle('viewing-deposit', viewingDeposit);
+    document.getElementById('inline-payment').inert = viewingDeposit;
+    let depositDetail = document.getElementById('cashier-deposit-detail');
+    if (!depositDetail) {
+        depositDetail = document.createElement('section');
+        depositDetail.id = 'cashier-deposit-detail';
+        depositDetail.className = 'grid gap-3';
+        receipt.querySelector('.card-head').after(depositDetail);
+    }
+    depositDetail.hidden = !viewingDeposit;
+    if (viewingDeposit && pendingDeposit) {
+        depositDetail.innerHTML = `<form id="cashier-deposit-form" class="grid gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2"><h3>Pembayaran DP</h3><span class="badge badge-warning badge-soft text-warning-content">Menunggu</span></div>
+            <div class="rounded-box bg-primary/5 p-3"><small>DP yang harus dibayar</small><strong class="block text-xl text-primary">${money(plannedDeposit)}</strong></div>
+            <div class="grid gap-3 sm:grid-cols-2"><label>Metode pembayaran<select class="select w-full" name="payment_method_id" required><option value="">Pilih metode</option>${paymentMethods().map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(reservation.deposit?.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
+            <label>Referensi (opsional)<input class="input w-full" name="reference_number" maxlength="100" value="${escapeHtml(reservation.deposit?.reference_number || '')}"></label></div>
+            <p class="flex justify-between gap-2"><span>Sisa setelah DP</span><b>${money(Math.max(0, total - plannedDeposit))}</b></p>
+            <button class="btn btn-primary" type="submit" ${canProcessCashier ? '' : 'disabled'}>Proses pembayaran DP</button>
+        </form>`;
+        depositDetail.querySelector('form').onsubmit = async (event) => {
+            event.preventDefault();
+            if (!canProcessCashier) return;
+            const form = event.currentTarget;
+            const button = form.querySelector('button[type="submit"]');
+            button.disabled = true;
+            try {
+                const result = await api(`/operasional/reservasi/${Number(id)}/dp`, { method: 'POST', body: JSON.stringify({
+                    payment_method_id: Number(form.elements.payment_method_id.value),
+                    reference_number: form.elements.reference_number.value.trim() || null,
+                }) });
+                toast(result.message);
+                await refresh();
+                selectCashier(id, 'deposit');
+            } catch (error) {
+                button.disabled = false;
+                toast(error.message, true);
+            }
+        };
+    } else if (viewingDeposit) {
+        depositDetail.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-2"><h3>Pembayaran DP</h3><span class="badge badge-success badge-soft">Sudah dibayar</span></div>
+            <div class="rounded-box bg-success/10 p-3"><small>DP diterima</small><strong class="block text-xl tabular-nums text-success">${money(depositAmount)}</strong></div>
+            <dl class="grid gap-3 sm:grid-cols-2 [&_dt]:text-xs [&_dt]:text-base-content/60 [&_dd]:mt-1 [&_dd]:font-medium">
+                <div><dt>Tanggal pembayaran</dt><dd>${escapeHtml(formatTransactionDate(reservation.deposit?.paid_at))}</dd></div>
+                <div><dt>Metode pembayaran</dt><dd>${escapeHtml(reservation.deposit?.payment_method_name || '-')}</dd></div>
+                <div><dt>Referensi</dt><dd class="break-all">${escapeHtml(reservation.deposit?.reference_number || '-')}</dd></div>
+                <div><dt>Sisa tagihan saat ini</dt><dd>${money(remainingTotal)}</dd></div>
+            </dl><div class="flex flex-wrap gap-2"><button type="button" id="cashier-print-deposit" class="btn flex-1 btn-secondary">Cetak struk / nota DP</button><button type="button" class="btn flex-1 btn-primary" id="cashier-open-settlement">Ke pembayaran LUNAS</button></div>`;
+        depositDetail.querySelector('#cashier-open-settlement').onclick = () => selectCashier(id);
+        depositDetail.querySelector('#cashier-print-deposit').onclick = () => printDeposit(reservation.deposit.id);
+    }
     document.getElementById('receipt-number').textContent = reservation.queue_number || reservation.booking_code;
     document.getElementById('receipt-name').textContent = reservationCustomerName(reservation);
     const customerName = document.getElementById('cashier-customer-name');
     if (customerName) customerName.textContent = reservationCustomerName(reservation);
     document.querySelector('.receipt .member').textContent = reservation.is_member ? '· MEMBER' : '· NON-MEMBER';
-    const treatmentLines = receiptTreatmentItems(reservation).map((item) => `<div class="receipt-line">
+    const treatmentLines = receiptTreatmentItems(reservation).map((item) => `<div class="receipt-line flex items-center gap-3 border-b border-base-300 py-4 [&>span]:flex-1">
         <i class="material-symbols-outlined">spa</i>
         <span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.detail)}</small></span>
         <strong>${money(item.total)}</strong>
     </div>`).join('');
-    const productLines = productItems.map((item) => `<div class="receipt-line receipt-product-line">
+    const productLines = productItems.map((item) => `<div class="receipt-line receipt-product-line flex items-center gap-3 border-b border-base-300 py-4 [&>span]:flex-1">
         <i class="material-symbols-outlined">inventory_2</i>
         <span><b>${escapeHtml(item.name)}</b><small>${Number(item.quantity)} ${escapeHtml(item.unit || 'pcs')} × ${money(item.unit_price)}</small></span>
         <strong>${money(Number(item.unit_price) * Number(item.quantity))}</strong>
-        <button type="button" class="link remove-cashier-product ui-action-delete" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
+        <button type="button" class="link remove-cashier-product ui-action-delete btn btn-sm no-underline btn-error" data-id="${Number(item.product_id)}" aria-label="Hapus produk"><span class="material-symbols-outlined">close</span></button>
     </div>`).join('');
     document.getElementById('receipt-items').innerHTML = treatmentLines + productLines;
     document.getElementById('discount').disabled = false;
@@ -1437,6 +1612,7 @@ function selectCashier(id) {
     document.getElementById('subtotal').textContent = money(subtotal);
     document.getElementById('discount-value').textContent = `-${money(discountAmount)}`;
     document.getElementById('grand-total').textContent = money(total);
+    document.querySelector(`.cashier-item[data-id="${Number(id)}"][data-stage="settlement"] .cashier-stage-amount`)?.replaceChildren(document.createTextNode(money(pendingDeposit ? Math.max(0, total - plannedDeposit) : remainingTotal)));
     let depositSummary = document.getElementById('deposit-summary');
     if (!depositSummary) {
         depositSummary = document.createElement('p');
@@ -1447,10 +1623,22 @@ function selectCashier(id) {
     const depositPercent = total > 0 ? (depositAmount / total) * 100 : 0;
     depositSummary.hidden = depositAmount <= 0;
     depositSummary.innerHTML = `<span>Sudah DP <b>${depositPercent.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%</b></span><strong>${money(depositAmount)}</strong>`;
+    document.querySelector('.totals .grand > span').textContent = depositAmount > 0 ? 'Total transaksi' : 'Total pembayaran';
+    let remainingSummary = document.getElementById('remaining-summary');
+    if (!remainingSummary) {
+        remainingSummary = document.createElement('p');
+        remainingSummary.id = 'remaining-summary';
+        remainingSummary.className = 'font-semibold text-primary';
+        depositSummary.after(remainingSummary);
+    }
+    remainingSummary.hidden = depositAmount <= 0;
+    remainingSummary.innerHTML = `<span>Sisa pelunasan</span><strong>${money(remainingTotal)}</strong>`;
     document.getElementById('payment-total').textContent = money(remainingTotal);
     document.getElementById('payment-description').textContent = depositAmount > 0
         ? `${reservation.queue_number || reservation.booking_code} · DP ${money(depositAmount)} · Sisa ${money(remainingTotal)}`
         : `${reservation.queue_number || reservation.booking_code} · ${reservationCustomerName(reservation)}`;
+    document.querySelector('.inline-payment-head h3').textContent = 'Pembayaran LUNAS';
+    document.getElementById('complete-payment').textContent = depositAmount > 0 ? 'Proses pelunasan' : 'Proses pembayaran';
     resetPaymentRows();
 }
 
@@ -1470,8 +1658,8 @@ function openCashierProductPickerLegacy() {
     }
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Produk<select name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Tambah</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tambah produk</h2><p>Pilih produk dari stok yang tersedia.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields grid gap-4"><label>Produk<select class="select w-full min-w-0" name="product_id">${products.map((product) => `<option value="${Number(product.id)}">${escapeHtml(product.name)} · ${money(product.selling_price)}</option>`).join('')}</select></label><label>Jumlah<input class="input w-full min-w-0" name="quantity" type="number" min="1" step="0.0001" value="1" required></label><p class="product-picker-stock" id="product-picker-stock"></p></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Tambah</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const select = wrapper.querySelector('select[name="product_id"]');
     const quantity = wrapper.querySelector('input[name="quantity"]');
@@ -1479,8 +1667,8 @@ function openCashierProductPickerLegacy() {
     const submitButton = wrapper.querySelector('button.primary');
     const productField = select.closest('label');
     const searchField = document.createElement('label');
-    searchField.className = 'cashier-product-search';
-    searchField.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir">';
+    searchField.className = 'cashier-product-search input flex items-center gap-2 [&_input]:border-0 [&_input]:outline-none [&_input]:shadow-none [&_input]:p-0 [&_input]:h-auto';
+    searchField.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">search</span><input class="input w-full min-w-0" type="search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir">';
     productField.before(searchField);
     const searchInput = searchField.querySelector('input');
     select.innerHTML = products.map((product) => {
@@ -1567,19 +1755,19 @@ function openCashierProductPicker() {
 
     let selectedProduct = products[0];
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box cashier-product-picker-modal">
-        <div class="modal-head"><div><h2>Tambah produk</h2><p>Cari lalu pilih produk retail yang akan ditambahkan.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box cashier-product-picker-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tambah produk</h2><p>Cari lalu pilih produk retail yang akan ditambahkan.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
         <form>
-            <div class="cashier-product-picker-content">
-                <label class="cashier-product-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" name="product_search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir"></label>
-                <div class="cashier-product-results" role="listbox" aria-label="Hasil pencarian produk"></div>
-                <aside class="cashier-product-selection-panel">
-                    <div><span class="cashier-product-selection-kicker">Produk terpilih</span><div class="cashier-product-selected" aria-live="polite"></div></div>
-                    <label class="cashier-product-quantity">Jumlah / takaran<div class="cashier-product-quantity-control"><input name="quantity" type="number" min="0.0001" step="0.0001" value="1" required><span class="cashier-product-quantity-unit">-</span></div><small class="cashier-product-quantity-help">Masukkan banyak produk sesuai satuan stok.</small></label>
+            <div class="cashier-product-picker-content grid gap-4 md:grid-cols-2">
+                <label class="cashier-product-search input flex items-center gap-2 [&_input]:border-0 [&_input]:outline-none [&_input]:shadow-none [&_input]:p-0 [&_input]:h-auto"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="input w-full min-w-0" type="search" name="product_search" placeholder="Cari nama, kode, atau kategori produk..." autocomplete="off" aria-label="Cari produk kasir"></label>
+                <div class="cashier-product-results grid max-h-80 gap-2 overflow-y-auto" role="listbox" aria-label="Hasil pencarian produk"></div>
+                <aside class="cashier-product-selection-panel grid gap-4">
+                    <div><span class="cashier-product-selection-kicker">Produk terpilih</span><div class="cashier-product-selected rounded-box bg-base-200 p-4" aria-live="polite"></div></div>
+                    <label class="cashier-product-quantity">Jumlah / takaran<div class="cashier-product-quantity-control flex items-center gap-2"><input class="input w-full min-w-0" name="quantity" type="number" min="0.0001" step="0.0001" value="1" required><span class="cashier-product-quantity-unit">-</span></div><small class="cashier-product-quantity-help">Masukkan banyak produk sesuai satuan stok.</small></label>
                 </aside>
             </div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Tambah produk</button></footer>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Tambah produk</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -1614,7 +1802,7 @@ function openCashierProductPicker() {
     const renderResults = (term = '') => {
         const matches = productMatches(term);
         resultBox.innerHTML = matches.length
-            ? matches.map((product) => `<button type="button" class="cashier-product-result${Number(product.id) === Number(selectedProduct?.id) ? ' is-selected' : ''}" data-product-id="${Number(product.id)}" role="option" aria-selected="${Number(product.id) === Number(selectedProduct?.id)}"><span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || 'Produk retail')} &middot; Stok ${Number(productStock(product)).toLocaleString('id-ID')} ${escapeHtml(productUnit(product))}</small></span><strong>${money(product.selling_price)}</strong></button>`).join('')
+            ? matches.map((product) => `<button type="button" class="cashier-product-result${Number(product.id) === Number(selectedProduct?.id) ? ' is-selected' : ''} btn btn-info btn-sm" data-product-id="${Number(product.id)}" role="option" aria-selected="${Number(product.id) === Number(selectedProduct?.id)}"><span><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || 'Produk retail')} &middot; Stok ${Number(productStock(product)).toLocaleString('id-ID')} ${escapeHtml(productUnit(product))}</small></span><strong>${money(product.selling_price)}</strong></button>`).join('')
             : '<p class="cashier-product-empty">Produk tidak ditemukan.</p>';
         resultBox.querySelectorAll('.cashier-product-result').forEach((button) => {
             button.onclick = () => {
@@ -1660,8 +1848,8 @@ function openCashierAddPicker() {
     }
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambahkan ke transaksi</h2><p>Pilih jenis tambahan sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-add-type="product"><i class="material-symbols-outlined">inventory_2</i><span><b>Produk</b><small>Jual produk retail atau add-on.</small></span></button><button type="button" class="cashier-add-choice" data-add-type="treatment"><i class="material-symbols-outlined">spa</i><span><b>Treatment</b><small>Pilih layanan, jam, dan therapist.</small></span></button></div></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tambahkan ke transaksi</h2><p>Pilih jenis tambahan sebelum pembayaran.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><div class="cashier-add-choices grid gap-3"><button type="button" class="cashier-add-choice flex items-center gap-4 rounded-box border border-base-300 p-4 text-left btn h-auto justify-start whitespace-normal btn-secondary" data-add-type="product"><i class="material-symbols-outlined">inventory_2</i><span><b>Produk</b><small>Jual produk retail atau add-on.</small></span></button><button type="button" class="cashier-add-choice flex items-center gap-4 rounded-box border border-base-300 p-4 text-left btn h-auto justify-start whitespace-normal btn-secondary" data-add-type="treatment"><i class="material-symbols-outlined">spa</i><span><b>Treatment</b><small>Pilih layanan, jam, dan therapist.</small></span></button></div></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('[data-add-type="product"]').onclick = () => {
@@ -1684,8 +1872,8 @@ function openCashierTreatmentPickerLegacy(reservationOverride = null) {
 
     const defaultTime = String(reservation.reservation_time || '09:00').slice(0, 5);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Tambah treatment</h2><p>Masuk ke jadwal reservasi dan invoice sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Treatment<select name="treatment_id">${treatments.map((treatment) => `<option value="${Number(treatment.id)}">${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('')}</select></label><label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label><label class="treatment-therapist-field">Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label><p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist…</p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary" disabled>Tambahkan</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tambah treatment</h2><p>Masuk ke jadwal reservasi dan invoice sebelum pembayaran.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields grid gap-4"><label>Treatment<select class="select w-full min-w-0" name="treatment_id">${treatments.map((treatment) => `<option value="${Number(treatment.id)}">${escapeHtml(treatment.name)} · ${money(treatmentPrice(treatment))}</option>`).join('')}</select></label><label>Jam mulai<select class="select w-full min-w-0" name="start_time">${reservationTimeOptions(defaultTime)}</select></label><label class="treatment-therapist-field">Therapist<select class="select w-full min-w-0" name="employee_id" required><option value="">Memuat therapist...</option></select></label><p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist…</p></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary" disabled>Tambahkan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const treatmentSelect = wrapper.querySelector('[name="treatment_id"]');
     const timeSelect = wrapper.querySelector('[name="start_time"]');
@@ -1753,8 +1941,11 @@ function openCashierTreatmentPickerLegacy(reservationOverride = null) {
     loadAvailability();
 }
 
-function openCashierTreatmentPicker(reservationOverride = null) {
+function openCashierTreatmentPicker(reservationOverride = null, replacing = false, initialItemId = null) {
     const reservation = reservationOverride || array(state.reservations).find((item) => Number(item.id) === Number(selectedReservation));
+    const replaceable = reservationItems(reservation || {}).filter((item) => !['finished', 'cancelled'].includes(item.work_status));
+    if (replacing && !replaceable.length) return toast('Tidak ada treatment yang dapat diganti.', true);
+    let replacedItem = replaceable.find((item) => Number(item.id) === Number(initialItemId)) || replaceable[0];
     const treatments = array(state.treatments)
         .filter((treatment) => Number(treatment.is_active ?? 1) === 1)
         .sort((first, second) => String(first.name || '').localeCompare(String(second.name || ''), 'id'));
@@ -1763,22 +1954,27 @@ function openCashierTreatmentPicker(reservationOverride = null) {
         return;
     }
 
-    let selectedTreatment = treatments[0];
-    const defaultTime = String(reservation.reservation_time || '09:00').slice(0, 5);
+    let selectedTreatment = (replacing && treatments.find((treatment) => Number(treatment.id) === Number(replacedItem.treatment_id))) || treatments[0];
+    const defaultTime = replacing ? itemStartTime(replacedItem, reservation) : String(reservation.reservation_time || '09:00').slice(0, 5);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box cashier-treatment-picker-modal">
-        <div class="modal-head"><div><h2>Tambah treatment</h2><p>Cari layanan, lalu atur jadwal dan therapist sebelum pembayaran.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
-        <form>
-            <div class="cashier-treatment-picker-content">
-                <label class="cashier-product-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input type="search" name="treatment_search" placeholder="Cari nama atau kategori treatment..." autocomplete="off" aria-label="Cari treatment kasir"></label>
-                <div class="cashier-treatment-results" role="listbox" aria-label="Hasil pencarian treatment"></div>
-                <div class="cashier-treatment-selected" aria-live="polite"></div>
-                <label>Jam mulai<select name="start_time">${reservationTimeOptions(defaultTime)}</select></label>
-                <label>Therapist<select name="employee_id" required><option value="">Memuat therapist...</option></select></label>
-                <p class="cashier-treatment-availability" aria-live="polite">Memeriksa jadwal therapist...</p>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box cashier-treatment-picker-modal flex w-full max-w-3xl max-h-[calc(100dvh-2rem)] flex-col overflow-hidden">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>${replacing ? 'Ganti' : 'Tambah'} treatment</h2><p>${replacing ? 'DP tetap diperhitungkan. Treatment lama tersimpan dalam riwayat.' : 'Cari layanan, lalu atur jadwal dan therapist sebelum pembayaran.'}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+        <form class="reservation-form">
+            ${replacing ? `<label class="mb-4 block">Treatment yang diganti<select class="select mt-1 w-full" name="replaced_item_id">${replaceable.map((item) => `<option value="${Number(item.id)}"${Number(item.id) === Number(replacedItem.id) ? ' selected' : ''}>${escapeHtml(itemTreatmentName(item))} - ${money(itemPrice(item))}</option>`).join('')}</select></label>` : ''}
+            <div class="cashier-treatment-picker-content reservation-item-card grid gap-4 md:grid-cols-2">
+                <input type="hidden" class="item-treatment" value="${Number(selectedTreatment.id)}">
+                <label class="cashier-product-search input col-span-full flex w-full items-center gap-2 [&_input]:border-0 [&_input]:outline-none [&_input]:shadow-none [&_input]:p-0 [&_input]:h-auto"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="input w-full min-w-0" type="search" name="treatment_search" placeholder="Cari nama atau kategori treatment..." autocomplete="off" aria-label="Cari treatment kasir"></label>
+                <div class="cashier-treatment-results col-span-full grid max-h-48 gap-2 overflow-y-auto" role="listbox" aria-label="Hasil pencarian treatment"></div>
+                <div class="cashier-treatment-selected col-span-full flex items-center gap-3 rounded-box bg-base-200 p-3 text-sm [&>strong]:ml-auto" aria-live="polite"></div>
+                <label class="col-span-full">Jam mulai<select class="item-time select w-full min-w-0" name="start_time">${reservationTimeOptions(defaultTime)}</select></label>
+                <section class="col-span-full grid gap-3 rounded-box border border-base-300 p-3">
+                    <div class="flex items-center justify-between gap-3"><b class="text-sm">Terapis & komisi</b><button type="button" class="cashier-add-staff btn btn-sm btn-info"><span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah terapis</button></div>
+                    <div class="staff-rows grid gap-3"></div><small class="reservation-commission-note text-base-content/60"></small>
+                </section>
+                <p class="cashier-treatment-availability col-span-full text-xs text-base-content/60" aria-live="polite">Memeriksa jadwal therapist...</p>
             </div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary" disabled>Tambahkan treatment</button></footer>
+            <footer class="reservation-footer"><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary" disabled>${replacing ? 'Simpan penggantian' : 'Tambahkan treatment'}</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -1787,7 +1983,11 @@ function openCashierTreatmentPicker(reservationOverride = null) {
     const resultBox = wrapper.querySelector('.cashier-treatment-results');
     const selectedBox = wrapper.querySelector('.cashier-treatment-selected');
     const timeSelect = wrapper.querySelector('[name="start_time"]');
-    const employeeSelect = wrapper.querySelector('[name="employee_id"]');
+    const card = wrapper.querySelector('.reservation-item-card');
+    const staffContainer = wrapper.querySelector('.staff-rows');
+    const staffRows = () => [...staffContainer.querySelectorAll('.staff-row')];
+    let availabilityLoaded = false;
+    let availabilityRequest = 0;
     const availability = wrapper.querySelector('.cashier-treatment-availability');
     const submitButton = wrapper.querySelector('button[type="submit"]');
     const matches = (term = '') => {
@@ -1801,41 +2001,71 @@ function openCashierTreatmentPicker(reservationOverride = null) {
             return;
         }
         const duration = Number(selectedTreatment.duration_minutes || selectedTreatment.duration || 0);
+        card.querySelector('.item-treatment').value = selectedTreatment.id;
+        syncReservationCommission(card, true);
         selectedBox.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">spa</span><div><b>${escapeHtml(selectedTreatment.name)}</b><small>${escapeHtml(selectedTreatment.category || 'Treatment')} &middot; ${duration ? `${duration} menit` : 'Durasi belum diatur'}</small></div><strong>${money(treatmentPrice(selectedTreatment))}</strong>`;
     };
     const syncSubmitState = () => {
-        submitButton.disabled = !selectedTreatment || employeeSelect.disabled || !employeeSelect.value;
+        const ids = staffRows().map((row) => Number(row.querySelector('.item-employee').value));
+        const percents = staffRows().map((row) => row.querySelector('.item-commission').value);
+        const partialCommission = percents.some((value) => value !== '') && percents.some((value) => value === '');
+        submitButton.disabled = !selectedTreatment || !availabilityLoaded || !ids.length || ids.some((id) => !id)
+            || new Set(ids).size !== ids.length || partialCommission || percents.reduce((sum, value) => sum + Number(value || 0), 0) > 100;
     };
     const loadAvailability = async () => {
         if (!selectedTreatment) return;
-        employeeSelect.disabled = true;
+        const request = ++availabilityRequest;
+        availabilityLoaded = false;
+        staffRows().forEach((row) => { row.querySelector('.therapist-picker').disabled = true; });
         submitButton.disabled = true;
         availability.textContent = 'Memeriksa jadwal therapist...';
         try {
             const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(reservation.reservation_date)}&start_time=${encodeURIComponent(timeSelect.value)}&treatment_id=${encodeURIComponent(selectedTreatment.id)}`);
-            const available = array(data.employees).filter((employee) => employee.available);
-            employeeSelect.innerHTML = available.length
-                ? `<option value="">Pilih therapist</option>${available.map((employee) => `<option value="${Number(employee.id)}">${escapeHtml(employee.name)}${employee.specialty ? ` · ${escapeHtml(employee.specialty)}` : ''}</option>`).join('')}`
-                : '<option value="">Tidak ada therapist tersedia</option>';
-            employeeSelect.disabled = !available.length;
-            availability.textContent = available.length
-                ? `${available.length} therapist tersedia untuk ${timeSelect.value}.`
-                : `Tidak ada therapist tersedia pada ${timeSelect.value}. Coba jam lain.`;
+            if (request !== availabilityRequest) return;
+            card._therapistAvailability = array(data.employees);
+            availabilityLoaded = true;
+            staffRows().forEach((row) => {
+                row.querySelector('.therapist-picker').disabled = false;
+                renderReservationTherapistPicker(row, card._therapistAvailability);
+            });
+            availability.textContent = `Status terapis mengikuti jadwal ${timeSelect.value}.`;
             syncSubmitState();
         } catch (error) {
-            employeeSelect.innerHTML = '<option value="">Jadwal tidak dapat dimuat</option>';
-            employeeSelect.disabled = true;
+            if (request !== availabilityRequest) return;
+            availabilityLoaded = false;
             availability.textContent = error.message;
             syncSubmitState();
             toast(error.message, true);
         }
     };
+    const populateStaff = () => {
+        staffContainer.replaceChildren();
+        delete card.dataset.commissionCustom;
+        const assignments = replacing ? itemStaff(replacedItem) : [];
+        (assignments.length ? assignments : [{ role: 'primary' }]).forEach((assignment) => {
+            addStaffRow(staffContainer, assignment.role || 'primary');
+            const row = staffContainer.lastElementChild;
+            row.querySelector('.item-employee').value = assignment.employee_id || '';
+            renderReservationTherapistPicker(row, card._therapistAvailability || []);
+        });
+        syncReservationCommission(card, true);
+    };
+    populateStaff();
+    wrapper.querySelector('.cashier-add-staff').onclick = () => {
+        if (staffRows().length >= 10) return toast('Maksimal 10 terapis per treatment.', true);
+        addStaffRow(staffContainer, 'assistant');
+        renderReservationTherapistPicker(staffContainer.lastElementChild, card._therapistAvailability || []);
+        syncSubmitState();
+    };
+    staffContainer.addEventListener('change', syncSubmitState);
+    staffContainer.addEventListener('click', () => requestAnimationFrame(syncSubmitState));
     const renderResults = (term = '') => {
         const found = matches(term);
         resultBox.innerHTML = found.length
             ? found.map((treatment) => {
                 const duration = Number(treatment.duration_minutes || treatment.duration || 0);
-                return `<button type="button" class="cashier-treatment-result${Number(treatment.id) === Number(selectedTreatment?.id) ? ' is-selected' : ''}" data-treatment-id="${Number(treatment.id)}" role="option" aria-selected="${Number(treatment.id) === Number(selectedTreatment?.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category || 'Treatment')} &middot; ${duration ? `${duration} menit` : 'Durasi belum diatur'}</small></span><strong>${money(treatmentPrice(treatment))}</strong></button>`;
+                const selected = Number(treatment.id) === Number(selectedTreatment?.id);
+                return `<button type="button" class="cashier-treatment-result grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-field border p-3 text-left text-sm hover:bg-base-200 focus-visible:outline-2 focus-visible:outline-primary ${selected ? 'is-selected border-primary bg-primary/10' : 'border-base-300 bg-base-100'}" data-treatment-id="${Number(treatment.id)}" role="option" aria-selected="${selected}"><span class="min-w-0"><b class="block">${escapeHtml(treatment.name)}</b><small class="mt-1 block text-xs text-base-content/60">${escapeHtml(treatment.category || 'Treatment')} &middot; ${duration ? `${duration} menit` : 'Durasi belum diatur'}</small></span><strong class="whitespace-nowrap text-primary">${money(treatmentPrice(treatment))}</strong></button>`;
             }).join('')
             : '<p class="cashier-product-empty">Treatment tidak ditemukan.</p>';
         resultBox.querySelectorAll('.cashier-treatment-result').forEach((button) => {
@@ -1853,22 +2083,32 @@ function openCashierTreatmentPicker(reservationOverride = null) {
     searchInput.focus();
     searchInput.addEventListener('input', () => renderResults(searchInput.value));
     timeSelect.addEventListener('change', loadAvailability);
-    employeeSelect.addEventListener('change', syncSubmitState);
+    wrapper.querySelector('[name="replaced_item_id"]')?.addEventListener('change', (event) => {
+        replacedItem = replaceable.find((item) => Number(item.id) === Number(event.target.value));
+        timeSelect.value = itemStartTime(replacedItem, reservation);
+        populateStaff();
+        loadAvailability();
+    });
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('form').onsubmit = async (event) => {
         event.preventDefault();
-        if (!selectedTreatment || !employeeSelect.value) {
-            toast('Pilih therapist yang tersedia.', true);
+        syncSubmitState();
+        if (submitButton.disabled) {
+            toast('Periksa pilihan terapis dan pembagian komisi.', true);
             return;
         }
         submitButton.disabled = true;
         try {
-            const result = await api(`/operasional/reservasi/${Number(reservation.id)}/item`, {
-                method: 'POST',
+            const result = await api(`/operasional/reservasi/${Number(reservation.id)}/item${replacing ? `/${Number(replacedItem.id)}/ganti` : ''}`, {
+                method: replacing ? 'PATCH' : 'POST',
                 body: JSON.stringify({
                     treatment_id: Number(selectedTreatment.id),
                     start_time: timeSelect.value,
-                    staff: [{ employee_id: Number(employeeSelect.value), role: 'primary' }],
+                    staff: staffRows().map((row) => ({
+                        employee_id: Number(row.querySelector('.item-employee').value),
+                        role: row.querySelector('.item-staff-role').value,
+                        ...(row.querySelector('.item-commission').value !== '' ? { commission_percent: Number(row.querySelector('.item-commission').value) } : {}),
+                    })),
                 }),
             });
             wrapper.remove();
@@ -1927,6 +2167,8 @@ function receiptPayload(result, reservation, productItems, payments) {
         baseTotal: subtotal - discount,
         paymentCharge: payments.reduce((total, payment) => total + Number(payment.charge_amount || 0), 0),
         total: Number(result.total),
+        depositAmount: reservationDepositAmount(reservation),
+        depositId: Number(reservation.deposit?.id || 0),
         change: Number(result.change_amount || 0),
         cashier: result.cashier_name || 'Kasir Selesa',
     };
@@ -1998,9 +2240,29 @@ function compactReceiptPrintLegacy(receipt, format) {
     documentWindow.document.close();
 }
 
+async function printDeposit(id) {
+    try {
+        const receipt = await api(`/operasional/dp/${Number(id)}`);
+        receipt.date = formatTransactionDate(receipt.date);
+        openReceiptPrintChoice(receipt, { title: 'Cetak pembayaran DP', description: `${receipt.number} · DP ${money(receipt.depositAmount)}` });
+    } catch (error) {
+        toast(error.message, true);
+    }
+}
+
 function printReceipt(receipt, format) {
     const compact = format === 'struk';
+    if (receipt.salesReturnId) {
+        const preview = window.open(`/operasional/retur/${Number(receipt.salesReturnId)}/${compact ? 'struk' : 'nota'}.pdf`, '_blank');
+        if (!preview) toast('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
     const receiptMoney = (value) => money(value).replace(/^Rp\s+/, 'Rp');
+    if (!compact && receipt.depositReceiptId) {
+        const preview = window.open(`/operasional/dp/${Number(receipt.depositReceiptId)}/nota.pdf`, '_blank');
+        if (!preview) toast('Popup nota diblokir browser. Izinkan popup lalu coba lagi.', true);
+        return;
+    }
     if (!compact && receipt.transactionId) {
         const preview = window.open(`/operasional/penjualan/${Number(receipt.transactionId)}/nota.pdf`, '_blank');
         if (!preview) toast('Popup nota diblokir browser. Izinkan popup lalu coba lagi.', true);
@@ -2025,13 +2287,20 @@ function printReceipt(receipt, format) {
         ...(receipt.discount ? [`<tr><td class="receipt-summary-label">Diskon member</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">-${receiptMoney(receipt.discount)}</td></tr>`] : []),
         ...(receipt.paymentCharge ? [`<tr><td class="receipt-summary-label">Charge pembayaran</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.paymentCharge)}</td></tr>`] : []),
         `<tr><td class="receipt-summary-label">Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
-        `<tr class="grand-total"><td class="receipt-summary-label">Grand Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`,
+        ...(receipt.isDeposit ? [
+            `<tr><td class="receipt-summary-label">DP dibayar</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.depositAmount)}</td></tr>`,
+            `<tr class="grand-total"><td class="receipt-summary-label">Sisa pembayaran</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.remainingAmount)}</td></tr>`,
+        ] : receipt.depositAmount > 0 ? [
+            `<tr><td class="receipt-summary-label">DP sebelumnya</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.depositAmount)}</td></tr>`,
+            `<tr class="grand-total"><td class="receipt-summary-label">Pelunasan dibayar</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total - receipt.depositAmount)}</td></tr>`,
+        ] : [`<tr class="grand-total"><td class="receipt-summary-label">Grand Total</td><td class="receipt-summary-colon">:</td><td class="receipt-summary-amount">${receiptMoney(receipt.total)}</td></tr>`]),
     ].join('');
     const logoUrl = `${window.location.origin}/images/selesa-logo.png`;
     const salon = state.salon || {};
     const salonAddress = String(salon.address || 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang');
     const salonWhatsapp = String(salon.whatsapp || '081128702019');
-    const pageSize = 'A4';
+    const paperWidth = [58, 80].includes(Number(window.SALON_RECEIPT_WIDTH_MM)) ? Number(window.SALON_RECEIPT_WIDTH_MM) : 58;
+    const pageSize = compact ? `${paperWidth}mm 200mm` : 'A4';
     const sheetClass = compact ? 'thermal' : 'nota';
     const receiptHeader = compact
         ? `<img src="${escapeHtml(logoUrl)}" alt="Logo Selesa"><p class="receipt-address">${escapeHtml(salonAddress)}</p>`
@@ -2039,15 +2308,16 @@ function printReceipt(receipt, format) {
 
     documentWindow.document.write(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><title>${escapeHtml(receipt.number)}</title>
+<style id="receipt-paper">@page{size:${pageSize};margin:${compact ? '3mm 1mm' : '16mm'}}</style>
 <style>
-@page{size:${pageSize};margin:${compact ? '3mm 4mm' : '16mm'}}
 *{box-sizing:border-box}
 body{margin:0;color:#202020;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:${compact ? '9px' : '12px'};line-height:${compact ? '1.3' : '1.3'}}
-.sheet{margin:0 auto}.sheet.thermal{width:56mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
+.sheet{margin:0 auto}.sheet.thermal{width:${paperWidth - 2}mm;max-width:100%}.sheet.nota{width:150mm;max-width:100%;font-size:13px}
 .receipt-header{height:auto;padding-top:${compact ? '4mm' : '0'};text-align:center}.receipt-header img{display:block;width:${compact ? '36mm' : '64mm'};height:auto;margin:0 auto ${compact ? '1.5mm' : '3px'};filter:grayscale(1) contrast(1.35)}.receipt-brand{margin:0;font-size:${compact ? '16px' : '20px'};font-weight:700;line-height:1}.receipt-address{max-width:${compact ? '54mm' : '120mm'};margin:${compact ? '0 auto 1.5mm' : '0 auto 4px'};color:#514a44;font-size:${compact ? '8px' : '10px'};line-height:1.35}
 .receipt-code{margin:0;font-size:${compact ? '9px' : '12px'};font-weight:700}
+.receipt-meta .receipt-therapists td:last-child{white-space:normal;overflow-wrap:anywhere}
 .dash{border-top:1px dashed #777;margin:${compact ? '0 0 2mm' : '7px 0 6px'}}.dash.thin{margin:${compact ? '2mm 0' : '6px 0'}}
-.receipt-meta,.receipt-items,.receipt-totals,.receipt-payments,.receipt-contact{width:100%;border-collapse:collapse}.receipt-meta{font-size:${compact ? '9px' : '11px'}}.receipt-meta td{padding:${compact ? '.45mm 0' : '1px 0'}}.receipt-meta td:nth-child(1){width:${compact ? '17mm' : 'max-content'};white-space:nowrap}.receipt-meta td:nth-child(2){width:3mm;text-align:center}.receipt-meta td:nth-child(3){padding-left:${compact ? '.7mm' : '2px'};font-weight:400;white-space:nowrap}
+.receipt-meta,.receipt-items,.receipt-totals,.receipt-payments,.receipt-contact{width:100%;border-collapse:collapse}.receipt-meta{font-size:${compact ? '9px' : '11px'}}.receipt-meta td{padding:${compact ? '.45mm 0' : '1px 0'}}.receipt-meta td:nth-child(1){width:${compact ? '17mm' : 'max-content'};white-space:nowrap}.receipt-meta td:nth-child(2){width:3mm;text-align:center}.receipt-meta td:nth-child(3){padding-left:${compact ? '.7mm' : '2px'};font-weight:400;white-space:normal;overflow-wrap:anywhere}
 .receipt-items{table-layout:fixed}.receipt-items td{padding:0}.receipt-item-name td{padding-top:${compact ? '.75mm' : '2px'};font-weight:400}.receipt-item-detail td{padding:${compact ? '.2mm 0 .75mm 1.5mm' : '1px 0 2px 2mm'}}.receipt-item-detail td:first-child{width:${compact ? '36mm' : 'auto'}}.receipt-item-detail td:last-child{width:${compact ? '20mm' : 'auto'};padding-left:${compact ? '2mm' : '4px'};text-align:right;font-weight:400;white-space:nowrap}
 .receipt-totals,.receipt-payments{table-layout:fixed}.receipt-totals td,.receipt-payments td{padding:${compact ? '1.1mm 0' : '2px 0'}}.receipt-totals tr,.receipt-payments tr{border-bottom:1px dashed #777}.receipt-summary-label{width:${compact ? '33mm' : 'auto'};text-align:right}.receipt-summary-colon{width:3mm;text-align:center}.receipt-summary-amount{width:${compact ? '20mm' : 'auto'};text-align:right;white-space:nowrap}.receipt-totals .grand-total,.receipt-totals .grand-total td{font-size:${compact ? '10px' : '16px'};font-weight:700}
 .reprint{text-align:center;font-size:${compact ? '9px' : '15px'};font-weight:400;margin:0}
@@ -2059,17 +2329,18 @@ body{margin:0;color:#202020;background:#fff;font-family:Arial,Helvetica,sans-ser
         ${receiptHeader}
     </header>
     <div class="dash"></div>
-    <table class="receipt-meta"><tbody><tr><td>Pelanggan</td><td>:</td><td>${escapeHtml(receipt.customer)}</td></tr><tr><td>Transaksi</td><td>:</td><td>${escapeHtml(receipt.date)}</td></tr><tr><td>Karyawan</td><td>:</td><td>${escapeHtml(receipt.cashier)}</td></tr></tbody></table>
+    <table class="receipt-meta"><tbody><tr><td>Pelanggan</td><td>:</td><td>${escapeHtml(receipt.customer)}</td></tr><tr><td>Transaksi</td><td>:</td><td>${escapeHtml(receipt.date)}</td></tr><tr><td>Karyawan</td><td>:</td><td>${escapeHtml(receipt.cashier)}</td></tr>${receipt.isDeposit ? `<tr class="receipt-therapists"><td>Terapis</td><td>:</td><td>${escapeHtml(array(receipt.therapists).join(', ') || '-')}</td></tr>` : ''}</tbody></table>
     <div class="dash thin"></div>
-    <p class="reprint">Cetak Ulang</p>
+    <p class="reprint">${receipt.isDeposit ? 'STRUK DP' : receipt.depositAmount > 0 ? 'NOTA PELUNASAN' : 'NOTA PEMBAYARAN'} &middot; ${escapeHtml(receipt.number)}</p>
     <div class="dash thin"></div>
     <table class="receipt-items"><tbody>${itemRows}</tbody></table>
     <div class="dash thin"></div>
     <table class="receipt-totals"><tbody>${totals}</tbody></table>
     <table class="receipt-payments"><tbody>${paymentRows}</tbody></table>
+    ${receipt.legacyDeposit ? '<p>Rincian DP lama menggunakan data reservasi yang tersedia saat cetak.</p>' : ''}
     <footer class="receipt-footer"><strong>TERIMA KASIH</strong><p>${escapeHtml(salonAddress)}</p><p>WhatsApp&nbsp;&nbsp;: ${escapeHtml(salonWhatsapp)}</p></footer>
 </main>
-<script>window.addEventListener('load',()=>window.print());<\/script>
+<script>window.addEventListener('load',()=>{${compact ? `const height=Math.max(30,Math.ceil(document.querySelector('.sheet').getBoundingClientRect().height*25.4/96)+7);document.getElementById('receipt-paper').textContent='@page{size:${paperWidth}mm '+height+'mm;margin:3mm 1mm}';` : ''}window.print();});<\/script>
 </body></html>`);
     documentWindow.document.close();
 }
@@ -2079,60 +2350,63 @@ function openReceiptPrintChoice(receipt, options = {}) {
     const description = options.description || `${receipt.number} · ${money(receipt.total)}`;
     const wrapper = document.createElement('div');
     const showSuccessAnimation = options.successAnimation ?? title === 'Pembayaran berhasil';
-    wrapper.className = 'modal open quick-modal';
-    const printChoices = `<div class="cashier-add-choices"><button type="button" class="cashier-add-choice" data-print="struk"><i class="material-symbols-outlined">receipt_long</i><span><b>Cetak struk</b><small>Format ringkas untuk printer thermal.</small></span></button><button type="button" class="cashier-add-choice" data-print="nota"><i class="material-symbols-outlined">description</i><span><b>Cetak nota</b><small>Format rinci untuk kertas A4.</small></span></button></div><p class="print-choice-note">Dokumen dibuka di tab baru, lalu pilih printer atau simpan sebagai PDF.</p>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    const printChoices = `<div class="cashier-add-choices grid gap-3">
+        <button type="button" class="cashier-add-choice flex items-center gap-4 rounded-box border border-base-300 p-4 text-left btn h-auto justify-start whitespace-normal btn-secondary" data-print="struk"><i class="material-symbols-outlined">receipt_long</i><span class="grid gap-1"><b>Cetak struk</b><small>Printer thermal</small></span></button>
+        <button type="button" class="cashier-add-choice flex items-center gap-4 rounded-box border border-base-300 p-4 text-left btn h-auto justify-start whitespace-normal btn-secondary" data-print="nota"><i class="material-symbols-outlined">description</i><span class="grid gap-1"><b>Cetak nota</b><small>Kertas A4</small></span></button>
+    </div>`;
     const transactionMeta = [receipt.date, receipt.therapists?.length ? `Terapis: ${receipt.therapists.join(', ')}` : null]
         .filter(Boolean)
         .map((detail) => `<span>${escapeHtml(detail)}</span>`)
         .join('');
     const ratingTherapists = array(options.ratingTherapists);
     const starRatings = [1, 2, 3, 4, 5];
-    const surveyPanel = `<section class="customer-survey-panel" aria-label="Customer Survey">
-        <div class="customer-survey-head"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><div><b>Customer Survey</b><small>Masukan pelanggan untuk kunjungan ini.</small></div></div>
-        ${ratingTherapists.length ? `<div class="survey-question survey-therapist-question"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3><div class="survey-therapist-list">${ratingTherapists.map((therapist) => `<fieldset data-survey-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="survey-choice-grid four">${[
+    const surveyPanel = `<section class="customer-survey-panel grid gap-4 [&_h3>span]:mr-1.5" aria-label="Customer Survey">
+        <div class="customer-survey-head flex items-center gap-3"><span class="material-symbols-outlined text-primary" aria-hidden="true">assignment</span><div class="grid gap-1"><b>Customer Survey</b><small>Masukan pelanggan untuk kunjungan ini.</small></div></div>
+        ${ratingTherapists.length ? `<div class="survey-question survey-therapist-question grid gap-3"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3><div class="survey-therapist-list grid gap-2">${ratingTherapists.map((therapist) => `<fieldset data-survey-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="survey-choice-grid four grid grid-cols-2 gap-2">${[
             ['very_satisfied', 'sentiment_very_satisfied', 'Sangat baik'],
             ['standard', 'sentiment_satisfied', 'Standar'],
             ['dissatisfied', 'sentiment_dissatisfied', 'Kurang puas'],
             ['very_dissatisfied', 'sentiment_very_dissatisfied', 'Sangat buruk'],
-        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-therapist-${Number(therapist.id)}" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></fieldset>`).join('')}</div></div>` : ''}
-        <div class="survey-question survey-facility-question"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3><div class="survey-choice-grid three">${[
+        ].map(([value, icon, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="survey-therapist-${Number(therapist.id)}" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></fieldset>`).join('')}</div></div>` : ''}
+        <div class="survey-question survey-facility-question grid gap-3"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3><div class="survey-choice-grid three grid grid-cols-2 gap-2 xl:grid-cols-3">${[
             ['very_suitable', 'sentiment_very_satisfied', 'Sangat sesuai'],
             ['standard', 'sentiment_neutral', 'Standar'],
             ['poor', 'sentiment_dissatisfied', 'Kurang bagus'],
-        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-facility" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
-        <div class="survey-question survey-reception-question"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3><div class="survey-choice-grid four">${[
+        ].map(([value, icon, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="survey-facility" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-reception-question grid gap-3"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3><div class="survey-choice-grid four grid grid-cols-2 gap-2">${[
             ['very_good', 'sentiment_very_satisfied', 'Sangat baik'], ['good', 'thumb_up', 'Baik'], ['neutral', 'sentiment_neutral', 'Biasa saja'], ['bad', 'thumb_down', 'Buruk'],
-        ].map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="survey-reception" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
-        <div class="survey-question survey-return-question"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3><div class="survey-choice-grid three text-only">${[['yes', 'Sudah pasti, iya!'], ['maybe', 'Hmm, bingung'], ['no', 'Tidak dulu']].map(([value, label]) => `<label class="survey-choice"><input type="radio" name="survey-return" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
-        <div class="survey-question survey-price-question"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3><div class="survey-choice-grid three text-only">${[['fair', 'Cocok dengan harganya'], ['worth_it', 'Agak mahal tapi worth it'], ['expensive', 'Mahal sih kak']].map(([value, label]) => `<label class="survey-choice"><input type="radio" name="survey-price" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
-        <label class="survey-feedback">Masukan untuk kami<textarea name="survey-feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
-        <button type="button" class="save-customer-survey">Simpan Customer Survey</button>
+        ].map(([value, icon, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="survey-reception" value="${value}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-return-question grid gap-3"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3><div class="survey-choice-grid three text-only grid grid-cols-2 gap-2 xl:grid-cols-3">${[['yes', 'Sudah pasti, iya!'], ['maybe', 'Hmm, bingung'], ['no', 'Tidak dulu']].map(([value, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="survey-return" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
+        <div class="survey-question survey-price-question grid gap-3"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3><div class="survey-choice-grid three text-only grid grid-cols-2 gap-2 xl:grid-cols-3">${[['fair', 'Cocok dengan harganya'], ['worth_it', 'Agak mahal tapi worth it'], ['expensive', 'Mahal sih kak']].map(([value, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="survey-price" value="${value}"><small>${label}</small></label>`).join('')}</div></div>
+        <label class="survey-feedback">Masukan untuk kami<textarea class="textarea w-full min-w-0" name="survey-feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
+        <button type="button" class="save-customer-survey btn btn-sm btn-info">Simpan Customer Survey</button>
     </section>`;
     const ratingPanel = ratingTherapists.length ? `<section class="therapist-rating-panel">
         <div class="therapist-rating-head"><span class="material-symbols-outlined" aria-hidden="true">star</span><div><b>Rating therapist</b><small>Pilih 1 sampai 5 bintang untuk setiap therapist.</small></div></div>
-        <div class="therapist-rating-fields">${ratingTherapists.map((therapist) => `<fieldset class="therapist-rating-field" data-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="therapist-rating-stars-input">${starRatings.map((stars) => `<label class="therapist-rating-choice" title="${stars} bintang"><input type="radio" name="therapist-rating-${Number(therapist.id)}" value="${stars}" ${Number(therapist.stars) === stars ? 'checked' : ''}><span class="material-symbols-outlined" aria-label="${stars} bintang">star</span></label>`).join('')}</div><label class="therapist-rating-review">Deskripsi review <textarea name="therapist-review-${Number(therapist.id)}" maxlength="500" placeholder="Contoh: pelayanan ramah dan hasilnya memuaskan.">${escapeHtml(therapist.review || '')}</textarea><small>Opsional, maksimal 500 karakter.</small></label></fieldset>`).join('')}</div>
-        <button type="button" class="save-therapist-ratings">Simpan rating therapist</button>
+        <div class="therapist-rating-fields grid gap-2">${ratingTherapists.map((therapist) => `<fieldset class="therapist-rating-field grid gap-2" data-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend><div class="therapist-rating-stars-input flex gap-2">${starRatings.map((stars) => `<label class="therapist-rating-choice" title="${stars} bintang"><input class="radio radio-primary radio-sm" type="radio" name="therapist-rating-${Number(therapist.id)}" value="${stars}" ${Number(therapist.stars) === stars ? 'checked' : ''}><span class="material-symbols-outlined" aria-label="${stars} bintang">star</span></label>`).join('')}</div><label class="therapist-rating-review">Deskripsi review <textarea class="textarea w-full min-w-0" name="therapist-review-${Number(therapist.id)}" maxlength="500" placeholder="Contoh: pelayanan ramah dan hasilnya memuaskan.">${escapeHtml(therapist.review || '')}</textarea><small>Opsional, maksimal 500 karakter.</small></label></fieldset>`).join('')}</div>
+        <button type="button" class="save-therapist-ratings btn btn-sm btn-info">Simpan rating therapist</button>
     </section>` : '';
     wrapper.innerHTML = showSuccessAnimation
-        ? `<div class="modal-box transaction-success-modal is-survey-collapsed" role="status">
-            <div class="transaction-success-left">
-                <button type="button" class="quick-close transaction-success-close" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
-                <div class="transaction-success-body">
-                    <span class="transaction-success-emblem" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
+        ? `<div class="modal-box transaction-success-modal is-survey-collapsed grid gap-5 w-full max-w-4xl max-h-[calc(100dvh-2rem)] overflow-y-auto" role="status">
+            <button type="button" class="quick-close transaction-success-close col-span-full justify-self-end btn btn-square btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+            <div class="transaction-success-left grid gap-4">
+                <div class="transaction-success-body grid justify-items-center gap-3 text-center">
+                    <span class="transaction-success-emblem grid size-16 place-items-center rounded-full bg-success/10 text-success" aria-hidden="true"><svg class="size-12" width="48" height="48" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 33l10 10 21-22"/></svg></span>
                     <h2>Transaksi berhasil</h2><p>${escapeHtml(description)}</p>
-                    <div class="transaction-success-meta">${transactionMeta}</div>
-                    <p class="transaction-survey-note">Customer Survey tersimpan sebagai draft. Isi sekarang atau nanti dari halaman Customer Survey.</p>
+                    <div class="transaction-success-meta flex flex-wrap justify-center gap-x-3 gap-y-1 text-sm text-base-content/60">${transactionMeta}</div>
+                    <p class="transaction-survey-note text-sm text-base-content/60">Survey tersimpan sebagai draft.</p>
                 </div>
-                <div class="transaction-success-actions">
-                    <button type="button" class="primary success-print-button" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
-                    <button type="button" class="secondary success-print-button" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
-                    <button type="button" class="secondary success-survey-open">Isi survey sekarang</button>
+                <div class="transaction-success-actions flex flex-wrap justify-center gap-2">
+                    <button type="button" class="primary success-print-button btn btn-primary" data-print="struk"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>Cetak struk</button>
+                    <button type="button" class="secondary success-print-button btn btn-secondary" data-print="nota"><span class="material-symbols-outlined" aria-hidden="true">print</span>Cetak nota</button>
+                    <button type="button" class="secondary success-survey-open btn btn-secondary">Isi survey sekarang</button>
                 </div>
             </div>
-            <button type="button" class="customer-survey-toggle" aria-expanded="false" aria-label="Tampilkan Customer Survey"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button>
+            <button type="button" class="customer-survey-toggle hidden" aria-expanded="false" aria-label="Tampilkan Customer Survey"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button>
             ${surveyPanel}
         </div>`
-        : `<div class="modal-box small"><div class="modal-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>${printChoices}</div>`;
+        : `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>${printChoices}</div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelector('.success-survey-open')?.addEventListener('click', () => wrapper.querySelector('.customer-survey-toggle')?.click());
     wrapper.querySelector('.customer-survey-toggle')?.addEventListener('click', (event) => {
@@ -2149,6 +2423,8 @@ function openReceiptPrintChoice(receipt, options = {}) {
             modal.classList.add('is-survey-sized');
         }
         const collapsed = modal?.classList.toggle('is-survey-collapsed');
+        const surveyButton = wrapper.querySelector('.success-survey-open');
+        if (surveyButton) surveyButton.textContent = collapsed ? 'Isi survey sekarang' : 'Kembali ke transaksi';
         button.setAttribute('aria-expanded', String(!collapsed));
         button.setAttribute('aria-label', collapsed ? 'Tampilkan Customer Survey' : 'Sembunyikan Customer Survey');
         const icon = button.querySelector('.material-symbols-outlined');
@@ -2179,6 +2455,14 @@ function openReceiptPrintChoice(receipt, options = {}) {
     wrapper.querySelectorAll('[data-print]').forEach((button) => {
         button.onclick = () => printReceipt(receipt, button.dataset.print);
     });
+    if (receipt.depositId) {
+        const printDepositButton = document.createElement('button');
+        printDepositButton.type = 'button';
+        printDepositButton.className = 'btn btn-secondary';
+        printDepositButton.textContent = 'Cetak DP sebelumnya';
+        printDepositButton.onclick = () => printDeposit(receipt.depositId);
+        wrapper.querySelector('[data-print]')?.parentElement.appendChild(printDepositButton);
+    }
     wrapper.querySelector('.save-therapist-ratings')?.addEventListener('click', async (event) => {
         const saveButton = event.currentTarget;
         const ratings = ratingTherapists.map((therapist) => ({
@@ -2249,8 +2533,8 @@ function openTherapistReviews(therapist) {
     if (title) title.textContent = `Review ${therapist.name || 'terapis'}`;
     if (subtitle) subtitle.textContent = `${reviews.length} ulasan tertulis pada bulan berjalan.`;
     list.innerHTML = reviews.length
-        ? reviews.map((review) => `<article class="therapist-selected-review"><header><span class="therapist-review-stars">${stars(review.stars)}</span><time>${escapeHtml(formatTransactionDate(review.rated_at))}</time></header><p>${escapeHtml(review.review)}</p><small>${Number(review.stars || 0)} dari 5 bintang</small></article>`).join('')
-        : '<p class="empty-state">Belum ada review tertulis untuk terapis ini pada bulan berjalan.</p>';
+        ? reviews.map((review) => `<article class="therapist-selected-review text-sm text-base-content/60"><header><span class="therapist-review-stars">${stars(review.stars)}</span><time>${escapeHtml(formatTransactionDate(review.rated_at))}</time></header><p>${escapeHtml(review.review)}</p><small>${Number(review.stars || 0)} dari 5 bintang</small></article>`).join('')
+        : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada review tertulis untuk terapis ini pada bulan berjalan.</p>';
     list.scrollTop = 0;
 }
 
@@ -2289,8 +2573,8 @@ function openTreatmentCommissionEditor(treatment) {
         if (count >= 2 && count <= 10 && values.length === count) drafts.set(count, values);
     });
 
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal"><div class="modal-head"><div><h2>Atur komisi treatment</h2><p><strong>${escapeHtml(treatment.name)}</strong> · Tentukan komisi dan pembagiannya berdasarkan jumlah terapis.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields"><label>Total komisi (%)<input name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Jumlah terapis<select name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} terapis</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan profil</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small commission-profile-modal w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Atur komisi treatment</h2><p><strong>${escapeHtml(treatment.name)}</strong> · Tentukan komisi dan pembagiannya berdasarkan jumlah terapis.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields grid gap-4"><label>Total komisi (%)<input class="input w-full min-w-0" name="default_commission_percent" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(initialTotal)}" required></label><label>Jumlah terapis<select class="select w-full min-w-0" name="therapist_count">${countOptions.map((count) => `<option value="${count}">${count} terapis</option>`).join('')}</select></label><div class="commission-profile-head"><b>Pembagian komisi</b><button type="button" class="link btn btn-sm no-underline btn-info" data-equal-commission>Bagi rata</button></div><div class="commission-profile-fields"></div><p class="commission-profile-note" aria-live="polite"></p></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan profil</button></footer></form></div>`;
     document.body.appendChild(wrapper);
 
     const form = wrapper.querySelector('form');
@@ -2309,7 +2593,7 @@ function openTreatmentCommissionEditor(treatment) {
     const renderProfile = () => {
         const count = currentCount();
         const values = drafts.get(count) || treatmentCommissionProfile(treatment, count, totalInput.value);
-        fields.innerHTML = values.map((value, index) => `<label>${labelForPosition(index)}<input type="number" min="0" max="100" step="0.0001" value="${escapeHtml(value)}" required></label>`).join('');
+        fields.innerHTML = values.map((value, index) => `<label>${labelForPosition(index)}<input class="input w-full min-w-0" type="number" min="0" max="100" step="0.0001" value="${escapeHtml(value)}" required></label>`).join('');
         updateNote();
     };
     const updateNote = () => {
@@ -2388,13 +2672,19 @@ function renderTreatments() {
         const recipeCount = array(treatment.recipes).length;
         const categoryLabel = String(treatment.category_name || treatment.category?.name || treatment.category || '-');
         const categoryTone = Array.from(categoryLabel).reduce((total, character) => total + character.charCodeAt(0), 0) % 5;
-        return `<article class="treatment-card">
-            <div class="treatment-card-top"><span class="category treatment-category-tone-${categoryTone}">${escapeHtml(categoryLabel)}</span><span class="recipe-info-trigger${recipeCount ? '' : ' is-disabled'}" data-id="${Number(treatment.id)}" title="${recipeCount ? `Lihat ${recipeCount} produk dalam resep` : 'Belum ada produk dalam resep'}" aria-label="${recipeCount ? `Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}` : `Belum ada produk dalam resep ${escapeHtml(treatment.name)}`}" ${recipeCount ? 'role="button" tabindex="0"' : 'aria-disabled="true"'}><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div>
+        return `<article class="treatment-card card bg-base-100 border border-base-300 p-5 gap-4 shadow-sm">
+            <div class="treatment-card-top flex flex-wrap items-center justify-between gap-3"><span class="category treatment-category-tone-${categoryTone} badge badge-primary badge-soft">${escapeHtml(categoryLabel)}</span><span class="recipe-info-trigger${recipeCount ? '' : ' is-disabled'} btn btn-info btn-sm" data-id="${Number(treatment.id)}" title="${recipeCount ? `Lihat ${recipeCount} produk dalam resep` : 'Belum ada produk dalam resep'}" aria-label="${recipeCount ? `Lihat ${recipeCount} produk dalam resep ${escapeHtml(treatment.name)}` : `Belum ada produk dalam resep ${escapeHtml(treatment.name)}`}" ${recipeCount ? 'role="button" tabindex="0"' : 'aria-disabled="true"'}><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div>
             <h3>${escapeHtml(treatment.name)}</h3>
             <p><span><i class="material-symbols-outlined">schedule</i>${Number(treatment.duration_minutes)} menit</span><span><i class="material-symbols-outlined">percent</i>Komisi ${Number(treatment.default_commission_percent ?? treatment.commission_percent ?? 0)}%</span></p>
-            <div class="treatment-foot"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><span class="treatment-standard-actions"><button type="button" class="treatment-price-edit ui-action-edit" data-id="${Number(treatment.id)}">Atur harga</button><button type="button" class="commission-edit ui-action-edit" data-id="${Number(treatment.id)}">Ubah komisi</button><button type="button" class="recipe-button ui-action-edit" data-id="${Number(treatment.id)}">Atur resep</button><button type="button" class="treatment-delete ui-action-delete" data-id="${Number(treatment.id)}" title="Hapus treatment" aria-label="Hapus treatment ${escapeHtml(treatment.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button></span></div>
+            <div class="treatment-foot flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-4 mt-auto"><span><small>Harga normal</small><b>${money(treatmentPrice(treatment))}</b></span><div class="treatment-standard-actions flex flex-wrap items-center justify-between gap-3">
+                <details class="treatment-edit-menu dropdown dropdown-end">
+                    <summary class="ui-action-edit btn btn-sm btn-accent" aria-label="Edit ${escapeHtml(treatment.name)}">Edit</summary>
+                    <div class="treatment-edit-options dropdown-content menu rounded-box border border-base-300 bg-base-100 p-2 shadow-lg w-48 z-20"><button type="button" class="treatment-price-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(treatment.id)}">Atur harga</button><button type="button" class="treatment-duration-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(treatment.id)}">Atur durasi</button><button type="button" class="commission-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(treatment.id)}">Atur komisi</button><button type="button" class="recipe-button ui-action-edit btn btn-sm btn-accent" data-id="${Number(treatment.id)}">Atur resep</button></div>
+                </details>
+                <button type="button" class="treatment-delete ui-action-delete btn btn-sm btn-error" data-id="${Number(treatment.id)}" title="Hapus treatment" aria-label="Hapus treatment ${escapeHtml(treatment.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button>
+            </div></div>
         </article>`;
-    }).join('') || '<p class="empty-state">Belum ada treatment.</p>';
+    }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada treatment.</p>';
 
     document.querySelectorAll('.recipe-button').forEach((button) => {
         const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -2417,6 +2707,22 @@ function renderTreatments() {
                 method: 'PATCH',
                 body: JSON.stringify({ normal_price: Number(data.normal_price) }),
             }));
+        };
+    });
+    document.querySelectorAll('.treatment-duration-edit').forEach((button) => {
+        const treatment = treatments.find((item) => Number(item.id) === Number(button.dataset.id));
+        button.onclick = () => {
+            if (!treatment) return;
+            const dialog = quickForm(`Atur durasi ${treatment.name}`, [
+                ['duration_minutes', 'Durasi (menit)', 'number', null, treatment.duration_minutes],
+            ], (data) => api(`/operasional/treatment/${Number(treatment.id)}/durasi`, {
+                method: 'PATCH', body: JSON.stringify({ duration_minutes: Number(data.duration_minutes) }),
+            }));
+            const input = dialog.querySelector('[name="duration_minutes"]');
+            input.min = '1';
+            input.max = '1440';
+            input.step = '1';
+            input.focus();
         };
     });
     document.querySelectorAll('.treatment-delete').forEach((button) => {
@@ -2449,18 +2755,18 @@ function renderTreatments() {
     const bundleBox = document.getElementById('treatment-bundle-grid');
     if (bundleBox) {
         const bundles = array(state.treatment_bundles);
-        bundleBox.innerHTML = bundles.map((bundle) => `<article class="treatment-card treatment-bundle-card">
-            <div class="treatment-card-top"><span class="category">Bundle</span><span class="bundle-info-trigger recipe-info-trigger" data-id="${Number(bundle.id)}" role="button" tabindex="0" title="Lihat isi bundle" aria-label="Lihat isi bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div><h3>${escapeHtml(bundle.name)}</h3>
+        bundleBox.innerHTML = bundles.map((bundle) => `<article class="treatment-card treatment-bundle-card card bg-base-100 border border-base-300 p-5 gap-4 shadow-sm">
+            <div class="treatment-card-top flex flex-wrap items-center justify-between gap-3"><span class="category badge badge-secondary badge-soft">Bundle</span><span class="bundle-info-trigger recipe-info-trigger btn btn-sm btn-info" data-id="${Number(bundle.id)}" role="button" tabindex="0" title="Lihat isi bundle" aria-label="Lihat isi bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">info</span></span></div><h3>${escapeHtml(bundle.name)}</h3>
             <p>${array(bundle.items).map((item, index) => `<span>${index + 1}. ${escapeHtml(item.name)}</span>`).join('')}</p>
-            <div class="treatment-foot"><span><small>Harga normal ${money(bundle.normal_price)}</small><b>${money(bundle.bundle_price)}</b><small>Hemat ${money(bundle.saving_amount)}</small></span><span class="treatment-bundle-actions"><button type="button" class="bundle-price-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur harga</button><button type="button" class="recipe-button bundle-treatment-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur treatment</button><button type="button" class="recipe-button bundle-order-edit ui-action-edit" data-id="${Number(bundle.id)}">Atur urutan</button><button type="button" class="bundle-delete ui-action-delete" data-id="${Number(bundle.id)}" title="Hapus bundle" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button></span></div>
-        </article>`).join('') || '<p class="empty-state">Belum ada treatment bundle.</p>';
+            <div class="treatment-foot flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-4 mt-auto"><span><small>Harga normal ${money(bundle.normal_price)}</small><b>${money(bundle.bundle_price)}</b><small>Hemat ${money(bundle.saving_amount)}</small></span><span class="treatment-bundle-actions flex flex-wrap items-center justify-between gap-3"><button type="button" class="bundle-price-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(bundle.id)}">Atur harga</button><button type="button" class="recipe-button bundle-treatment-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(bundle.id)}">Atur treatment</button><button type="button" class="recipe-button bundle-order-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(bundle.id)}">Atur urutan</button><button type="button" class="bundle-delete ui-action-delete btn btn-sm btn-error" data-id="${Number(bundle.id)}" title="Hapus bundle" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button></span></div>
+        </article>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada treatment bundle.</p>';
         bundleBox.querySelectorAll('.bundle-info-trigger').forEach((trigger) => {
             const open = () => {
                 const bundle = bundles.find((item) => Number(item.id) === Number(trigger.dataset.id));
                 if (!bundle) return;
                 const wrapper = document.createElement('div');
-                wrapper.className = 'modal open quick-modal';
-                wrapper.innerHTML = `<div class="modal-box recipe-info-modal"><div class="modal-head"><div><h2>${escapeHtml(bundle.name)}</h2><p>Ingredients treatment bundle</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><ul class="recipe-summary">${array(bundle.items).map((item, index) => `<li><span>${index + 1}. ${escapeHtml(item.name)}</span><b>${Number(item.duration_minutes)} menit</b></li>`).join('')}</ul><footer><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
+                wrapper.className = 'modal open quick-modal p-4';
+                wrapper.innerHTML = `<div class="modal-box recipe-info-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>${escapeHtml(bundle.name)}</h2><p>Ingredients treatment bundle</p></div><button type="button" class="quick-close btn btn-sm btn-error"><span class="material-symbols-outlined">close</span></button></div><ul class="recipe-summary grid gap-3">${array(bundle.items).map((item, index) => `<li><span>${index + 1}. ${escapeHtml(item.name)}</span><b>${Number(item.duration_minutes)} menit</b></li>`).join('')}</ul><footer><button type="button" class="secondary quick-close btn btn-error">Tutup</button></footer></div>`;
                 document.body.appendChild(wrapper);
                 wrapper.querySelectorAll('.quick-close').forEach((close) => { close.onclick = () => wrapper.remove(); });
             };
@@ -2517,13 +2823,13 @@ function renderTreatments() {
 function openBundleOrderEditor(bundle) {
     const orderedItems = array(bundle.items).map((item) => ({ ...item }));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box bundle-order-editor-modal"><div class="modal-head"><div><h2>Atur urutan bundle</h2><p>${escapeHtml(bundle.name)} · seret atau gunakan tombol panah</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="bundle-order-editor-help"><span class="material-symbols-outlined" aria-hidden="true">touch_app</span><p>Urutan pertama dikerjakan lebih dahulu. Perubahan ini akan digunakan pada reservasi bundle berikutnya.</p></div><div class="bundle-order-list bundle-order-sortable"></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan urutan</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box bundle-order-editor-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Atur urutan bundle</h2><p>${escapeHtml(bundle.name)} · seret atau gunakan tombol panah</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="bundle-order-editor-help"><span class="material-symbols-outlined" aria-hidden="true">touch_app</span><p>Urutan pertama dikerjakan lebih dahulu. Perubahan ini akan digunakan pada reservasi bundle berikutnya.</p></div><div class="bundle-order-list bundle-order-sortable list-none p-0"></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan urutan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     let draggedIndex = null;
     const render = () => {
         const list = wrapper.querySelector('.bundle-order-list');
-        list.innerHTML = orderedItems.map((item, index) => `<div class="bundle-order-item" draggable="true" data-index="${index}"><span class="bundle-drag-handle material-symbols-outlined" title="Seret untuk memindahkan">drag_indicator</span><span class="bundle-order-number">${index + 1}</span><span><b>${escapeHtml(item.name)}</b><small>${Number(item.duration_minutes)} menit</small></span><span class="bundle-order-actions"><button type="button" data-direction="up" ${index === 0 ? 'disabled' : ''} aria-label="Naikkan ${escapeHtml(item.name)}"><span class="material-symbols-outlined">arrow_upward</span></button><button type="button" data-direction="down" ${index === orderedItems.length - 1 ? 'disabled' : ''} aria-label="Turunkan ${escapeHtml(item.name)}"><span class="material-symbols-outlined">arrow_downward</span></button></span></div>`).join('');
+        list.innerHTML = orderedItems.map((item, index) => `<div class="bundle-order-item rounded-box border border-base-300 p-4" draggable="true" data-index="${index}"><span class="bundle-drag-handle material-symbols-outlined" title="Seret untuk memindahkan">drag_indicator</span><span class="bundle-order-number badge badge-ghost">${index + 1}</span><span><b>${escapeHtml(item.name)}</b><small>${Number(item.duration_minutes)} menit</small></span><span class="bundle-order-actions flex gap-1 ml-auto"><button class="btn btn-sm btn-info" type="button" data-direction="up" ${index === 0 ? 'disabled' : ''} aria-label="Naikkan ${escapeHtml(item.name)}"><span class="material-symbols-outlined">arrow_upward</span></button><button class="btn btn-sm btn-info" type="button" data-direction="down" ${index === orderedItems.length - 1 ? 'disabled' : ''} aria-label="Turunkan ${escapeHtml(item.name)}"><span class="material-symbols-outlined">arrow_downward</span></button></span></div>`).join('');
         list.querySelectorAll('.bundle-order-actions button').forEach((button) => {
             button.onclick = () => {
                 const index = Number(button.closest('.bundle-order-item').dataset.index);
@@ -2584,15 +2890,15 @@ function openBundleTreatmentEditor(bundle) {
     const treatments = array(state.treatments);
     const selectedIds = array(bundle.items).map((item) => Number(item.treatment_id));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal bundle-treatment-editor-modal"><div class="modal-head"><div><h2>Atur treatment bundle</h2><p>${escapeHtml(bundle.name)} &middot; pilih layanan yang menjadi isi paket.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="bundle-editor-grid"><section><div class="bundle-editor-heading"><b>Daftar treatment</b><small>Centang treatment yang masuk dalam paket</small></div><label class="bundle-treatment-search"><span class="material-symbols-outlined">search</span><input type="search" placeholder="Cari nama atau kategori treatment..." autocomplete="off"></label><div class="bundle-treatment-options bundle-treatment-choice-list">${treatments.map((treatment) => `<label class="bundle-treatment-choice"><span class="bundle-treatment-choice-info"><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category || 'Treatment')} &middot; ${Number(treatment.duration_minutes)} menit &middot; ${money(treatmentPrice(treatment))}</small></span><input type="checkbox" name="treatment_ids" value="${Number(treatment.id)}" ${selectedIds.includes(Number(treatment.id)) ? 'checked' : ''}></label>`).join('')}<p class="bundle-treatment-search-empty" hidden>Treatment tidak ditemukan.</p></div></section><section><div class="bundle-editor-heading"><b>Treatment terpilih</b><small>Treatment baru ditempatkan pada urutan terakhir</small></div><div class="bundle-order-list bundle-treatment-selected"></div></section></div><div class="bundle-order-editor-help"><span class="material-symbols-outlined">info</span><p>Produk tidak dipilih di sini. Resep dan takaran tetap mengikuti pengaturan setiap treatment.</p></div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan treatment</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal bundle-treatment-editor-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Atur treatment bundle</h2><p>${escapeHtml(bundle.name)} &middot; pilih layanan yang menjadi isi paket.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="bundle-editor-grid grid gap-4 md:grid-cols-2"><section><div class="bundle-editor-heading grid gap-1 mb-3"><b>Daftar treatment</b><small>Centang treatment yang masuk dalam paket</small></div><label class="bundle-treatment-search"><span class="material-symbols-outlined">search</span><input class="input w-full min-w-0" type="search" placeholder="Cari nama atau kategori treatment..." autocomplete="off"></label><div class="bundle-treatment-options bundle-treatment-choice-list grid max-h-80 overflow-y-auto gap-2">${treatments.map((treatment) => `<label class="bundle-treatment-choice rounded-box border border-base-300 p-4"><span class="bundle-treatment-choice-info grid gap-2"><b>${escapeHtml(treatment.name)}</b><small>${escapeHtml(treatment.category || 'Treatment')} &middot; ${Number(treatment.duration_minutes)} menit &middot; ${money(treatmentPrice(treatment))}</small></span><input class="checkbox checkbox-primary checkbox-sm" type="checkbox" name="treatment_ids" value="${Number(treatment.id)}" ${selectedIds.includes(Number(treatment.id)) ? 'checked' : ''}></label>`).join('')}<p class="bundle-treatment-search-empty" hidden>Treatment tidak ditemukan.</p></div></section><section><div class="bundle-editor-heading grid gap-1 mb-3"><b>Treatment terpilih</b><small>Treatment baru ditempatkan pada urutan terakhir</small></div><div class="bundle-order-list bundle-treatment-selected"></div></section></div><div class="bundle-order-editor-help"><span class="material-symbols-outlined">info</span><p>Produk tidak dipilih di sini. Resep dan takaran tetap mengikuti pengaturan setiap treatment.</p></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan treatment</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     const renderSelected = () => {
         const box = wrapper.querySelector('.bundle-treatment-selected');
         box.innerHTML = selectedIds.length ? selectedIds.map((id, index) => {
             const treatment = treatments.find((item) => Number(item.id) === id);
-            return `<div class="bundle-order-item"><span class="bundle-order-number">${index + 1}</span><span><b>${escapeHtml(treatment?.name || 'Treatment')}</b><small>${Number(treatment?.duration_minutes || 0)} menit</small></span></div>`;
-        }).join('') : '<p class="bundle-order-empty">Belum ada treatment dipilih.</p>';
+            return `<div class="bundle-order-item rounded-box border border-base-300 p-4"><span class="bundle-order-number badge badge-ghost">${index + 1}</span><span><b>${escapeHtml(treatment?.name || 'Treatment')}</b><small>${Number(treatment?.duration_minutes || 0)} menit</small></span></div>`;
+        }).join('') : '<p class="bundle-order-empty text-sm text-base-content/60 py-4">Belum ada treatment dipilih.</p>';
     };
     wrapper.querySelectorAll('[name="treatment_ids"]').forEach((input) => {
         input.onchange = () => {
@@ -2650,14 +2956,15 @@ async function loadCustomerSurveyPage(page = 1) {
     const therapistSummary = array(customerSurveyPageState.therapist_summary);
     const summaryBox = document.getElementById('customer-survey-therapist-summary');
     if (summaryBox) {
+        summaryBox.hidden = therapistSummary.length === 0;
         const visibleTherapists = customerSurveySummaryExpanded ? therapistSummary : therapistSummary.slice(0, 6);
-        summaryBox.innerHTML = `<div class="customer-survey-summary-head"><div><h3>Penilaian total therapist</h3><p>Akumulasi dari seluruh Customer Survey yang sudah diisi.</p></div></div><div class="customer-survey-summary-grid">${visibleTherapists.map((therapist) => `<article><b>${escapeHtml(therapist.employee_name)}</b><strong>${Number(therapist.average_score || 0).toFixed(1)}<small>/ 5</small></strong><span>${Number(therapist.total_surveys || 0)} survey masuk</span></article>`).join('') || '<p class="customer-survey-summary-empty">Belum ada penilaian therapist.</p>'}</div>${therapistSummary.length > 6 ? `<button type="button" class="customer-survey-summary-toggle secondary">${customerSurveySummaryExpanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${therapistSummary.length} terapis`}</button>` : ''}`;
+        summaryBox.innerHTML = `<div class="customer-survey-summary-head flex items-center justify-between gap-3"><div><h3>Penilaian therapist</h3></div></div><div class="customer-survey-summary-grid grid gap-3 sm:grid-cols-2 lg:grid-cols-3">${visibleTherapists.map((therapist) => `<article class="grid gap-2 rounded-box border border-secondary/20 bg-secondary/5 p-4"><b>${escapeHtml(therapist.employee_name)}</b><strong class="flex items-baseline gap-1 text-2xl text-secondary">${Number(therapist.average_score || 0).toFixed(1)}<small>/ 5</small></strong><span>${Number(therapist.total_surveys || 0)} survey masuk</span></article>`).join('') || '<p class="customer-survey-summary-empty py-8 text-center text-sm text-base-content/60">Belum ada penilaian therapist.</p>'}</div>${therapistSummary.length > 6 ? `<button type="button" class="customer-survey-summary-toggle secondary btn btn-secondary">${customerSurveySummaryExpanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${therapistSummary.length} terapis`}</button>` : ''}`;
         summaryBox.querySelector('.customer-survey-summary-toggle')?.addEventListener('click', () => {
             customerSurveySummaryExpanded = !customerSurveySummaryExpanded;
             loadCustomerSurveyPage(page).catch((error) => toast(error.message, true));
         });
     }
-    box.innerHTML = rows.map((survey) => `<div class="tr"><span><b>${escapeHtml(survey.transaction_number)}</b><small>${escapeHtml(survey.customer_name)}</small></span><span>${escapeHtml(survey.customer_phone || '-')}</span><span>${escapeHtml(array(survey.treatments).join(', ') || '-')}</span><span><em class="status-${escapeHtml(survey.status)}">${survey.status === 'draft' ? 'Belum diisi' : 'Sudah diisi'}</em></span><span class="customer-survey-actions">${survey.status === 'draft' ? `<button type="button" class="customer-survey-fill ui-action-edit" data-id="${Number(survey.id)}">Isi survey</button>` : `<button type="button" class="customer-survey-detail ui-action-view" data-id="${Number(survey.id)}">Detail</button><button type="button" class="customer-survey-followup ui-action-delete" data-id="${Number(survey.id)}">Tindak lanjut</button>`}</span></div>`).join('') || '<p class="empty-state">Tidak ada customer survey.</p>';
+    box.innerHTML = dataTable(['Invoice / pelanggan', 'Telepon', 'Treatment', 'Status', 'Aksi'], rows.map((survey) => `<div class="tr"><span><b>${escapeHtml(survey.transaction_number)}</b><small>${escapeHtml(survey.customer_name)}</small></span><span>${escapeHtml(survey.customer_phone || '-')}</span><span>${escapeHtml(array(survey.treatments).join(', ') || '-')}</span><span><span class="badge badge-soft badge-sm ${survey.status === 'draft' ? 'badge-warning' : 'badge-success'} status-${escapeHtml(survey.status)}">${survey.status === 'draft' ? 'Belum diisi' : 'Sudah diisi'}</span></span><span class="customer-survey-actions flex justify-end gap-2">${survey.status === 'draft' ? `<button type="button" class="customer-survey-fill ui-action-edit btn btn-sm btn-accent" data-id="${Number(survey.id)}">Isi survey</button>` : `<button type="button" class="customer-survey-detail ui-action-view btn btn-sm btn-info" data-id="${Number(survey.id)}">Detail</button><button type="button" class="customer-survey-followup ui-action-delete btn btn-sm btn-error" data-id="${Number(survey.id)}">Tindak lanjut</button>`}</span></div>`).join(''), 'Tidak ada customer survey.');
     box.querySelectorAll('.customer-survey-fill').forEach((button) => {
         button.onclick = () => {
             const survey = rows.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -2686,7 +2993,7 @@ async function loadCustomerSurveyPage(page = 1) {
         const perPage = Number(meta.per_page || 10);
         const firstRow = total ? ((currentPage - 1) * perPage) + 1 : 0;
         const lastRow = total ? Math.min(currentPage * perPage, total) : 0;
-        pagination.innerHTML = `<small>Menampilkan ${firstRow.toLocaleString('id-ID')}–${lastRow.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} survey</small>${lastPage > 1 ? `<div><button type="button" class="customer-survey-page ui-pagination-button" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${currentPage} / ${lastPage}</span><button type="button" class="customer-survey-page ui-pagination-button" data-page="${currentPage + 1}" ${currentPage >= lastPage ? 'disabled' : ''}>Berikutnya →</button></div>` : ''}`;
+        pagination.innerHTML = `<small>Menampilkan ${firstRow.toLocaleString('id-ID')}–${lastRow.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} survey</small>${lastPage > 1 ? `<div><button type="button" class="customer-survey-page ui-pagination-button btn btn-sm btn-secondary" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${currentPage} / ${lastPage}</span><button type="button" class="customer-survey-page ui-pagination-button btn btn-sm btn-secondary" data-page="${currentPage + 1}" ${currentPage >= lastPage ? 'disabled' : ''}>Berikutnya →</button></div>` : ''}`;
         pagination.querySelectorAll('.customer-survey-page').forEach((button) => {
             button.onclick = async () => {
                 if (button.disabled) return;
@@ -2708,15 +3015,15 @@ function openCustomerSurveyDetail(survey) {
     const value = (group, key) => labels[group][key] || '-';
     const ratings = array(survey.therapist_ratings);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box customer-survey-detail-modal">
-        <div class="modal-head"><div><h2>Detail Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}${survey.submitted_at ? ` &middot; ${escapeHtml(formatTransactionDate(survey.submitted_at))}` : ''}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-        <div class="customer-survey-detail-content">
-            <section><h3>Penilaian therapist</h3><div class="customer-survey-rating-list">${ratings.map((rating) => `<div><span>${escapeHtml(rating.employee_name)}</span><b>${escapeHtml(value('therapist', rating.rating))}</b></div>`).join('') || '<p>Belum ada penilaian therapist.</p>'}</div></section>
-            <section><h3>Penilaian kunjungan</h3><div class="customer-survey-answer-grid"><div><small>Fasilitas</small><b>${escapeHtml(value('facility', survey.facility_rating))}</b></div><div><small>Resepsionis</small><b>${escapeHtml(value('reception', survey.reception_rating))}</b></div><div><small>Ingin kembali</small><b>${escapeHtml(value('returnIntent', survey.return_intent))}</b></div><div><small>Penilaian harga</small><b>${escapeHtml(value('price', survey.price_rating))}</b></div></div></section>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box customer-survey-detail-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Detail Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}${survey.submitted_at ? ` &middot; ${escapeHtml(formatTransactionDate(survey.submitted_at))}` : ''}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="customer-survey-detail-content grid gap-4">
+            <section><h3>Penilaian therapist</h3><div class="customer-survey-rating-list grid gap-3">${ratings.map((rating) => `<div><span>${escapeHtml(rating.employee_name)}</span><b>${escapeHtml(value('therapist', rating.rating))}</b></div>`).join('') || '<p>Belum ada penilaian therapist.</p>'}</div></section>
+            <section><h3>Penilaian kunjungan</h3><div class="customer-survey-answer-grid grid gap-4 md:grid-cols-2"><div><small>Fasilitas</small><b>${escapeHtml(value('facility', survey.facility_rating))}</b></div><div><small>Resepsionis</small><b>${escapeHtml(value('reception', survey.reception_rating))}</b></div><div><small>Ingin kembali</small><b>${escapeHtml(value('returnIntent', survey.return_intent))}</b></div><div><small>Penilaian harga</small><b>${escapeHtml(value('price', survey.price_rating))}</b></div></div></section>
             <section><h3>Masukan pelanggan</h3><p class="customer-survey-feedback-detail">${escapeHtml(survey.feedback || 'Pelanggan tidak memberi masukan tertulis.')}</p></section>
         </div>
-        <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+        <footer><button type="button" class="secondary quick-close btn btn-error">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
@@ -2726,12 +3033,12 @@ function openSurveyCommissionFollowup(survey) {
     const assignments = array(survey.commission_assignments);
     // Survey commission follow-up uses a structured table below.
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
+    wrapper.className = 'modal open quick-modal p-4';
     queueMicrotask(() => {
-        wrapper.innerHTML = `<div class="modal-box commission-followup-modal">
-            <div class="modal-head"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-            <div class="commission-followup-content"><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list"><div class="commission-followup-heading"><span>Treatment</span><span>Terapis</span><span>Komisi</span><span>Aksi</span></div>${assignments.map((assignment) => `<article><b>${escapeHtml(assignment.treatment_name)}</b><span class="commission-therapist">${escapeHtml(assignment.employee_name)}</span><span class="commission-amount">${money(assignment.commission_amount)}</span>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `<small>${escapeHtml(assignment.commission_void_reason)}</small>` : ''}</em>` : `<button type="button" class="void-survey-commission ui-action-delete" data-assignment-id="${Number(assignment.id)}">Batalkan</button>`}</article>`).join('') || '<p class="empty-state">Tidak ada komisi treatment pada transaksi ini.</p>'}</div></div>
-            <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+        wrapper.innerHTML = `<div class="modal-box commission-followup-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+            <div class="commission-followup-content grid gap-4"><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list overflow-x-auto [&>article]:grid [&>article]:grid-cols-[1.5fr_1fr_1fr_auto] [&>article]:items-center [&>article]:gap-3 [&>article]:min-w-[36rem] [&>article]:border-b [&>article]:border-base-300 [&>article]:py-4"><div class="commission-followup-heading grid min-w-[36rem] grid-cols-[1.5fr_1fr_1fr_auto] gap-3 bg-base-200 p-3 text-xs font-semibold"><span>Treatment</span><span>Terapis</span><span>Komisi</span><span>Aksi</span></div>${assignments.map((assignment) => `<article><b>${escapeHtml(assignment.treatment_name)}</b><span class="commission-therapist">${escapeHtml(assignment.employee_name)}</span><span class="commission-amount">${money(assignment.commission_amount)}</span>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `<small>${escapeHtml(assignment.commission_void_reason)}</small>` : ''}</em>` : `<button type="button" class="void-survey-commission ui-action-delete btn btn-sm btn-error" data-assignment-id="${Number(assignment.id)}">Batalkan</button>`}</article>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada komisi treatment pada transaksi ini.</p>'}</div></div>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Tutup</button></footer>
         </div>`;
         wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
         wrapper.querySelectorAll('.void-survey-commission').forEach((button) => {
@@ -2743,7 +3050,7 @@ function openSurveyCommissionFollowup(survey) {
             });
         });
     });
-    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list">${assignments.map((assignment) => `<article><span><b>${escapeHtml(assignment.treatment_name)}</b><small>${escapeHtml(assignment.employee_name)} · ${money(assignment.commission_amount)}</small>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `: ${escapeHtml(assignment.commission_void_reason)}` : ''}</em>` : ''}</span>${assignment.commission_voided_at ? '' : `<button type="button" class="void-survey-commission ui-action-delete" data-assignment-id="${Number(assignment.id)}">Batalkan komisi</button>`}</article>`).join('') || '<p class="empty-state">Tidak ada komisi treatment pada transaksi ini.</p>'}</div><footer><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
+    wrapper.innerHTML = `<div class="modal-box w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Tindak lanjut komisi</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close btn btn-sm btn-error"><span class="material-symbols-outlined">close</span></button></div><p class="commission-followup-note">Batalkan hanya komisi therapist yang terkait komplain. Nominal awal tetap tersimpan sebagai riwayat.</p><div class="commission-followup-list overflow-x-auto [&>article]:grid [&>article]:grid-cols-[1.5fr_1fr_1fr_auto] [&>article]:items-center [&>article]:gap-3 [&>article]:min-w-[36rem] [&>article]:border-b [&>article]:border-base-300 [&>article]:py-4">${assignments.map((assignment) => `<article><span><b>${escapeHtml(assignment.treatment_name)}</b><small>${escapeHtml(assignment.employee_name)} · ${money(assignment.commission_amount)}</small>${assignment.commission_voided_at ? `<em>Sudah dibatalkan${assignment.commission_void_reason ? `: ${escapeHtml(assignment.commission_void_reason)}` : ''}</em>` : ''}</span>${assignment.commission_voided_at ? '' : `<button type="button" class="void-survey-commission ui-action-delete btn btn-sm btn-error" data-assignment-id="${Number(assignment.id)}">Batalkan komisi</button>`}</article>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada komisi treatment pada transaksi ini.</p>'}</div><footer><button type="button" class="secondary quick-close btn btn-error">Tutup</button></footer></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelectorAll('.void-survey-commission').forEach((button) => {
@@ -2759,9 +3066,9 @@ function openSurveyCommissionFollowup(survey) {
 function openCustomerSurveyDraftLegacy(survey) {
     const therapists = array(survey.therapists);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    const therapistRatings = therapists.map((therapist) => `<label>${escapeHtml(therapist.name)}<select name="therapist-${Number(therapist.id)}"><option value="">Pilih penilaian</option><option value="very_satisfied">Sangat puas</option><option value="standard">Standar</option><option value="dissatisfied">Kurang puas</option><option value="very_dissatisfied">Sangat tidak puas</option></select></label>`).join('');
-    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields">${therapistRatings}<label>Fasilitas<select name="facility_rating" required><option value="">Pilih penilaian</option><option value="very_suitable">Sangat sesuai</option><option value="standard">Standar</option><option value="poor">Kurang sesuai</option></select></label><label>Resepsionis<select name="reception_rating" required><option value="">Pilih penilaian</option><option value="very_good">Sangat baik</option><option value="good">Baik</option><option value="neutral">Biasa</option><option value="bad">Buruk</option></select></label><label>Ingin kembali<select name="return_intent" required><option value="">Pilih jawaban</option><option value="yes">Ya</option><option value="maybe">Mungkin</option><option value="no">Tidak</option></select></label><label>Penilaian harga<select name="price_rating" required><option value="">Pilih penilaian</option><option value="fair">Cocok</option><option value="worth_it">Mahal tapi worth it</option><option value="expensive">Mahal</option></select></label><label>Masukan<textarea name="feedback" maxlength="1000"></textarea></label></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan survey</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    const therapistRatings = therapists.map((therapist) => `<label>${escapeHtml(therapist.name)}<select class="select w-full min-w-0" name="therapist-${Number(therapist.id)}"><option value="">Pilih penilaian</option><option value="very_satisfied">Sangat puas</option><option value="standard">Standar</option><option value="dissatisfied">Kurang puas</option><option value="very_dissatisfied">Sangat tidak puas</option></select></label>`).join('');
+    wrapper.innerHTML = `<div class="modal-box w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} · ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close btn btn-sm btn-error"><span class="material-symbols-outlined">close</span></button></div><form><div class="quick-fields grid gap-4">${therapistRatings}<label>Fasilitas<select class="select w-full min-w-0" name="facility_rating" required><option value="">Pilih penilaian</option><option value="very_suitable">Sangat sesuai</option><option value="standard">Standar</option><option value="poor">Kurang sesuai</option></select></label><label>Resepsionis<select class="select w-full min-w-0" name="reception_rating" required><option value="">Pilih penilaian</option><option value="very_good">Sangat baik</option><option value="good">Baik</option><option value="neutral">Biasa</option><option value="bad">Buruk</option></select></label><label>Ingin kembali<select class="select w-full min-w-0" name="return_intent" required><option value="">Pilih jawaban</option><option value="yes">Ya</option><option value="maybe">Mungkin</option><option value="no">Tidak</option></select></label><label>Penilaian harga<select class="select w-full min-w-0" name="price_rating" required><option value="">Pilih penilaian</option><option value="fair">Cocok</option><option value="worth_it">Mahal tapi worth it</option><option value="expensive">Mahal</option></select></label><label>Masukan<textarea class="textarea w-full min-w-0" name="feedback" maxlength="1000"></textarea></label></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan survey</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('form').onsubmit = async (event) => {
@@ -2781,22 +3088,22 @@ function openCustomerSurveyDraftLegacy(survey) {
 function openCustomerSurveyDraft(survey) {
     const therapists = array(survey.therapists);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    const choices = (name, options, columns = 'three', textOnly = false) => `<div class="survey-choice-grid ${columns}${textOnly ? ' text-only' : ''}">${options.map(([value, icon, label]) => `<label class="survey-choice"><input type="radio" name="${name}" value="${value}">${icon ? `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` : ''}<small>${label}</small></label>`).join('')}</div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    const choices = (name, options, columns = 'three', textOnly = false) => `<div class="survey-choice-grid ${columns}${textOnly ? ' text-only' : ''} grid grid-cols-2 gap-2 ${columns === 'four' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}">${options.map(([value, icon, label]) => `<label class="survey-choice flex flex-col items-center gap-2 rounded-box border border-base-300 p-3 text-center cursor-pointer has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="${name}" value="${value}">${icon ? `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` : ''}<small>${label}</small></label>`).join('')}</div>`;
     const therapistRatings = therapists.map((therapist) => `<fieldset data-survey-therapist-id="${Number(therapist.id)}"><legend>${escapeHtml(therapist.name)}</legend>${choices(`survey-draft-therapist-${Number(therapist.id)}`, [
         ['very_satisfied', 'sentiment_very_satisfied', 'Sangat baik'],
         ['standard', 'sentiment_satisfied', 'Standar'],
         ['dissatisfied', 'sentiment_dissatisfied', 'Kurang puas'],
         ['very_dissatisfied', 'sentiment_very_dissatisfied', 'Sangat buruk'],
     ], 'four')}</fieldset>`).join('');
-    wrapper.innerHTML = `<div class="modal-box customer-survey-entry-modal"><div class="modal-head"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="customer-survey-entry-content">
-        ${therapists.length ? `<div class="survey-question survey-therapist-question"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3><div class="survey-therapist-list">${therapistRatings}</div></div>` : ''}
-        <div class="survey-question"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3>${choices('survey-draft-facility', [['very_suitable', 'sentiment_very_satisfied', 'Sangat sesuai'], ['standard', 'sentiment_neutral', 'Standar'], ['poor', 'sentiment_dissatisfied', 'Kurang bagus']])}</div>
-        <div class="survey-question"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3>${choices('survey-draft-reception', [['very_good', 'sentiment_very_satisfied', 'Sangat baik'], ['good', 'thumb_up', 'Baik'], ['neutral', 'sentiment_neutral', 'Biasa saja'], ['bad', 'thumb_down', 'Buruk']], 'four')}</div>
-        <div class="survey-question"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3>${choices('survey-draft-return', [['yes', '', 'Sudah pasti, iya!'], ['maybe', '', 'Hmm, bingung'], ['no', '', 'Tidak dulu']], 'three', true)}</div>
-        <div class="survey-question"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3>${choices('survey-draft-price', [['fair', '', 'Cocok dengan harganya'], ['worth_it', '', 'Agak mahal tapi worth it'], ['expensive', '', 'Mahal sih kak']], 'three', true)}</div>
-        <label class="survey-feedback">Masukan untuk kami<textarea name="feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
-    </div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary">Simpan survey</button></footer></form></div>`;
+    wrapper.innerHTML = `<div class="modal-box customer-survey-entry-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Customer Survey</h2><p>${escapeHtml(survey.transaction_number)} &middot; ${escapeHtml(survey.customer_name)}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div><form><div class="customer-survey-entry-content grid gap-6">
+        ${therapists.length ? `<div class="survey-question survey-therapist-question grid gap-3"><h3><span>1</span> Apakah pelayanan therapist kami memuaskan?</h3><div class="survey-therapist-list grid gap-2">${therapistRatings}</div></div>` : ''}
+        <div class="survey-question grid gap-3"><h3><span>2</span> Apakah fasilitas kami sesuai dengan ekspektasi Anda?</h3>${choices('survey-draft-facility', [['very_suitable', 'sentiment_very_satisfied', 'Sangat sesuai'], ['standard', 'sentiment_neutral', 'Standar'], ['poor', 'sentiment_dissatisfied', 'Kurang bagus']])}</div>
+        <div class="survey-question grid gap-3"><h3><span>3</span> Bagaimana pelayanan resepsionis kami?</h3>${choices('survey-draft-reception', [['very_good', 'sentiment_very_satisfied', 'Sangat baik'], ['good', 'thumb_up', 'Baik'], ['neutral', 'sentiment_neutral', 'Biasa saja'], ['bad', 'thumb_down', 'Buruk']], 'four')}</div>
+        <div class="survey-question grid gap-3"><h3><span>4</span> Apakah Anda ingin datang kembali ke Selesa?</h3>${choices('survey-draft-return', [['yes', '', 'Sudah pasti, iya!'], ['maybe', '', 'Hmm, bingung'], ['no', '', 'Tidak dulu']], 'three', true)}</div>
+        <div class="survey-question grid gap-3"><h3><span>5</span> Bagaimana rentang harga kami menurut Anda?</h3>${choices('survey-draft-price', [['fair', '', 'Cocok dengan harganya'], ['worth_it', '', 'Agak mahal tapi worth it'], ['expensive', '', 'Mahal sih kak']], 'three', true)}</div>
+        <label class="survey-feedback">Masukan untuk kami<textarea class="textarea w-full min-w-0" name="feedback" maxlength="1000" placeholder="Tulis masukan pelanggan bila ada."></textarea></label>
+    </div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan survey</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     wrapper.querySelector('form').onsubmit = async (event) => {
@@ -2828,11 +3135,11 @@ function openRecipeInfo(treatment) {
     if (!treatment || !recipes.length) return;
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box recipe-info-modal">
-        <div class="modal-head"><div><h2>Resep produk</h2><p>${escapeHtml(treatment.name)}</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-        <ul class="recipe-summary">${recipes.map((recipe) => `<li><span>${escapeHtml(recipe.product_name || recipe.product?.name || 'Produk')}</span><b>${escapeHtml(Number(recipe.quantity))} ${escapeHtml(recipe.unit || recipe.product?.unit || '')}</b></li>`).join('')}</ul>
-        <footer><button type="button" class="secondary quick-close">Tutup</button></footer>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box recipe-info-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Resep produk</h2><p>${escapeHtml(treatment.name)}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <ul class="recipe-summary grid gap-3">${recipes.map((recipe) => `<li><span>${escapeHtml(recipe.product_name || recipe.product?.name || 'Produk')}</span><b>${escapeHtml(Number(recipe.quantity))} ${escapeHtml(recipe.unit || recipe.product?.unit || '')}</b></li>`).join('')}</ul>
+        <footer><button type="button" class="secondary quick-close btn btn-error">Tutup</button></footer>
     </div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
@@ -2851,22 +3158,22 @@ function openRecipeChecklist(treatment) {
 
     const recipes = new Map(array(treatment.recipes).map((recipe) => [Number(recipe.product_id), recipe]));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box recipe-modal">
-        <div class="modal-head"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box recipe-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Atur resep produk</h2><p>${escapeHtml(treatment.name)} · centang setiap produk yang dipakai.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
         <form>
-            <label class="recipe-product-search">Cari produk<input type="search" id="recipe-product-search" placeholder="Nama atau kategori produk..."></label>
-            <div class="recipe-checklist">${products.map((product) => {
+            <label class="recipe-product-search">Cari produk<input class="input w-full min-w-0" type="search" id="recipe-product-search" placeholder="Nama atau kategori produk..."></label>
+            <div class="recipe-checklist grid max-h-96 overflow-y-auto">${products.map((product) => {
                 const recipe = recipes.get(Number(product.id));
                 const checked = Boolean(recipe);
                 const quantity = recipe ? String(Number(recipe.quantity)) : '';
-                return `<div class="recipe-product${checked ? ' selected' : ''}">
-                    <label class="recipe-product-toggle-wrap" aria-label="Pakai ${escapeHtml(product.name)}"><input class="recipe-product-toggle" type="checkbox" data-id="${Number(product.id)}" ${checked ? 'checked' : ''}></label>
-                    <div class="recipe-product-info"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || 'Produk')} · stok ${escapeHtml(productStock(product))} ${escapeHtml(productUnit(product))}</small></div>
-                    <label class="recipe-product-quantity"><span class="sr-only">Jumlah ${escapeHtml(product.name)}</span><input class="recipe-product-quantity-input" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Jumlah" value="${escapeHtml(quantity)}" ${checked ? 'required' : 'disabled'}><small>${escapeHtml(productUnit(product))}</small></label>
+                return `<div class="recipe-product${checked ? ' selected' : ''} grid grid-cols-[auto_minmax(0,1fr)] gap-3 items-center border-b border-base-300 p-3">
+                    <label class="recipe-product-toggle-wrap" aria-label="Pakai ${escapeHtml(product.name)}"><input class="recipe-product-toggle checkbox checkbox-primary checkbox-sm" type="checkbox" data-id="${Number(product.id)}" ${checked ? 'checked' : ''}></label>
+                    <div class="recipe-product-info grid gap-1"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.category || 'Produk')} · stok ${escapeHtml(productStock(product))} ${escapeHtml(productUnit(product))}</small></div>
+                    <label class="recipe-product-quantity col-start-2 flex items-center gap-2"><span class="sr-only">Jumlah ${escapeHtml(product.name)}</span><input class="recipe-product-quantity-input input w-full min-w-0" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Jumlah" value="${escapeHtml(quantity)}" ${checked ? 'required' : 'disabled'}><small>${escapeHtml(productUnit(product))}</small></label>
                 </div>`;
             }).join('')}</div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" type="submit">Konfirmasi resep</button></footer>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button class="primary btn btn-primary" type="submit">Konfirmasi resep</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -2928,8 +3235,8 @@ function renderEmployees() {
         <span>${escapeHtml(employee.specialty || '-')}</span>
         <em class="pill">${Number(employee.is_service_provider ?? 0) === 1 ? 'Therapist' : 'Non-layanan'}</em>
         <em class="pill">${Number(employee.active ?? employee.is_active ?? 1) === 1 ? 'Aktif' : 'Nonaktif'}</em>
-        <button type="button" class="link employee-edit ui-action-edit" data-id="${Number(employee.id)}">Edit</button>
-    </div>`).join('') || '<p class="empty-state">Belum ada pegawai.</p>'}`;
+        <button type="button" class="link employee-edit ui-action-edit btn btn-sm no-underline btn-accent" data-id="${Number(employee.id)}">Edit</button>
+    </div>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada pegawai.</p>'}`;
 
     document.querySelectorAll('.employee-edit').forEach((button) => {
         const employee = rows.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -2972,25 +3279,33 @@ function renderMembers() {
         box.innerHTML = members.map((member) => {
             const expiresAt = member.member_expires_at ? new Date(`${member.member_expires_at}T00:00:00`) : null;
             const expired = expiresAt && expiresAt < new Date(new Date().setHours(0, 0, 0, 0));
-            const expiryLabel = expiresAt ? `<strong class="member-expiry-date">Berlaku sampai ${expiresAt.toLocaleDateString('id-ID')}</strong>` : 'Masa berlaku belum diatur';
+            const expiryLabel = expiresAt ? `<span class="member-expiry-date">Berlaku sampai ${expiresAt.toLocaleDateString('id-ID')}</span>` : 'Masa berlaku belum diatur';
             const treatmentHistory = array(member.treatment_history);
             const latestTreatment = treatmentHistory[0]?.treatment_name || 'Belum ada treatment';
-            return `<div class="member-row">
-            <i class="avatar">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</i>
-            <span class="member-identity"><b>${escapeHtml(member.name)}</b><small>${escapeHtml(member.phone || '-')} · ${expiryLabel}</small><small class="member-latest-treatment"><span class="material-symbols-outlined" aria-hidden="true">spa</span> Terbaru: <b>${escapeHtml(latestTreatment)}</b></small></span>
-            <em class="${expired ? 'membership-expired' : ''}">${expired ? 'Expired' : 'Aktif'}</em>
-            <span class="membership-actions"><button type="button" class="member-history-button" data-id="${Number(member.id)}"><span class="material-symbols-outlined" aria-hidden="true">history</span> Riwayat</button>${canManageMemberships ? `<button type="button" class="membership-edit ui-action-edit" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete" data-id="${Number(member.id)}">Hapus</button>` : ''}</span>
-        </div>`; }).join('') || '<p class="empty-state">Belum ada member.</p>';
-        box.querySelectorAll('.member-history-button').forEach((button) => {
-            button.onclick = () => openMemberTreatmentHistory(members.find((member) => Number(member.id) === Number(button.dataset.id)));
-        });
+            return `<article class="member-row grid items-center gap-3 border-b border-base-300 py-5 last:border-0 2xl:grid-cols-[minmax(0,1fr)_auto]">
+                <div class="flex items-start gap-3">
+                    <div class="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 font-semibold text-primary">${escapeHtml(String(member.name || '').split(' ').map((part) => part[0]).slice(0, 2).join(''))}</div>
+                    <div class="member-identity min-w-0 flex-1 space-y-1">
+                        <b class="block font-semibold break-words">${escapeHtml(member.name)}</b>
+                        <span class="block text-sm text-base-content/60">${escapeHtml(member.phone || '-')}</span>
+                        <span class="block text-xs text-base-content/60">${expiryLabel}</span>
+                        <span class="block text-xs text-base-content/60">Terakhir: <span class="text-base-content">${escapeHtml(latestTreatment)}</span></span>
+                    </div>
+                    <span class="badge badge-sm shrink-0 ${expired ? 'membership-expired badge-warning badge-soft' : 'badge-success badge-soft'}">${expired ? 'Expired' : 'Aktif'}</span>
+                </div>
+                    <div class="membership-actions flex flex-wrap items-center gap-2">
+                        <a class="member-history-button btn btn-sm btn-info" href="/membership/${Number(member.id)}/riwayat"><span class="material-symbols-outlined" aria-hidden="true">history</span>Riwayat</a>
+                        ${canManageMemberships ? `<button type="button" class="membership-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(member.id)}">Edit</button><button type="button" class="membership-delete ui-action-delete btn btn-sm btn-error" data-id="${Number(member.id)}">Hapus</button>` : ''}
+                    </div>
+            </article>`; }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada member.</p>';
+
     }
 
     const pagination = document.getElementById('member-pagination');
     const meta = memberPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${members.length} dari ${Number(meta.total).toLocaleString('id-ID')} member</small><div><button type="button" class="member-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="member-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${members.length} dari ${Number(meta.total).toLocaleString('id-ID')} member</small><div><button type="button" class="member-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="member-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} member</small>` : '');
         pagination.querySelectorAll('.member-page').forEach((button) => {
             button.onclick = () => loadMembersPage(Number(button.dataset.page));
@@ -3000,53 +3315,22 @@ function renderMembers() {
     if (events && canManageMemberships) {
         events.innerHTML = array(state.promotions).map((promotion) => {
             const active = Number(promotion.is_active ?? 1) === 1;
-            const period = `${new Date(`${promotion.starts_at}T00:00:00`).toLocaleDateString('id-ID')}–${new Date(`${promotion.ends_at}T00:00:00`).toLocaleDateString('id-ID')}`;
+            const period = `${new Date(`${String(promotion.starts_at || '').slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID')}–${new Date(`${String(promotion.ends_at || '').slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID')}`;
 
-            return `<article class="membership-event ${active ? '' : 'inactive'}">
-                <div><small>${active ? 'AKTIF' : 'NONAKTIF'}</small><h3>${escapeHtml(promotion.name)}</h3><p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p><span>${period}</span></div>
-                <div class="membership-actions"><button type="button" class="membership-edit-promotion ui-action-edit" data-id="${Number(promotion.id)}">Edit</button><button type="button" class="membership-delete-promotion ui-action-delete" data-id="${Number(promotion.id)}">Hapus</button></div>
+            return `<article class="membership-event ${active ? '' : 'inactive'} grid gap-4 rounded-box border border-base-300 p-4">
+                <div class="grid gap-1"><small class="badge badge-sm badge-soft ${active ? 'badge-success' : 'badge-neutral'}">${active ? 'Aktif' : 'Nonaktif'}</small><h3 class="mt-1">${escapeHtml(promotion.name)}</h3><p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p><span class="text-xs text-base-content/60">${period}</span></div>
+                <div class="membership-actions flex flex-wrap items-center gap-2"><button type="button" class="membership-edit-promotion ui-action-edit btn btn-sm btn-accent" data-id="${Number(promotion.id)}">Edit</button><button type="button" class="membership-delete-promotion ui-action-delete btn btn-sm btn-error" data-id="${Number(promotion.id)}">Hapus</button></div>
             </article>`;
-        }).join('') || '<p class="empty-state">Belum ada event membership.</p>';
+        }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada event membership.</p>';
     }
 
     if (events && !canManageMemberships) {
-        events.innerHTML = array(state.promotions).map((promotion, index) => `<div class="event ${index ? 'pale' : ''}">
+        events.innerHTML = array(state.promotions).map((promotion, index) => `<div class="event ${index ? 'pale' : ''} rounded-box bg-base-200 p-4">
             <small>AKTIF</small><h3>${escapeHtml(promotion.name)}</h3>
             <p>Diskon ${Number(promotion.discount_percent)}%${promotion.members_only ? ' khusus member' : ''}</p>
-            <span>${new Date(`${promotion.starts_at}T00:00:00`).toLocaleDateString('id-ID')}–${new Date(`${promotion.ends_at}T00:00:00`).toLocaleDateString('id-ID')}</span>
-        </div>`).join('') || '<p class="empty-state">Belum ada event membership aktif.</p>';
+            <span>${new Date(`${String(promotion.starts_at || '').slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID')}–${new Date(`${String(promotion.ends_at || '').slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID')}</span>
+        </div>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada event membership aktif.</p>';
     }
-}
-
-function openMemberTreatmentHistory(member) {
-    if (!member) return;
-    const history = array(member.treatment_history);
-    const pageSize = 10;
-    let visibleCount = 0;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal member-history-modal';
-    wrapper.innerHTML = `<div class="modal-box"><div class="modal-head"><div><small class="member-history-eyebrow">RIWAYAT TREATMENT</small><h2>${escapeHtml(member.name)}</h2><p>${escapeHtml(member.phone || '-')} &middot; ${history.length} layanan tercatat</p></div><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><div class="member-history-modal-body">${history.length ? '<div class="member-history-list"></div>' : '<div class="member-history-modal-empty"><span class="material-symbols-outlined" aria-hidden="true">spa</span><b>Belum ada riwayat treatment</b><p>Riwayat akan muncul setelah transaksi treatment dibayar.</p></div>'}</div><footer><div class="member-history-load-area" ${history.length > pageSize ? '' : 'hidden'}><button type="button" class="member-history-load-more"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span> Muat 10 lagi</button><small class="member-history-progress"></small></div><button type="button" class="secondary quick-close">Tutup</button></footer></div>`;
-    document.body.appendChild(wrapper);
-    const list = wrapper.querySelector('.member-history-list');
-    const loadArea = wrapper.querySelector('.member-history-load-area');
-    const loadMore = wrapper.querySelector('.member-history-load-more');
-    const progress = wrapper.querySelector('.member-history-progress');
-    const renderNext = () => {
-        const nextItems = history.slice(visibleCount, visibleCount + pageSize);
-        list?.insertAdjacentHTML('beforeend', nextItems.map((item, offset) => {
-            const index = visibleCount + offset;
-            const date = new Date(`${item.reservation_date}T00:00:00`).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-            return `<article class="member-history-item"><span class="member-history-number">${index + 1}</span><div><b>${escapeHtml(item.treatment_name)}</b><p><span><i class="material-symbols-outlined" aria-hidden="true">calendar_today</i>${date}</span><span><i class="material-symbols-outlined" aria-hidden="true">person</i>${escapeHtml(item.therapist_name || '-')}</span></p></div></article>`;
-        }).join(''));
-        visibleCount += nextItems.length;
-        if (progress) progress.textContent = `${visibleCount} dari ${history.length}`;
-        if (loadArea) loadArea.hidden = visibleCount >= history.length;
-    };
-    renderNext();
-    if (loadMore) loadMore.onclick = renderNext;
-    const close = () => wrapper.remove();
-    wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = close; });
-    wrapper.addEventListener('click', (event) => { if (event.target === wrapper) close(); });
 }
 
 async function loadMembersPage(page = 1) {
@@ -3086,14 +3370,14 @@ function renderStock() {
     if (count) count.textContent = Number(meta?.total ?? products.length);
 
     if (box) {
-        box.innerHTML = products.length ? `<div class="tr th"><span>Produk</span><span>Stok tersedia</span><span>Stok minimum</span><span>Harga jual</span><span>HPP / satuan</span><span>Aksi</span></div>${products.map((product) => {
+        box.innerHTML = dataTable(['Produk', ['Stok tersedia', 'right'], ['Stok minimum', 'right'], ['Harga jual', 'right'], ['HPP / satuan', 'right'], 'Aksi'], products.map((product) => {
             const stock = productStock(product);
             const minimum = productMinimum(product);
             const unit = productUnit(product);
             const unitLabel = String(unit || 'unit').toLowerCase();
             const stockWarningLabel = stock <= 0 ? 'Stok habis' : 'Stok menipis';
             const stockWarning = stock <= minimum
-                ? `<span class="material-symbols-outlined stock-low-warning" role="img" aria-label="${stockWarningLabel}" title="${stockWarningLabel}">warning</span>`
+                ? `<span class="material-symbols-outlined stock-low-warning badge badge-warning badge-soft" role="img" aria-label="${stockWarningLabel}" title="${stockWarningLabel}">warning</span>`
                 : '';
             const stockRowClass = stock <= 0 ? ' stock-out-row' : (stock <= minimum ? ' stock-low-row' : '');
             return `<div class="tr${stockRowClass}">
@@ -3102,26 +3386,26 @@ function renderStock() {
                 <span class="stock-amount"><b>${formatStockQuantity(minimum)} <small>${escapeHtml(unitLabel)}</small></b></span>
                 <span class="product-price"><b>${money(product.selling_price)}</b></span>
                 <span class="product-price"><b>${money(product.cost_price)}</b><small>per ${escapeHtml(unitLabel)}</small></span>
-                <span class="product-row-actions">${canUpdateProducts || canStocktakeProducts ? `<button type="button" class="product-action-trigger" data-id="${Number(product.id)}" aria-label="Aksi produk ${escapeHtml(product.name)}" aria-haspopup="menu" aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button><span class="product-action-menu" role="menu" hidden>${canUpdateProducts ? `<button type="button" class="product-edit" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit produk</button>` : ''}${canStocktakeProducts ? `<button type="button" class="product-stock-in product-stock-action" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">add</span>Stok masuk</button><button type="button" class="product-stock-out product-stock-action" data-id="${Number(product.id)}" role="menuitem" ${stock > 0 ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">remove</span>Stok keluar</button>` : ''}</span>` : '<span>-</span>'}</span>
+                <span class="product-row-actions dropdown dropdown-end">${canUpdateProducts || canStocktakeProducts ? `<button type="button" class="product-action-trigger btn btn-square btn-sm btn-info" data-id="${Number(product.id)}" aria-label="Aksi produk ${escapeHtml(product.name)}" aria-haspopup="menu" aria-expanded="false"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button><span class="product-action-menu dropdown-content menu rounded-box border border-base-300 bg-base-100 p-2 shadow-lg w-48 z-20" role="menu" hidden>${canUpdateProducts ? `<button type="button" class="product-edit btn btn-sm btn-info" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit produk</button>` : ''}${canStocktakeProducts ? `<button type="button" class="product-stock-in product-stock-action btn btn-sm btn-info" data-id="${Number(product.id)}" role="menuitem"><span class="material-symbols-outlined" aria-hidden="true">add</span>Stok masuk</button><button type="button" class="product-stock-out product-stock-action btn btn-sm btn-info" data-id="${Number(product.id)}" role="menuitem" ${stock > 0 ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">remove</span>Stok keluar</button>` : ''}</span>` : '<span>-</span>'}</span>
             </div>`;
-        }).join('')}` : '<p class="empty-state">Belum ada produk.</p>';
+        }).join(''), 'Belum ada produk.');
     }
 
     if (history) {
-        history.innerHTML = movements.length ? `<div class="tr th"><span>WAKTU</span><span>PRODUK</span><span>JENIS</span><span>JUMLAH</span><span>SUMBER</span><span>PENGGUNA</span></div>${movements.map((movement) => `<div class="tr">
-            <span>${new Date(movement.created_at || movement.occurred_at).toLocaleString('id-ID')}</span>
+        history.innerHTML = dataTable(['Waktu', 'Produk', 'Jenis', ['Jumlah', 'right'], 'Sumber', 'Pengguna'], movements.map((movement) => `<div class="tr">
+            <span>${formatTransactionDate(movement.created_at || movement.occurred_at)}</span>
             <span>${escapeHtml(movement.product_name || movement.product?.name || '-')}</span>
-            <span>${escapeHtml(movement.type)}</span>
+            <span><span class="badge badge-sm badge-soft ${movement.type === 'out' ? 'badge-warning' : 'badge-success'}">${escapeHtml(({ in: 'Masuk', out: 'Keluar', adjustment: 'Penyesuaian' })[movement.type] || movement.type)}</span></span>
             <span>${Number(movement.quantity)} ${escapeHtml(movement.unit || movement.unit_code || '')}</span>
-            <span>${escapeHtml(movement.source || movement.source_type || '-')}</span>
+            <span>${escapeHtml(({ transaction: 'Penjualan', sales_return: 'Retur', manual_adjustment: 'Penyesuaian', stocktake: 'Stok opname' })[movement.source || movement.source_type] || movement.source || movement.source_type || '-')}</span>
             <span>${escapeHtml(movement.user_name || movement.creator?.name || 'Sistem')}</span>
-        </div>`).join('')}` : '<p class="empty-state">Tidak ada riwayat stok pada rentang tanggal ini.</p>';
+        </div>`).join(''), 'Tidak ada riwayat stok pada rentang tanggal ini.');
     }
 
     const historyPagination = document.getElementById('stock-history-pagination');
     if (historyPagination) {
         historyPagination.innerHTML = historyMeta && historyMeta.last_page > 1
-            ? `<small>Menampilkan ${movements.length} dari ${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small><div><button type="button" class="stock-history-page ui-pagination-button" data-page="${historyMeta.current_page - 1}" ${historyMeta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${historyMeta.current_page} / ${historyMeta.last_page}</span><button type="button" class="stock-history-page ui-pagination-button" data-page="${historyMeta.current_page + 1}" ${historyMeta.current_page >= historyMeta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${movements.length} dari ${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small><div><button type="button" class="stock-history-page ui-pagination-button btn btn-sm btn-secondary" data-page="${historyMeta.current_page - 1}" ${historyMeta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${historyMeta.current_page} / ${historyMeta.last_page}</span><button type="button" class="stock-history-page ui-pagination-button btn btn-sm btn-secondary" data-page="${historyMeta.current_page + 1}" ${historyMeta.current_page >= historyMeta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (historyMeta ? `<small>${Number(historyMeta.total).toLocaleString('id-ID')} pergerakan</small>` : '');
         historyPagination.querySelectorAll('.stock-history-page').forEach((button) => {
             button.onclick = () => loadStockHistoryPage(Number(button.dataset.page));
@@ -3131,7 +3415,7 @@ function renderStock() {
     const pagination = document.getElementById('product-pagination');
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${products.length} dari ${Number(meta.total).toLocaleString('id-ID')} produk</small><div><button type="button" class="product-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="product-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${products.length} dari ${Number(meta.total).toLocaleString('id-ID')} produk</small><div><button type="button" class="product-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="product-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} produk</small>` : '');
         pagination.querySelectorAll('.product-page').forEach((button) => {
             button.onclick = () => loadProductsPage(Number(button.dataset.page));
@@ -3247,12 +3531,12 @@ function renderStocktake() {
         const draft = stocktakeDraft.get(id) || {};
         const unit = productUnit(product);
         return `<div class="stocktake-row" data-product-id="${id}">
-            <span class="stocktake-product"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || '-')}</small></span>
-            <span class="stocktake-system"><b>${formatStockQuantity(productStock(product))} ${escapeHtml(unit)}</b><small>Stok saat ini</small></span>
-            <label><span class="sr-only">Jumlah stok masuk ${escapeHtml(product.name)}</span><div class="stocktake-input-wrap"><input type="number" min="0.0001" step="0.0001" inputmode="decimal" data-stocktake-field="quantity" value="${escapeHtml(draft.quantity ?? '')}" placeholder="Jumlah masuk"><small>${escapeHtml(unit)}</small></div></label>
-            <label><span class="sr-only">Catatan ${escapeHtml(product.name)}</span><input type="text" maxlength="1000" data-stocktake-field="notes" value="${escapeHtml(draft.notes ?? '')}" placeholder="Catatan opsional"></label>
+            <span class="stocktake-product grid gap-1"><b>${escapeHtml(product.name)}</b><small>${escapeHtml(product.code || product.category || '-')}</small></span>
+            <span class="stocktake-system grid gap-1"><b>${formatStockQuantity(productStock(product))} ${escapeHtml(unit)}</b><small>Stok saat ini</small></span>
+            <label><span class="sr-only">Jumlah stok masuk ${escapeHtml(product.name)}</span><div class="stocktake-input-wrap flex items-center gap-2"><input class="input w-full min-w-0" type="number" min="0.0001" step="0.0001" inputmode="decimal" data-stocktake-field="quantity" value="${escapeHtml(draft.quantity ?? '')}" placeholder="Jumlah masuk"><small>${escapeHtml(unit)}</small></div></label>
+            <label><span class="sr-only">Catatan ${escapeHtml(product.name)}</span><input class="input w-full min-w-0" type="text" maxlength="1000" data-stocktake-field="notes" value="${escapeHtml(draft.notes ?? '')}" placeholder="Catatan opsional"></label>
         </div>`;
-    }).join('') : '<p class="empty-state">Tidak ada produk yang cocok dengan pencarian.</p>';
+    }).join('') : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada produk yang cocok dengan pencarian.</p>';
 
     list.querySelectorAll('.stocktake-row').forEach((row) => {
         const product = visibleProducts.find((item) => Number(item.id) === Number(row.dataset.productId));
@@ -3423,7 +3707,7 @@ function renderFinancePeriodControls() {
             id: 'cash-flow-period-controls',
             title: 'Rentang arus kas',
             description: 'Menyaring ringkasan, rekening pembayaran, dan riwayat kas.',
-            fields: '<label>Dari<input id="cash-flow-from" type="date" aria-label="Tanggal awal arus kas"></label><label>Sampai<input id="cash-flow-to" type="date" aria-label="Tanggal akhir arus kas"></label>',
+            fields: '<label>Dari<input class="input w-full min-w-0" id="cash-flow-from" type="date" aria-label="Tanggal awal arus kas"></label><label>Sampai<input class="input w-full min-w-0" id="cash-flow-to" type="date" aria-label="Tanggal akhir arus kas"></label>',
             scope: 'cash',
         },
         {
@@ -3431,7 +3715,7 @@ function renderFinancePeriodControls() {
             id: 'profit-loss-period-controls',
             title: 'Rentang laba-rugi',
             description: 'Pendapatan, HPP, retur, dan biaya dihitung pada periode yang dipilih.',
-            fields: '<label>Dari<input id="profit-loss-from" type="date" aria-label="Tanggal awal laba-rugi"></label><label>Sampai<input id="profit-loss-to" type="date" aria-label="Tanggal akhir laba-rugi"></label>',
+            fields: '<label>Dari<input class="input w-full min-w-0" id="profit-loss-from" type="date" aria-label="Tanggal awal laba-rugi"></label><label>Sampai<input class="input w-full min-w-0" id="profit-loss-to" type="date" aria-label="Tanggal akhir laba-rugi"></label>',
             scope: 'profit-loss',
         },
         {
@@ -3439,7 +3723,7 @@ function renderFinancePeriodControls() {
             id: 'balance-sheet-period-controls',
             title: 'Tanggal neraca',
             description: 'Neraca adalah posisi saldo per satu tanggal, bukan akumulasi rentang.',
-            fields: '<label>Per tanggal<input id="balance-sheet-as-of" type="date" aria-label="Tanggal neraca"></label>',
+            fields: '<label>Per tanggal<input class="input w-full min-w-0" id="balance-sheet-as-of" type="date" aria-label="Tanggal neraca"></label>',
             scope: 'balance-sheet',
         },
     ];
@@ -3448,7 +3732,7 @@ function renderFinancePeriodControls() {
         const page = document.getElementById(control.page);
         if (!page) return;
         if (!document.getElementById(control.id)) {
-            page.insertAdjacentHTML('afterbegin', `<div class="finance-period-toolbar" id="${control.id}"><div><b>${control.title}</b><small>${control.description}</small></div>${control.fields}</div>`);
+            page.insertAdjacentHTML('afterbegin', `<div class="finance-period-toolbar flex flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4 shadow-sm xl:flex-row xl:items-center xl:justify-between" id="${control.id}"><h3>${escapeHtml(control.title)}</h3><div class="flex flex-wrap items-end gap-3 [&>label]:min-w-0 [&>label]:flex-1 xl:[&>label]:w-44">${control.fields}</div></div>`);
         }
         const inputs = document.querySelectorAll(`#${control.id} input[type="date"]`);
         inputs.forEach((input) => {
@@ -3549,14 +3833,14 @@ function renderFinance() {
     const maximum = Math.max(income, expense, 1);
     if (flow) {
         flow.innerHTML = income || expense ? `
-            <div class="cash-flow-row">
-                <div class="cash-flow-head"><span>Pemasukan</span><b>${money(income)}</b></div>
-                <div class="cash-flow-track"><i class="cash-flow-fill income" style="width:${income / maximum * 100}%"></i></div>
+            <div class="cash-flow-row grid gap-2 py-3">
+                <div class="cash-flow-head flex items-center justify-between gap-3"><span>Pemasukan</span><b>${money(income)}</b></div>
+                <div class="cash-flow-track h-2 rounded-full bg-base-200 overflow-hidden"><i class="cash-flow-fill income block h-full bg-primary rounded-full" style="width:${income / maximum * 100}%"></i></div>
             </div>
-            <div class="cash-flow-row">
-                <div class="cash-flow-head"><span>Pengeluaran</span><b>${money(expense)}</b></div>
-                <div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${expense / maximum * 100}%"></i></div>
-            </div>` : '<p class="empty-state">Belum ada arus kas pada rentang ini.</p>';
+            <div class="cash-flow-row grid gap-2 py-3">
+                <div class="cash-flow-head flex items-center justify-between gap-3"><span>Pengeluaran</span><b>${money(expense)}</b></div>
+                <div class="cash-flow-track h-2 rounded-full bg-base-200 overflow-hidden"><i class="cash-flow-fill expense block h-full bg-error rounded-full" style="width:${expense / maximum * 100}%"></i></div>
+            </div>` : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada arus kas pada rentang ini.</p>';
     }
 
     const paymentFlows = array(cashFlow.payment_flows);
@@ -3582,16 +3866,16 @@ function renderFinance() {
                     .filter(Boolean)
                     .join(' · ');
 
-                return `<article class="finance-payment-flow-row"><div class="finance-payment-method"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${escapeHtml(subtitle || 'Metode pembayaran')}</small></span></div><div class="finance-payment-amounts"><span><small>Dana masuk</small><b>${money(inflow)}</b></span><span><small>Refund</small><b class="expense">${money(outflow)}</b></span><span class="finance-payment-net"><small>Arus bersih</small><strong>${money(net)}</strong></span></div></article>`;
+                return `<article class="finance-payment-flow-row grid items-center gap-3 border-b border-base-300 py-4 md:grid-cols-[minmax(0,1fr)_auto]"><div class="finance-payment-method flex min-w-0 items-center gap-3"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(payment.name)}</b><small>${escapeHtml(subtitle || 'Metode pembayaran')}</small></span></div><div class="finance-payment-amounts grid min-w-0 grid-cols-3 gap-2 text-right text-xs sm:gap-4 sm:text-sm [&_small]:block [&_small]:mb-1 [&_b]:block [&_b]:break-words [&_strong]:block [&_strong]:break-words"><span><small>Dana masuk</small><b>${money(inflow)}</b></span><span><small>Refund</small><b class="expense">${money(outflow)}</b></span><span class="finance-payment-net"><small>Arus bersih</small><strong>${money(net)}</strong></span></div></article>`;
             }).join('')
-            : '<p class="empty-state">Belum ada metode pembayaran yang dapat ditampilkan.</p>';
+            : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada metode pembayaran yang dapat ditampilkan.</p>';
     }
 
     const profitLossBox = document.getElementById('profit-loss-report');
     if (profitLossBox) {
         const revenueTotal = Number(profitLoss.revenue_total || 0);
         const profit = Number(profitLoss.net_profit || 0);
-        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
+        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier} flex flex-wrap items-center justify-between gap-3 border-b border-base-300 py-3 ${modifier.includes('total') ? 'rounded-box bg-primary/5 px-3 font-semibold' : ''} ${modifier.includes('negative') ? 'text-error' : modifier.includes('positive') ? 'text-success' : ''}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
         profitLossBox.innerHTML = `${row('Penjualan treatment & produk', profitLoss.sales_revenue)}
             ${Number(profitLoss.sales_returns || 0) ? row('Retur penjualan', -Number(profitLoss.sales_returns || 0), 'negative') : ''}
             ${Number(profitLoss.payment_charge_income || 0) ? row('Charge pembayaran', profitLoss.payment_charge_income) : ''}
@@ -3602,12 +3886,12 @@ function renderFinance() {
             ${row('Total HPP', -Number(profitLoss.hpp_total || 0), 'subtotal negative')}
             ${row('Biaya operasional manual', -Number(profitLoss.manual_expense || 0), 'negative')}
             ${row(profit >= 0 ? 'Laba bersih' : 'Rugi bersih', profit, `total ${profit < 0 ? 'negative' : 'positive'}`)}
-            <p class="finance-statement-note">Periode ${escapeHtml(profitLoss.from || '-')} s.d. ${escapeHtml(profitLoss.to || '-')}.</p>`;
+            <p class="finance-statement-note text-sm text-base-content/60">Periode ${escapeHtml(profitLoss.from || '-')} s.d. ${escapeHtml(profitLoss.to || '-')}.</p>`;
     }
 
     const balanceSheetBox = document.getElementById('balance-sheet-report');
     if (balanceSheetBox) {
-        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
+        const row = (label, amount, modifier = '') => `<div class="finance-statement-row ${modifier} flex flex-wrap items-center justify-between gap-3 border-b border-base-300 py-3 ${modifier.includes('total') ? 'rounded-box bg-primary/5 px-3 font-semibold' : ''} ${modifier.includes('negative') ? 'text-error' : modifier.includes('positive') ? 'text-success' : ''}"><span>${escapeHtml(label)}</span><b>${money(amount)}</b></div>`;
         const accounts = array(balanceSheet.payment_accounts);
         balanceSheetBox.innerHTML = `${row('Kas fisik & mutasi manual', balanceSheet.cash)}
             ${accounts.map((account) => row(
@@ -3618,7 +3902,7 @@ function renderFinance() {
             ${row('Total aset', balanceSheet.assets_total, 'subtotal')}
             ${row('Kewajiban tercatat', balanceSheet.liabilities)}
             ${row('Ekuitas berjalan', balanceSheet.equity, 'total positive')}
-            <p class="finance-statement-note">Per ${escapeHtml(balanceSheet.as_of || '-')}. Utang dan piutang akan bernilai nol sampai modulnya digunakan.</p>`;
+            <p class="finance-statement-note text-sm text-base-content/60">Per ${escapeHtml(balanceSheet.as_of || '-')}. Utang dan piutang akan bernilai nol sampai modulnya digunakan.</p>`;
     }
 
     const today = localDate();
@@ -3628,7 +3912,7 @@ function renderFinance() {
         box.innerHTML = transactions.map((transaction) => {
             const paymentNames = array(transaction.payments).map((payment) => payment.payment_method_name || payment.payment_method?.name).filter(Boolean);
             return `<div class="transaction"><i class="material-symbols-outlined">receipt_long</i><span><b>${escapeHtml(transaction.customer_name || transaction.customer?.name || 'Pelanggan')}</b><small>${escapeHtml(compactInvoiceNumber(transaction.number))} · ${escapeHtml(paymentNames.join(' + ') || transaction.payment_method || '-')}</small></span><strong>${money(transaction.total)}</strong></div>`;
-        }).join('') || '<p class="empty-state">Belum ada transaksi hari ini.</p>';
+        }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada transaksi hari ini.</p>';
     }
 
     const categoryBox = document.getElementById('finance-category-bars');
@@ -3636,8 +3920,8 @@ function renderFinance() {
         const categories = array(cashFlow.expense_categories);
         const categoryMaximum = Math.max(1, ...categories.map((item) => Number(item.total || 0)));
         categoryBox.innerHTML = categories.length
-            ? categories.map((item) => `<div class="cash-flow-row"><div class="cash-flow-head"><span>${escapeHtml(item.category)}</span><b>${money(item.total)}</b></div><div class="cash-flow-track"><i class="cash-flow-fill expense" style="width:${Number(item.total || 0) / categoryMaximum * 100}%"></i></div></div>`).join('')
-            : '<p class="empty-state">Belum ada pengeluaran kas pada rentang ini.</p>';
+            ? categories.map((item) => `<div class="cash-flow-row grid gap-2 py-3"><div class="cash-flow-head flex items-center justify-between gap-3"><span>${escapeHtml(item.category)}</span><b>${money(item.total)}</b></div><div class="cash-flow-track h-2 rounded-full bg-base-200 overflow-hidden"><i class="cash-flow-fill expense block h-full bg-error rounded-full" style="width:${Number(item.total || 0) / categoryMaximum * 100}%"></i></div></div>`).join('')
+            : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada pengeluaran kas pada rentang ini.</p>';
     }
 
     renderCashEntryHistory(cashFlow.cash_entries);
@@ -3645,13 +3929,12 @@ function renderFinance() {
 
 function transactionReceiptPayload(transaction) {
     const transactedAt = transaction.transacted_at || transaction.created_at;
-    const transactedDate = transactedAt ? new Date(String(transactedAt).replace(' ', 'T')) : null;
-    const date = transactedDate && !Number.isNaN(transactedDate.getTime())
-        ? transactedDate.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
-        : '-';
+    const date = formatTransactionDate(transactedAt);
 
     return {
         transactionId: Number(transaction.id),
+        depositAmount: Number(transaction.deposit_amount || 0),
+        depositId: Number(transaction.deposit?.id || 0),
         number: compactInvoiceNumber(transaction.number),
         customer: transaction.customer_name || transaction.customer?.name || 'Pelanggan',
         date,
@@ -3692,7 +3975,7 @@ function formatTransactionDate(value) {
 }
 
 function setSalesView(view) {
-    salesView = view === 'returns' ? 'returns' : 'sales';
+    salesView = ['returns', 'deposits'].includes(view) ? view : 'sales';
     document.querySelectorAll('[data-sales-view]').forEach((button) => {
         button.classList.toggle('active', button.dataset.salesView === salesView);
         button.setAttribute('aria-selected', String(button.dataset.salesView === salesView));
@@ -3701,13 +3984,14 @@ function setSalesView(view) {
     const subtitle = document.getElementById('sales-history-subtitle');
     const search = document.getElementById('sales-search');
     const payment = document.getElementById('sales-payment-filter');
-    if (title) title.textContent = salesView === 'returns' ? 'Riwayat retur' : 'Riwayat penjualan';
+    if (title) title.textContent = salesView === 'deposits' ? 'Riwayat DP' : salesView === 'returns' ? 'Riwayat retur' : 'Riwayat penjualan';
+    document.getElementById('sales-deposit-dates').hidden = salesView !== 'deposits';
     if (subtitle) subtitle.textContent = salesView === 'returns'
         ? 'Catatan pengembalian produk dan cetak struk retur.'
         : 'Invoice lunas dan cetak ulang nota.';
     if (search) {
-        search.placeholder = salesView === 'returns' ? 'Cari nomor retur, invoice, atau pelanggan...' : 'Cari invoice atau pelanggan...';
-        search.setAttribute('aria-label', salesView === 'returns' ? 'Cari riwayat retur' : 'Cari riwayat penjualan');
+        search.placeholder = salesView === 'deposits' ? 'Cari nota DP, reservasi, atau pelanggan...' : salesView === 'returns' ? 'Cari nomor retur, invoice, atau pelanggan...' : 'Cari invoice atau pelanggan...';
+        search.setAttribute('aria-label', salesView === 'deposits' ? 'Cari riwayat DP' : salesView === 'returns' ? 'Cari riwayat retur' : 'Cari riwayat penjualan');
     }
     if (payment) payment.value = '';
     loadSalesPage(1).catch((error) => toast(error.message, true));
@@ -3752,13 +4036,13 @@ function renderSalesSnapshot() {
             <span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span>
             <span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span>
             <span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item</small></span>
-            <span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span>
-            <b class="align-right">${money(transaction.total)}</b>
-            <button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button>
+            <span><span class="sales-payment badge badge-info badge-soft whitespace-normal h-auto py-1">${escapeHtml(paymentNames)}</span></span>
+            <b class="align-right text-right tabular-nums">${money(transaction.total)}</b>
+            <button type="button" class="sales-reprint-button ui-action-view btn btn-sm btn-info" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak ulang</button>
         </div>`;
     }).join('');
 
-    box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
+    box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right text-right tabular-nums">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada transaksi lunas yang sesuai.</p>'}`;
 
     box.querySelectorAll('.sales-reprint-button').forEach((button) => {
         const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -3778,6 +4062,15 @@ async function loadSalesPage(page = 1) {
     const params = new URLSearchParams({ page: String(page), per_page: '20' });
     if (search) params.set('search', search);
     if (paymentMethod) params.set('payment_method', paymentMethod);
+    if (salesView === 'deposits') {
+        const from = document.getElementById('sales-deposit-from').value;
+        const to = document.getElementById('sales-deposit-to').value;
+        if (from) params.set('from', from);
+        if (to) params.set('to', to);
+        depositsPageState = await api(`/operasional/dp?${params.toString()}`);
+        if (salesView === 'deposits') renderDepositHistory();
+        return;
+    }
     if (salesView === 'returns') {
         salesReturnsPageState = await api(`/operasional/retur?${params.toString()}`);
         renderSalesReturns();
@@ -3789,6 +4082,10 @@ async function loadSalesPage(page = 1) {
 }
 
 function renderSales() {
+    if (salesView === 'deposits') {
+        renderDepositHistory();
+        return;
+    }
     if (salesView === 'returns') {
         renderSalesReturns();
         return;
@@ -3815,12 +4112,13 @@ function renderSales() {
         const itemNames = array(transaction.items).map((item) => item.name).filter(Boolean);
         const itemSummary = itemNames.length > 1 ? `${itemNames[0]} +${itemNames.length - 1}` : (itemNames[0] || '-');
         const refundedAmount = Number(transaction.refunded_amount || 0);
+        const returnable = array(transaction.items).some((item) => item.item_type === 'product' ? Number(item.refundable_quantity) > 0 : Number(item.refundable_amount) > 0);
         const returnStatus = refundedAmount > 0
-            ? `<em class="sales-return-status">${refundedAmount >= Number(transaction.total) ? 'Retur penuh' : 'Retur sebagian'}</em>`
+            ? `<span class="sales-return-status badge badge-warning badge-soft">${returnable ? 'Retur sebagian' : 'Retur selesai'}</span>`
             : '';
-        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><em class="sales-payment">${escapeHtml(paymentNames)}</em></span><span class="sales-net-total"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions"><button type="button" class="sales-reprint-button ui-action-view" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button>${canRefundSales ? `<button type="button" class="sales-return-button ui-action-delete" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Retur</button>` : ''}</div></div>`;
+        return `<div class="tr sales-row"><span><b>${escapeHtml(compactInvoiceNumber(transaction.number))}</b><small>${escapeHtml(formatTransactionDate(transaction.transacted_at || transaction.created_at))}</small></span><span><b>${escapeHtml(transaction.customer_name || 'Pelanggan')}</b><small>${transaction.is_member ? 'Member' : 'Pelanggan umum'}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${itemNames.length} item${returnStatus}</small></span><span><span class="sales-payment badge badge-info badge-soft whitespace-normal h-auto py-1">${escapeHtml(paymentNames)}</span></span><span class="sales-net-total text-right tabular-nums"><b>${money(transaction.net_total ?? transaction.total)}</b>${refundedAmount > 0 ? `<small>Awal ${money(transaction.total)}</small>` : ''}</span><div class="sales-actions flex items-center justify-end gap-2"><button type="button" class="sales-reprint-button ui-action-view btn btn-sm btn-info" data-id="${Number(transaction.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Nota</button>${canRefundSales ? `<button type="button" class="sales-return-button ui-action-delete btn btn-sm btn-error" data-id="${Number(transaction.id)}" ${returnable ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> ${returnable ? refundedAmount > 0 ? 'Retur sisa' : 'Retur' : 'Retur selesai'}</button>` : ''}</div></div>`;
     }).join('');
-    box.innerHTML = `<div class="tr th"><span>INVOICE & TANGGAL</span><span>PELANGGAN</span><span>RINCIAN</span><span>PEMBAYARAN</span><span class="align-right">TOTAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada transaksi lunas yang sesuai.</p>'}`;
+    box.innerHTML = dataTable(["Invoice / tanggal", "Pelanggan", "Rincian", "Pembayaran", ["Total", "right"], "Aksi"], rows, "Belum ada transaksi lunas yang sesuai.");
 
     box.querySelectorAll('.sales-reprint-button').forEach((button) => {
         const transaction = transactions.find((item) => Number(item.id) === Number(button.dataset.id));
@@ -3838,12 +4136,38 @@ function renderSales() {
     const meta = salesPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${transactions.length} dari ${Number(meta.total).toLocaleString('id-ID')} transaksi</small><div><button type="button" class="sales-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} transaksi</small>` : '');
         pagination.querySelectorAll('.sales-page').forEach((button) => {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
         });
     }
+}
+
+function renderDepositHistory() {
+    const box = document.getElementById('sales-history');
+    const filter = document.getElementById('sales-payment-filter');
+    const selected = filter.value;
+    filter.innerHTML = `<option value="">Semua pembayaran</option>${array(depositsPageState?.payment_options).map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+    filter.value = selected;
+    const rows = array(depositsPageState?.data).map(deposit => `<div class="tr sales-row">
+        <span><b>${escapeHtml(deposit.number)}</b><small>${escapeHtml(formatTransactionDate(deposit.paid_at))}</small></span>
+        <b>${escapeHtml(deposit.customer_name)}</b><span>${escapeHtml(deposit.queue_number)}</span>
+        <span><span class="badge badge-info badge-soft">${escapeHtml(deposit.payment_method_name)}</span></span>
+        <b class="text-right tabular-nums">${money(deposit.amount)}</b>
+        <div class="flex justify-end"><button type="button" class="deposit-print btn btn-sm btn-info" data-id="${Number(deposit.id)}"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak DP</button></div></div>`).join('');
+    box.innerHTML = dataTable(['Nota / tanggal DP', 'Pelanggan', 'Reservasi', 'Pembayaran', ['DP dibayar', 'right'], 'Aksi'], rows, 'Belum ada pembayaran DP yang sesuai.');
+    box.querySelectorAll('.deposit-print').forEach(button => button.onclick = () => printDeposit(button.dataset.id));
+    const meta = depositsPageState?.meta;
+    const pagination = document.getElementById('sales-pagination');
+    pagination.innerHTML = meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} pembayaran DP</small>${meta.last_page > 1 ? `<div class="flex items-center gap-2"><button class="btn btn-sm btn-secondary" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>Sebelumnya</button><span>${meta.current_page} / ${meta.last_page}</span><button class="btn btn-sm btn-secondary" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya</button></div>` : ''}` : '';
+    pagination.querySelectorAll('[data-page]').forEach(button => button.onclick = () => loadSalesPage(Number(button.dataset.page)).catch(error => toast(error.message, true)));
+}
+
+function openReturnPrintChoice(salesReturn) {
+    openReceiptPrintChoice({
+        salesReturnId: Number(salesReturn.id), number: salesReturn.number, total: Number(salesReturn.total_amount),
+    }, { title: 'Cetak retur', description: `${salesReturn.number} · Invoice asal ${compactInvoiceNumber(salesReturn.transaction_number)} · ${money(salesReturn.total_amount)}` });
 }
 
 function renderSalesReturns() {
@@ -3870,17 +4194,17 @@ function renderSalesReturns() {
             treatmentCount ? `${treatmentCount} treatment` : '',
             productQuantity ? `${productQuantity.toLocaleString('id-ID')} produk` : '',
         ].filter(Boolean).join(' · ') || 'Item retur';
-        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><small>Invoice ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</small></span><span><b>${escapeHtml(itemSummary)}</b><small>${escapeHtml(itemDetail)} · ${escapeHtml(salesReturn.reason)}</small></span><span><em class="sales-payment">${escapeHtml(salesReturn.payment_method_name || '-')}</em></span><b class="align-right sales-return-amount">−${money(salesReturn.total_amount)}</b><div class="sales-actions"><button type="button" class="sales-return-receipt ui-action-view" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Struk retur</button></div></div>`;
+        return `<div class="tr sales-row sales-return-row"><span><b>${escapeHtml(salesReturn.number)}</b><small>${escapeHtml(formatTransactionDate(salesReturn.returned_at))}</small></span><span class="grid gap-1"><b>${escapeHtml(salesReturn.customer_name || 'Pelanggan')}</b><a class="text-xs font-medium text-primary hover:underline" href="/operasional/penjualan/${Number(salesReturn.transaction_id)}/nota.pdf" target="_blank" rel="noopener">Invoice asal ${escapeHtml(compactInvoiceNumber(salesReturn.transaction_number))}</a></span><span><b>${escapeHtml(itemSummary)}</b><small>${escapeHtml(itemDetail)} · ${escapeHtml(salesReturn.reason)}</small></span><span><span class="sales-payment badge badge-info badge-soft whitespace-normal h-auto py-1">${escapeHtml(salesReturn.payment_method_name || '-')}</span></span><b class="align-right sales-return-amount text-right tabular-nums">−${money(salesReturn.total_amount)}</b><div class="sales-actions flex items-center justify-end gap-2"><button type="button" class="sales-return-receipt ui-action-view btn btn-sm btn-info" data-return-id="${Number(salesReturn.id)}"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Cetak retur</button></div></div>`;
     }).join('');
-    box.innerHTML = `<div class="tr th"><span>RETUR & TANGGAL</span><span>PELANGGAN & INVOICE</span><span>RINCIAN & ALASAN</span><span>METODE REFUND</span><span class="align-right">NOMINAL</span><span>AKSI</span></div>${rows || '<p class="empty-state">Belum ada retur yang sesuai.</p>'}`;
+    box.innerHTML = dataTable(["Retur / tanggal", "Pelanggan / invoice asal", "Rincian / alasan", "Metode refund", ["Nominal", "right"], "Aksi"], rows, "Belum ada retur yang sesuai.");
     box.querySelectorAll('.sales-return-receipt').forEach((button) => {
-        button.onclick = () => window.open(`/operasional/retur/${Number(button.dataset.returnId)}/struk.pdf`, '_blank', 'noopener');
+        button.onclick = () => openReturnPrintChoice(returns.find(salesReturn => Number(salesReturn.id) === Number(button.dataset.returnId)));
     });
 
     const meta = salesReturnsPageState?.meta;
     if (pagination) {
         pagination.innerHTML = meta && meta.last_page > 1
-            ? `<small>Menampilkan ${returns.length} dari ${Number(meta.total).toLocaleString('id-ID')} retur</small><div><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
+            ? `<small>Menampilkan ${returns.length} dari ${Number(meta.total).toLocaleString('id-ID')} retur</small><div><button type="button" class="sales-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page - 1}" ${meta.current_page <= 1 ? 'disabled' : ''}>← Sebelumnya</button><span>Halaman ${meta.current_page} / ${meta.last_page}</span><button type="button" class="sales-page ui-pagination-button btn btn-sm btn-secondary" data-page="${meta.current_page + 1}" ${meta.current_page >= meta.last_page ? 'disabled' : ''}>Berikutnya →</button></div>`
             : (meta ? `<small>${Number(meta.total).toLocaleString('id-ID')} retur</small>` : '');
         pagination.querySelectorAll('.sales-page').forEach((button) => {
             button.onclick = () => loadSalesPage(Number(button.dataset.page));
@@ -3889,6 +4213,7 @@ function renderSalesReturns() {
 }
 
 function openSalesReturnLegacy(transaction) {
+    const idempotencyKey = `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`;
     const products = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
     if (!products.length) {
         toast('Tidak ada produk yang masih dapat diretur.', true);
@@ -3897,23 +4222,23 @@ function openSalesReturnLegacy(transaction) {
 
     const methods = array(salesPageState?.refund_payment_options);
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal sales-return-overlay';
-    wrapper.innerHTML = `<div class="modal-box sales-return-modal">
-        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">Retur produk</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} · Pilih produk dan jumlah yang dikembalikan.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+    wrapper.className = 'modal open quick-modal sales-return-overlay p-4';
+    wrapper.innerHTML = `<div class="modal-box sales-return-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head sales-return-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><span class="sales-return-kicker">Retur produk</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} · Pilih produk dan jumlah yang dikembalikan.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form class="sales-return-form">
-            <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
+            <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product grid gap-3 border-b border-base-300 py-4" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
                 <div><strong>${escapeHtml(item.name)}</strong><small>Terjual ${Number(item.quantity).toLocaleString('id-ID')} · Sudah diretur ${Number(item.returned_quantity || 0).toLocaleString('id-ID')}</small></div>
-                <label>Qty retur<input class="sales-return-quantity" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
-                <label class="sales-return-restock"><input type="checkbox" class="sales-return-restock-input" checked><span>Kembali ke stok</span></label>
+                <label>Qty retur<input class="sales-return-quantity input w-full min-w-0" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
+                <label class="sales-return-restock flex items-center gap-2"><input type="checkbox" class="sales-return-restock-input checkbox checkbox-primary checkbox-sm" checked><span>Kembali ke stok</span></label>
                 <b class="sales-return-line-total">${money(0)}</b>
             </article>`).join('')}</div>
-            <div class="sales-return-fields">
-                <label>Metode pengembalian dana<select name="payment_method_id" required><option value="">Pilih metode</option>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}">${escapeHtml(method.name)}</option>`).join('')}</select></label>
-                <label class="sales-return-reference" hidden>Nomor referensi<input name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
-                <label class="sales-return-reason">Alasan retur<textarea name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: Produk tidak sesuai atau kemasan rusak"></textarea></label>
+            <div class="sales-return-fields grid gap-4 md:grid-cols-2">
+                <label>Metode pengembalian dana<select class="select w-full min-w-0" name="payment_method_id" required><option value="">Pilih metode</option>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}">${escapeHtml(method.name)}</option>`).join('')}</select></label>
+                <label class="sales-return-reference" hidden>Nomor referensi<input class="input w-full min-w-0" name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
+                <label class="sales-return-reason">Alasan retur<textarea class="textarea w-full min-w-0" name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: Produk tidak sesuai atau kemasan rusak"></textarea></label>
             </div>
-            <div class="sales-return-summary"><span><small>Total pengembalian dana</small><strong class="sales-return-total">${money(0)}</strong></span><p>Nominal dihitung otomatis dari harga pada invoice.</p></div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary sales-return-submit"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
+            <div class="sales-return-summary flex flex-wrap items-center justify-between gap-3 rounded-box bg-base-200 p-4"><span><small>Total pengembalian dana</small><strong class="sales-return-total">${money(0)}</strong></span><p>Nominal dihitung otomatis dari harga pada invoice.</p></div>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary sales-return-submit btn btn-primary"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -3965,12 +4290,12 @@ function openSalesReturnLegacy(transaction) {
                     payment_method_id: Number(methodSelect.value),
                     reference_number: referenceInput.value.trim() || null,
                     reason: form.elements.reason.value.trim(),
-                    idempotency_key: `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`,
+                    idempotency_key: idempotencyKey,
                 }),
             });
             await refresh();
-            wrapper.innerHTML = `<div class="modal-box sales-return-success"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk retur</button><button type="button" class="secondary sales-return-done">Selesai</button></div>`;
-            wrapper.querySelector('.sales-return-print').onclick = () => window.open(`/operasional/retur/${Number(result.id)}/struk.pdf`, '_blank', 'noopener');
+            wrapper.innerHTML = `<div class="modal-box sales-return-success w-full max-w-2xl grid gap-4 text-center justify-items-center max-h-[calc(100dvh-2rem)] overflow-y-auto"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print btn btn-primary"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk / nota retur</button><button type="button" class="secondary sales-return-done btn btn-secondary">Selesai</button></div>`;
+            wrapper.querySelector('.sales-return-print').onclick = () => openReturnPrintChoice(result);
             wrapper.querySelector('.sales-return-done').onclick = () => wrapper.remove();
             toast('Retur dan refund berhasil diproses.');
         } catch (error) {
@@ -3982,6 +4307,7 @@ function openSalesReturnLegacy(transaction) {
 }
 
 function openSalesReturn(transaction) {
+    const idempotencyKey = `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`;
     const products = array(transaction.items).filter((item) => item.item_type === 'product' && Number(item.refundable_quantity || 0) > 0);
     const treatments = array(transaction.items).filter((item) => item.item_type === 'treatment' && Number(item.refundable_amount || 0) > 0);
     if (!products.length && !treatments.length) {
@@ -4002,34 +4328,34 @@ function openSalesReturn(transaction) {
         ? 'Retur treatment & produk'
         : (treatments.length ? 'Retur treatment' : 'Retur produk');
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal sales-return-overlay';
-    wrapper.innerHTML = `<div class="modal-box sales-return-modal">
-        <div class="modal-head sales-return-head"><div><span class="sales-return-kicker">${escapeHtml(modalTitle)}</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')} &middot; Tentukan item dan nominal pengembalian dana.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+    wrapper.className = 'modal open quick-modal sales-return-overlay p-4';
+    wrapper.innerHTML = `<div class="modal-box sales-return-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head sales-return-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><span class="sales-return-kicker">${escapeHtml(modalTitle)}</span><h2>${escapeHtml(compactInvoiceNumber(transaction.number))}</h2><p>${escapeHtml(transaction.customer_name || 'Pelanggan')}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form class="sales-return-form">
             ${treatments.length ? `<section class="sales-return-section">
-                <div class="sales-return-section-title"><div><b>Treatment</b><small>Refund wajib tunai. Nominal dapat kurang dari sisa harga invoice.</small></div><span>Refund tunai</span></div>
-                <div class="sales-return-treatments">${treatments.map((item) => `<article class="sales-return-treatment" data-item-id="${Number(item.id)}" data-remaining="${Number(item.refundable_amount)}">
+                <div class="sales-return-section-title"><b>Treatment</b><small>Refund wajib tunai. Nominal dapat kurang dari sisa harga invoice.</small></div>
+                <div class="sales-return-treatments">${treatments.map((item) => `<article class="sales-return-treatment grid gap-3 border-b border-base-300 py-4" data-item-id="${Number(item.id)}" data-remaining="${Number(item.refundable_amount)}">
                     <div><strong>${escapeHtml(item.name)}</strong><small>Harga invoice ${money(item.total_amount)} &middot; Sudah direfund ${money(item.returned_amount || 0)}</small></div>
-                    <label>Nominal refund (Rp)<input class="sales-return-treatment-amount" type="number" min="0" max="${Number(item.refundable_amount)}" step="1" inputmode="numeric" value="0"></label>
+                    <label>Nominal refund (Rp)<input class="sales-return-treatment-amount input w-full min-w-0" type="number" min="0" max="${Number(item.refundable_amount)}" step="1" inputmode="numeric" value="0"></label>
                     <b class="sales-return-treatment-total">${money(0)}</b>
                 </article>`).join('')}</div>
             </section>` : ''}
             ${products.length ? `<section class="sales-return-section">
-                <div class="sales-return-section-title"><div><b>Produk</b><small>Pilih jumlah dan status stok produk yang dikembalikan.</small></div><span>Stok</span></div>
-                <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
+                <div class="sales-return-section-title flex flex-wrap items-center justify-between gap-3"><div><b>Produk</b><small>Pilih jumlah dan status stok produk yang dikembalikan.</small></div><span>Stok</span></div>
+                <div class="sales-return-products">${products.map((item) => `<article class="sales-return-product grid gap-3 border-b border-base-300 py-4" data-item-id="${Number(item.id)}" data-price="${Number(item.unit_price)}">
                     <div><strong>${escapeHtml(item.name)}</strong><small>Terjual ${Number(item.quantity).toLocaleString('id-ID')} &middot; Sudah diretur ${Number(item.returned_quantity || 0).toLocaleString('id-ID')}</small></div>
-                    <label>Qty retur<input class="sales-return-quantity" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
-                    <label class="sales-return-restock"><input type="checkbox" class="sales-return-restock-input" checked><span>Kembali ke stok</span></label>
+                    <label>Qty retur<input class="sales-return-quantity input w-full min-w-0" type="number" min="0" max="${Number(item.refundable_quantity)}" step="0.0001" value="0"></label>
+                    <label class="sales-return-restock flex items-center gap-2"><input type="checkbox" class="sales-return-restock-input checkbox checkbox-primary checkbox-sm" checked><span>Kembali ke stok</span></label>
                     <b class="sales-return-line-total">${money(0)}</b>
                 </article>`).join('')}</div>
             </section>` : ''}
-            <div class="sales-return-fields">
-                <label>Metode pengembalian dana<select name="payment_method_id" required>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}" ${Number(method.id) === preferredMethodId ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
-                <label class="sales-return-reference" hidden>Nomor referensi<input name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
-                <label class="sales-return-reason">Alasan retur<textarea name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: treatment tidak dapat dilanjutkan atau produk tidak sesuai"></textarea></label>
+            <div class="sales-return-fields grid gap-4 md:grid-cols-2">
+                <label>Metode pengembalian dana<select class="select w-full min-w-0" name="payment_method_id" required>${methods.map((method) => `<option value="${Number(method.id)}" data-reference="${method.requires_reference ? '1' : '0'}" ${Number(method.id) === preferredMethodId ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
+                <label class="sales-return-reference" hidden>Nomor referensi<input class="input w-full min-w-0" name="reference_number" maxlength="100" placeholder="Nomor referensi refund"></label>
+                <label class="sales-return-reason">Alasan retur<textarea class="textarea w-full min-w-0" name="reason" rows="3" minlength="5" maxlength="2000" required placeholder="Contoh: treatment tidak dapat dilanjutkan atau produk tidak sesuai"></textarea></label>
             </div>
-            <div class="sales-return-summary"><span><small>Total pengembalian dana</small><strong class="sales-return-total">${money(0)}</strong></span><p>${isTreatmentReturn ? 'Nominal treatment tercatat sebagai pengembalian dana tunai berdasarkan nilai pada invoice.' : 'Nominal dihitung otomatis dari harga produk pada invoice.'}</p></div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary sales-return-submit"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
+            <div class="sales-return-summary rounded-box bg-primary/5 p-4"><small>Total pengembalian dana</small><strong class="sales-return-total text-xl">${money(0)}</strong></div>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary sales-return-submit btn btn-primary"><span class="material-symbols-outlined" aria-hidden="true">assignment_return</span> Proses retur</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -4094,12 +4420,12 @@ function openSalesReturn(transaction) {
                     payment_method_id: Number(methodSelect.value),
                     reference_number: referenceInput.value.trim() || null,
                     reason: form.elements.reason.value.trim(),
-                    idempotency_key: `return:${Number(transaction.id)}:${globalThis.crypto?.randomUUID?.() || Date.now()}`,
+                    idempotency_key: idempotencyKey,
                 }),
             });
             await refresh();
-            wrapper.innerHTML = `<div class="modal-box sales-return-success"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk retur</button><button type="button" class="secondary sales-return-done">Selesai</button></div>`;
-            wrapper.querySelector('.sales-return-print').onclick = () => window.open(`/operasional/retur/${Number(result.id)}/struk.pdf`, '_blank', 'noopener');
+            wrapper.innerHTML = `<div class="modal-box sales-return-success w-full max-w-2xl grid gap-4 text-center justify-items-center max-h-[calc(100dvh-2rem)] overflow-y-auto"><span class="material-symbols-outlined" aria-hidden="true">check</span><small>RETUR BERHASIL</small><h2>${escapeHtml(result.number)}</h2><p>Pengembalian dana sebesar <b>${money(result.total_amount)}</b> sudah dicatat dan seluruh laporan telah diperbarui.</p><button type="button" class="primary sales-return-print btn btn-primary"><span class="material-symbols-outlined" aria-hidden="true">print</span> Cetak struk / nota retur</button><button type="button" class="secondary sales-return-done btn btn-secondary">Selesai</button></div>`;
+            wrapper.querySelector('.sales-return-print').onclick = () => openReturnPrintChoice(result);
             wrapper.querySelector('.sales-return-done').onclick = () => wrapper.remove();
             toast('Retur dan refund berhasil diproses.');
         } catch (error) {
@@ -4147,14 +4473,14 @@ function renderCashEntryHistory(cashEntries = state.cash_entries) {
         const automated = Boolean(entry.automated || entry.transaction_payment_id);
         return `<div class="tr finance-history-row">
             <span>${escapeHtml(formatCashEntryDate(entry.entry_date))}</span>
-            <span><em class="finance-type ${isIncome ? 'income' : 'expense'}">${isIncome ? 'Pemasukan' : 'Pengeluaran'}</em></span>
+            <span><span class="finance-type badge badge-soft badge-sm ${isIncome ? 'income badge-success' : 'expense badge-error'}">${isIncome ? 'Pemasukan' : 'Pengeluaran'}</span></span>
             <span><b>${escapeHtml(entry.category)}</b><small>${escapeHtml(entry.description)}</small></span>
             <span><small class="finance-source ${automated ? 'automatic' : 'manual'}">${automated ? `Otomatis${entry.transaction_number ? ` · ${escapeHtml(compactInvoiceNumber(entry.transaction_number))}` : ''}` : 'Manual'}</small></span>
             <span>${escapeHtml(entry.created_by_name || '-')}</span>
-            <b class="align-right finance-amount ${isIncome ? 'income' : 'expense'}">${isIncome ? '+' : '−'}${money(entry.amount)}</b>
+            <b class="align-right finance-amount ${isIncome ? 'income text-success' : 'expense text-error'} text-right tabular-nums">${isIncome ? '+' : '−'}${money(entry.amount)}</b>
         </div>`;
     }).join('');
-    box.innerHTML = `<div class="tr th"><span>TANGGAL</span><span>ARUS</span><span>KATEGORI & CATATAN</span><span>SUMBER</span><span>DICATAT OLEH</span><span class="align-right">NOMINAL</span></div>${rows || '<p class="empty-state">Tidak ada riwayat arus kas yang sesuai.</p>'}`;
+    box.innerHTML = dataTable(["Tanggal", "Arus", "Kategori / catatan", "Sumber", "Dicatat oleh", ["Nominal", "right"]], rows, "Tidak ada riwayat arus kas yang sesuai.");
 }
 
 function reloadCashFlowFromHistoryRange() {
@@ -4177,19 +4503,19 @@ function openCashEntryForm() {
     if (!canManageFinance) return;
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small finance-entry-modal">
-        <div class="modal-head"><div><h2>Input kas</h2><p>Catat modal, pemasukan, pembelian, atau biaya operasional salon.</p></div><button type="button" class="quick-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small finance-entry-modal w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Input kas</h2><p>Catat modal, pemasukan, pembelian, atau biaya operasional salon.</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form>
-            <div class="quick-fields">
-                <label>Jenis arus<select name="type"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
-                <label>Tanggal<input name="entry_date" type="date" value="${localDate()}" max="${localDate()}" required></label>
-                <label>Kelompok laporan<select name="report_group"><option value="operating">Operasional (laba-rugi)</option><option value="capital">Modal pemilik (neraca)</option><option value="inventory">Pembelian persediaan (neraca)</option><option value="owner_draw">Prive pemilik (neraca)</option></select></label>
-                <label>Kategori<input name="category" list="cash-entry-categories" maxlength="100" placeholder="Pilih atau tulis kategori" required><datalist id="cash-entry-categories"><option value="Modal usaha"></option><option value="Pembelian bahan & produk"></option><option value="Biaya operasional"></option><option value="Gaji & komisi"></option><option value="Sewa & utilitas"></option></datalist></label>
-                <label>Nominal (Rp)<input name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
-                <label class="finance-entry-description">Catatan<textarea name="description" rows="3" maxlength="2000" placeholder="Contoh: Beli tisu dan air minum untuk operasional" required></textarea></label>
+            <div class="quick-fields grid gap-4">
+                <label>Jenis arus<select class="select w-full min-w-0" name="type"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></label>
+                <label>Tanggal<input class="input w-full min-w-0" name="entry_date" type="date" value="${localDate()}" max="${localDate()}" required></label>
+                <label>Kelompok laporan<select class="select w-full min-w-0" name="report_group"><option value="operating">Operasional (laba-rugi)</option><option value="capital">Modal pemilik (neraca)</option><option value="inventory">Pembelian persediaan (neraca)</option><option value="owner_draw">Prive pemilik (neraca)</option></select></label>
+                <label>Kategori<input class="input w-full min-w-0" name="category" list="cash-entry-categories" maxlength="100" placeholder="Pilih atau tulis kategori" required><datalist id="cash-entry-categories"><option value="Modal usaha"></option><option value="Pembelian bahan & produk"></option><option value="Biaya operasional"></option><option value="Gaji & komisi"></option><option value="Sewa & utilitas"></option></datalist></label>
+                <label>Nominal (Rp)<input class="input w-full min-w-0" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
+                <label class="finance-entry-description">Catatan<textarea class="textarea w-full min-w-0" name="description" rows="3" maxlength="2000" placeholder="Contoh: Beli tisu dan air minum untuk operasional" required></textarea></label>
             </div>
-            <footer><button type="button" class="secondary quick-close">Batal</button><button class="primary" type="submit">Simpan catatan</button></footer>
+            <footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button class="primary btn btn-primary" type="submit">Simpan catatan</button></footer>
         </form>
     </div>`;
     document.body.appendChild(wrapper);
@@ -4226,7 +4552,7 @@ function legacyRenderPayroll() {
         <span>${Number(payroll.late_duration_minutes || 0)} menit<small>-${money(payroll.late_deduction)}</small></span>
         <span>${money(payroll.commission)}</span>
         <b>${money(payroll.net_salary ?? (Number(payroll.base_salary) + Number(payroll.bonus) + Number(payroll.overtime || 0) + Number(payroll.commission) - Number(payroll.late_deduction) - Number(payroll.other_deduction || 0)))}</b>
-        <button type="button" class="link payroll-edit ui-action-edit" data-id="${Number(payroll.id)}">Edit</button>
+        <button type="button" class="link payroll-edit ui-action-edit btn btn-sm no-underline btn-accent" data-id="${Number(payroll.id)}">Edit</button>
     </div>`).join('')}`;
 
     document.querySelectorAll('.payroll-edit').forEach((button) => {
@@ -4312,7 +4638,7 @@ function payrollEstimatedValues(form, commission = 0) {
 
 function payrollField(name, label, value = 0, options = {}) {
     const { type = 'number', hint = '', step = '1', required = false } = options;
-    return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${type === 'number' ? `min="0" step="${escapeHtml(step)}"` : ''} ${required ? 'required' : ''}>${hint ? `<small>${escapeHtml(hint)}</small>` : ''}</label>`;
+    return `<label${hint ? ` title="${escapeHtml(hint)}"` : ''}>${escapeHtml(label)}<input class="input w-full min-w-0" name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${type === 'number' ? `min="0" step="${escapeHtml(step)}"` : ''} ${required ? 'required' : ''}></label>`;
 }
 
 function openPayrollForm(existing = null, preset = {}) {
@@ -4349,48 +4675,48 @@ function openPayrollForm(existing = null, preset = {}) {
         .map((employee) => `<option value="${Number(employee.id)}" ${Number(employee.id) === Number(selectedEmployeeId) ? 'selected' : ''}>${escapeHtml(employee.name)}${employee.position ? ` · ${escapeHtml(employee.position)}` : ''}</option>`)
         .join('');
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open payroll-editor-overlay';
-    wrapper.innerHTML = `<section class="modal-box payroll-editor-modal" role="dialog" aria-modal="true" aria-labelledby="payroll-editor-title">
-        <div class="modal-head"><div><h2 id="payroll-editor-title">${isEdit ? 'Edit remunerasi' : 'Input remunerasi'}</h2><p>Komisi layanan dihitung dari transaksi lunas. Isi hanya komponen manual sesuai rekap.</p></div><button type="button" class="payroll-editor-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+    wrapper.className = 'modal open payroll-editor-overlay p-4';
+    wrapper.innerHTML = `<section class="modal-box payroll-editor-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="payroll-editor-title">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2 id="payroll-editor-title">${isEdit ? 'Edit remunerasi' : 'Input remunerasi'}</h2><p>Komisi dihitung otomatis.</p></div><button type="button" class="payroll-editor-close btn btn-sm btn-info" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
         <form class="payroll-editor-form">
-            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>1</span><div><h3>Periode & karyawan</h3><p>Satu data untuk satu karyawan dalam satu periode gaji.</p></div></div><div class="form-grid">
-                <label>Karyawan<select name="employee_id" ${isEdit ? 'disabled' : ''}>${employeeOptions}</select>${isEdit ? `<input type="hidden" name="employee_id" value="${Number(existing.employee_id)}">` : ''}</label>
-                ${isEdit ? `<label>Periode gaji<input type="month" value="${escapeHtml(initialPeriod)}" disabled><small>Periode terkunci agar riwayat tetap konsisten.</small></label>` : payrollField('period', 'Periode gaji', initialPeriod, { type: 'month', required: true })}
+            <section class="payroll-editor-section grid gap-4"><div class="payroll-editor-section-title grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 [&>span]:grid [&>span]:size-7 [&>span]:place-items-center [&>span]:rounded-full [&>span]:bg-primary/10 [&>span]:font-semibold [&>span]:text-primary"><span>1</span><div><h3>Periode & karyawan</h3></div></div><div class="form-grid grid gap-4 md:grid-cols-2">
+                <label>Karyawan<select class="select w-full min-w-0" name="employee_id" ${isEdit ? 'disabled' : ''}>${employeeOptions}</select>${isEdit ? `<input type="hidden" name="employee_id" value="${Number(existing.employee_id)}">` : ''}</label>
+                ${isEdit ? `<label>Periode gaji<input class="input w-full min-w-0" type="month" value="${escapeHtml(initialPeriod)}" disabled><small>Periode terkunci agar riwayat tetap konsisten.</small></label>` : payrollField('period', 'Periode gaji', initialPeriod, { type: 'month', required: true })}
             </div></section>
-            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>2</span><div><h3>Hari kerja & gaji</h3><p>Isi dua angka ini saja: hari libur dan bayaran per hari.</p></div></div>
-                <div class="payroll-day-summary"><span><small>Hari dalam periode</small><b data-payroll-calendar-days>${initialMonthDays} hari</b></span><span><small>Hari dibayar</small><b data-payroll-paid-days>${initialPaidDays} hari</b></span><span><small>Gaji pokok periode</small><b data-payroll-base-salary>Rp0</b></span></div>
-                <div class="form-grid">
+            <section class="payroll-editor-section grid gap-4"><div class="payroll-editor-section-title grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 [&>span]:grid [&>span]:size-7 [&>span]:place-items-center [&>span]:rounded-full [&>span]:bg-primary/10 [&>span]:font-semibold [&>span]:text-primary"><span>2</span><div><h3>Hari kerja & gaji</h3></div></div>
+                <div class="payroll-day-summary grid gap-3 rounded-box bg-base-200 p-4 sm:grid-cols-3 [&>span]:grid [&>span]:gap-1"><span><small>Hari dalam periode</small><b data-payroll-calendar-days>${initialMonthDays} hari</b></span><span><small>Hari dibayar</small><b data-payroll-paid-days>${initialPaidDays} hari</b></span><span><small>Gaji pokok periode</small><b data-payroll-base-salary>Rp0</b></span></div>
+                <div class="form-grid grid gap-4 md:grid-cols-2">
                     ${payrollField('scheduled_off_days', 'Libur terjadwal (hari)', initialOffDays, { step: '0.01', hint: 'Contoh: September 30 hari, libur 4 hari -> JHK 26 hari.' })}
                     ${payrollField('daily_rate', 'Bayaran per hari', initialDailyRate, { hint: 'Ubah nominal ini jika gaji pokok karyawan berubah.' })}
                     ${payrollField('absence_days', 'Tidak masuk di luar libur (hari)', existing?.absence_days ?? 0, { step: '0.01', hint: 'Hanya untuk mangkir/izin tanpa gaji, bukan hari libur terjadwal.' })}
                     ${payrollField('late_duration_minutes', 'Total keterlambatan (menit)', existing?.late_duration_minutes ?? 0, { hint: 'Akumulasi dari rekap absensi periode ini.' })}
                     ${payrollField('late_rate_per_minute', 'Tarif potongan telat / menit', existing?.late_rate_per_minute ?? 0, { hint: 'Contoh: Rp1.000 per menit.' })}
                 </div>
-                <p class="payroll-auto-note">Potongan tidak masuk dan keterlambatan dihitung otomatis, lalu terlihat di ringkasan pendapatan bersih.</p>
+                <p class="payroll-auto-note">Potongan dihitung otomatis.</p>
                 <input name="paid_work_days" type="hidden" value="${initialPaidDays}"><input name="base_salary" type="hidden" value="0"><input name="absence_deduction" type="hidden" value="${escapeHtml(existing?.absence_deduction ?? 0)}"><input name="late_deduction" type="hidden" value="${escapeHtml(existing?.late_deduction ?? 0)}">
             </section>
-            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>3</span><div><h3>Tambahan pendapatan</h3><p>Isi hanya bila ada. Komisi treatment diambil otomatis dari transaksi lunas.</p></div></div><div class="form-grid">
+            <section class="payroll-editor-section grid gap-4"><div class="payroll-editor-section-title grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 [&>span]:grid [&>span]:size-7 [&>span]:place-items-center [&>span]:rounded-full [&>span]:bg-primary/10 [&>span]:font-semibold [&>span]:text-primary"><span>3</span><div><h3>Tambahan pendapatan</h3></div></div><div class="form-grid grid gap-4 md:grid-cols-2">
                 ${payrollField('overtime_days', 'Hari lembur', existing?.overtime_days ?? 0, { step: '0.01', hint: 'Jumlah hari lembur pada rekap.' })}
                 ${payrollField('overtime', 'Total uang lembur & makan', existing?.overtime ?? 0, { hint: 'Nominal total yang diterima untuk lembur.' })}
                 ${payrollField('bonus', 'Bonus', existing?.bonus ?? 0, { hint: 'Total bonus untuk periode ini.' })}
                 ${payrollField('other_allowance', 'Tunjangan', existing?.other_allowance ?? 0, { hint: 'Total tunjangan untuk periode ini.' })}
                 ${payrollField('tip_deposit', 'Titipan TIP', existing?.tip_deposit ?? 0)}
             </div>
-            <details class="payroll-detail-inputs"><summary>Rincian tambahan untuk kolom Excel (opsional)</summary><p>Isi bila bonus atau tunjangan perlu dipisahkan dalam rekap Excel. Nilainya ditambahkan ke total.</p><div class="form-grid">
+            <details class="payroll-detail-inputs rounded-box border border-base-300 p-4 space-y-4"><summary>Rincian tambahan untuk kolom Excel (opsional)</summary><p>Isi bila bonus atau tunjangan perlu dipisahkan dalam rekap Excel. Nilainya ditambahkan ke total.</p><div class="form-grid grid gap-4 md:grid-cols-2">
                 ${payrollField('meal_allowance', 'Uang makan terpisah', existing?.meal_allowance ?? 0)}
                 ${payrollField('target_bonus', 'Bonus target', existing?.target_bonus ?? 0)}
                 ${payrollField('service_bonus', 'Bonus layanan / no complaint', existing?.service_bonus ?? 0)}
                 ${payrollField('attendance_bonus', 'Bonus kehadiran', existing?.attendance_bonus ?? 0)}
                 ${payrollField('attendance_allowance', 'Tunjangan kehadiran', existing?.attendance_allowance ?? 0)}
             </div></details></section>
-            <section class="payroll-editor-section"><div class="payroll-editor-section-title"><span>4</span><div><h3>Potongan & catatan</h3><p>Kasbon dan potongan lain langsung masuk ke total potongan.</p></div></div><div class="form-grid">
+            <section class="payroll-editor-section grid gap-4"><div class="payroll-editor-section-title grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 [&>span]:grid [&>span]:size-7 [&>span]:place-items-center [&>span]:rounded-full [&>span]:bg-primary/10 [&>span]:font-semibold [&>span]:text-primary"><span>4</span><div><h3>Potongan & catatan</h3></div></div><div class="form-grid grid gap-4 md:grid-cols-2">
                 ${payrollField('cash_advance', 'Kasbon', fieldValue('cash_advance'))}
                 ${payrollField('other_deduction', 'Potongan lain', fieldValue('other_deduction'))}
-                <label class="full-width">Catatan<textarea name="notes" maxlength="2000" placeholder="Contoh: alasan potongan atau bonus">${escapeHtml(fieldValue('notes', ''))}</textarea></label>
+                <label class="full-width col-span-full">Catatan<textarea class="textarea w-full min-w-0" name="notes" maxlength="2000" placeholder="Contoh: alasan potongan atau bonus">${escapeHtml(fieldValue('notes', ''))}</textarea></label>
             </div></section>
-            <aside class="payroll-preview"><span><small>Gaji pokok periode</small><b data-payroll-preview="base">Rp0</b></span><span><small>Komisi otomatis</small><b data-payroll-preview="commission">${isEdit ? money(existing.commission) : 'Dihitung saat simpan'}</b></span><span><small>Pendapatan kotor</small><b data-payroll-preview="gross">Rp0</b></span><span><small>Total potongan</small><b data-payroll-preview="deductions">Rp0</b></span><span class="payroll-preview-net"><small>Estimasi pendapatan bersih</small><b data-payroll-preview="net">Rp0</b></span></aside>
+            <aside class="payroll-preview grid gap-3 rounded-box bg-base-200 p-4 [&>span]:flex [&>span]:flex-wrap [&>span]:items-center [&>span]:justify-between [&>span]:gap-2"><span><small>Gaji pokok periode</small><b data-payroll-preview="base">Rp0</b></span><span><small>Komisi otomatis</small><b data-payroll-preview="commission">${isEdit ? money(existing.commission) : 'Dihitung saat simpan'}</b></span><span><small>Pendapatan kotor</small><b data-payroll-preview="gross">Rp0</b></span><span><small>Total potongan</small><b data-payroll-preview="deductions">Rp0</b></span><span class="payroll-preview-net flex items-center justify-between gap-3 text-xl font-semibold"><small>Estimasi pendapatan bersih</small><b data-payroll-preview="net">Rp0</b></span></aside>
             <p class="payroll-form-error" data-payroll-form-error hidden></p>
-            <footer><button type="button" class="secondary payroll-editor-close">Batal</button><button type="submit" class="primary">${isEdit ? 'Simpan perubahan' : 'Simpan remunerasi'}</button></footer>
+            <footer><button type="button" class="secondary payroll-editor-close btn btn-secondary">Batal</button><button type="submit" class="primary btn btn-primary">${isEdit ? 'Simpan perubahan' : 'Simpan remunerasi'}</button></footer>
         </form>
     </section>`;
     const close = () => wrapper.remove();
@@ -4474,30 +4800,30 @@ function renderPayroll() {
     const openButton = document.getElementById('open-payroll');
     if (openButton) openButton.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">add</span> Tambah data';
     if (!remunerationReport) {
-        box.innerHTML = '<p class="empty-state">Memuat data remunerasi pada periode berjalan…</p>';
+        box.innerHTML = '<p class="empty-state py-8 text-center text-sm text-base-content/60">Memuat data remunerasi pada periode berjalan…</p>';
         return;
     }
     const payrolls = array(state.payrolls);
     const { period = {}, employees: employeeRows = [] } = remunerationReport;
     const payrollPeriod = String(period.payroll_period || localDate().slice(0, 7));
-    box.innerHTML = `<div class="tr th"><span>KARYAWAN / PERIODE</span><span>GP & JHK</span><span>KOMISI</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
+    box.innerHTML = dataTable(['Karyawan / periode', ['GP / JHK', 'right'], ['Komisi', 'right'], ['Pendapatan kotor', 'right'], ['Potongan', 'right'], ['Pendapatan bersih', 'right'], 'Aksi'], array(employeeRows).map((employee) => {
         const payroll = payrolls.find((item) => Number(item.id) === Number(employee.payroll_id)) || null;
         const hasPayrollInput = Boolean(employee.has_payroll_input && payroll);
         const payrollState = hasPayrollInput
-            ? '<em class="remuneration-input-state ready">Data terisi</em>'
-            : '<em class="remuneration-input-state">Belum diinput</em>';
+            ? '<span class="remuneration-input-state ready text-success">Data terisi</span>'
+            : '<span class="remuneration-input-state text-warning-content">Belum diinput</span>';
         const action = hasPayrollInput
-            ? `<button type="button" class="remuneration-action edit payroll-edit ui-action-edit" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
-            : `<button type="button" class="remuneration-action input payroll-input ui-action-success" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
+            ? `<button type="button" class="remuneration-action edit payroll-edit ui-action-edit btn btn-sm btn-accent" data-id="${Number(payroll.id)}"><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit data</button>`
+            : `<button type="button" class="remuneration-action payroll-input ui-action-success btn btn-sm btn-success" data-employee-id="${Number(employee.employee_id)}" data-period="${escapeHtml(payrollPeriod)}"><span class="material-symbols-outlined" aria-hidden="true">add</span>Input data</button>`;
         return `<div class="tr"><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${escapeHtml(payrollPeriod)}</small>${payrollState}</span>
             <span><b>${money(employee.base_salary)}</b><small>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} JHK · ${money(employee.daily_rate)}/hari</small></span>
             <span><b>${money(employee.commission)}</b><small>${money(employee.overtime)} lembur</small></span>
             <span><b>${money(employee.gross_income)}</b><small>Bonus + tunjangan ${money(Number(employee.bonus || 0) + Number(employee.target_bonus || 0) + Number(employee.service_bonus || 0) + Number(employee.attendance_bonus || 0) + Number(employee.meal_allowance || 0) + Number(employee.attendance_allowance || 0) + Number(employee.other_allowance || 0))}</small></span>
             <span><b>-${money(employee.total_deduction)}</b><small>${Number(employee.late_minutes || 0)} menit telat · Kasbon ${money(employee.cash_advance)}</small></span>
             <b>${money(employee.net_salary)}</b>
-            <span class="payroll-row-actions">${action}</span>
+            <span class="payroll-row-actions flex items-center justify-end gap-2">${action}</span>
         </div>`;
-    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
+    }).join(''), 'Tidak ada karyawan aktif pada periode ini.');
     box.querySelectorAll('.payroll-edit').forEach((button) => {
         button.onclick = () => openPayrollForm(payrolls.find((item) => Number(item.id) === Number(button.dataset.id)));
     });
@@ -4559,13 +4885,13 @@ function legacyRenderRemuneration() {
     initializeRemunerationFilters();
     if (!remunerationReport) {
         summaryBox.innerHTML = '';
-        table.innerHTML = '<p class="empty-state">Pilih rentang periode untuk melihat rekap.</p>';
+        table.innerHTML = '<p class="empty-state py-8 text-center text-sm text-base-content/60">Pilih rentang periode untuk melihat rekap.</p>';
         note.textContent = '';
         return;
     }
 
     const { period = {}, summary = {}, employees: employeeRows = [] } = remunerationReport;
-    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)} · Input gaji ${escapeHtml(String(period.payroll_period || '-'))}</small></span>`;
+    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span class="grid gap-1"><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)} · Input gaji ${escapeHtml(String(period.payroll_period || '-'))}</small></span>`;
     const summaries = [
         ['groups', 'Karyawan', Number(summary.employee_count || 0).toLocaleString('id-ID'), 'Aktif'],
         ['paid', 'Komisi layanan', money(summary.commission), 'Otomatis'],
@@ -4574,12 +4900,12 @@ function legacyRenderRemuneration() {
         ['payments', 'Pendapatan', money(summary.revenue), 'Penjualan - retur'],
         ['inventory_2', 'Stok in / out', `+${Number(summary.stock_in || 0).toLocaleString('id-ID')} / -${Number(summary.stock_out || 0).toLocaleString('id-ID')}`, `${Number(summary.stock_movement_count || 0)} mutasi`],
     ];
-    summaryBox.innerHTML = summaries.map(([icon, label, value, meta]) => `<article><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${meta}</em></div></article>`).join('');
+    summaryBox.innerHTML = summaries.map(([icon, label, value, meta], index) => `<article class="stat rounded-box border bg-base-100 p-4 shadow-sm ${['border-primary/25 border-t-4 border-t-primary', 'border-secondary/25 border-t-4 border-t-secondary', 'border-info/25 border-t-4 border-t-info', 'border-error/25 border-t-4 border-t-error', 'border-accent/25 border-t-4 border-t-accent'][index % 5]}"><div class="stat-title text-xs">${label}</div><div class="stat-value text-xl tabular-nums">${value}</div><div class="stat-desc mt-1">${meta}</div></article>`).join('');
 
     table.innerHTML = `<div class="tr th"><span>KARYAWAN</span><span>LAYANAN</span><span>KOMISI</span><span>INPUT GAJI</span><span>KETERLAMBATAN</span><span>STATUS</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
         const [statusLabel, statusClass] = remunerationStatusMeta(employee.status);
         const statusControl = canManagePayroll
-            ? `<select class="remuneration-status status-${statusClass}" data-remuneration-employee="${Number(employee.employee_id)}" aria-label="Status rekap ${escapeHtml(employee.employee_name)}"><option value="pending" ${employee.status === 'pending' ? 'selected' : ''}>Belum dicek</option><option value="ready" ${employee.status === 'ready' ? 'selected' : ''}>Siap Excel</option><option value="completed" ${employee.status === 'completed' ? 'selected' : ''}>Selesai</option></select>`
+            ? `<select class="remuneration-status status-${statusClass} select w-full min-w-0" data-remuneration-employee="${Number(employee.employee_id)}" aria-label="Status rekap ${escapeHtml(employee.employee_name)}"><option value="pending" ${employee.status === 'pending' ? 'selected' : ''}>Belum dicek</option><option value="ready" ${employee.status === 'ready' ? 'selected' : ''}>Siap Excel</option><option value="completed" ${employee.status === 'completed' ? 'selected' : ''}>Selesai</option></select>`
             : `<em class="remuneration-status-label status-${statusClass}">${statusLabel}</em>`;
         return `<div class="tr">
             <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')}</small></span>
@@ -4588,9 +4914,9 @@ function legacyRenderRemuneration() {
             <span><b>${money(employee.base_salary)}</b><small>Bonus ${money(employee.bonus)} · Lembur ${money(employee.overtime)}</small></span>
             <span><b>${Number(employee.late_minutes || 0)} menit</b><small>-${money(employee.late_deduction)}</small></span>
             <span>${statusControl}${employee.archived ? '<small class="remuneration-archived">Arsip tersimpan</small>' : ''}</span>
-            <button type="button" class="link remuneration-detail ui-action-view" data-remuneration-detail="${Number(employee.employee_id)}">Detail</button>
+            <button type="button" class="link remuneration-detail ui-action-view btn btn-sm no-underline btn-info" data-remuneration-detail="${Number(employee.employee_id)}">Detail</button>
         </div>`;
-    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
+    }).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada karyawan aktif pada periode ini.</p>'}`;
 
     table.querySelectorAll('.remuneration-status').forEach((select) => {
         select.addEventListener('change', async () => {
@@ -4628,19 +4954,19 @@ function legacyOpenRemunerationDetail(employee) {
     const attendance = array(remunerationReport.attendance)
         .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open remuneration-detail-overlay';
+    wrapper.className = 'modal open remuneration-detail-overlay p-4';
     const attendanceRows = attendance.length
         ? attendance.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><b>${item.status === 'off' ? 'Libur' : 'Masuk'}</b><span>${escapeHtml(item.notes || '-')}</span></li>`).join('')
-        : '<li class="empty-state">Tidak ada catatan kehadiran pada periode ini.</li>';
+        : '<li class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada catatan kehadiran pada periode ini.</li>';
     const commissionRows = commissions.length
         ? commissions.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><span><b>${escapeHtml(item.treatment_name)}</b><small>${escapeHtml(item.customer_name)} · ${escapeHtml(item.transaction_number)}</small></span><strong>${money(item.commission)}</strong></li>`).join('')
-        : '<li class="empty-state">Belum ada komisi dari transaksi lunas.</li>';
-    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
-        <div class="modal-head"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-        <div class="remuneration-detail-body">
-            <div class="remuneration-detail-totals"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Gaji pokok input</small><b>${money(employee.base_salary)}</b></span><span><small>Bonus + lembur</small><b>${money(Number(employee.bonus || 0) + Number(employee.overtime || 0))}</b></span><span><small>Potongan</small><b>-${money(Number(employee.late_deduction || 0) + Number(employee.other_deduction || 0))}</b></span></div>
-            <section><div class="remuneration-detail-section-head"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission">${commissionRows}</ul></section>
-            <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.off_days || 0)} libur</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
+        : '<li class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada komisi dari transaksi lunas.</li>';
+    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close btn btn-sm btn-info" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="remuneration-detail-body grid gap-4">
+            <div class="remuneration-detail-totals grid gap-3 sm:grid-cols-2 [&>span]:grid [&>span]:gap-1 [&>span]:rounded-box [&>span]:bg-base-200 [&>span]:p-4 [&_b]:text-lg"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Gaji pokok input</small><b>${money(employee.base_salary)}</b></span><span><small>Bonus + lembur</small><b>${money(Number(employee.bonus || 0) + Number(employee.overtime || 0))}</b></span><span><small>Potongan</small><b>-${money(Number(employee.late_deduction || 0) + Number(employee.other_deduction || 0))}</b></span></div>
+            <section><div class="remuneration-detail-section-head flex flex-wrap items-center justify-between gap-3 mb-3"><h3>Komisi layanan</h3><strong>${Number(employee.treatment_count || 0).toLocaleString('id-ID')} treatment</strong></div><ul class="remuneration-detail-list commission grid gap-3">${commissionRows}</ul></section>
+            <section><div class="remuneration-detail-section-head flex flex-wrap items-center justify-between gap-3 mb-3"><h3>Kehadiran</h3><strong>${Number(employee.off_days || 0)} libur</strong></div><ul class="remuneration-detail-list attendance grid gap-3">${attendanceRows}</ul></section>
         </div>
     </section>`;
     const close = () => wrapper.remove();
@@ -4672,7 +4998,7 @@ function renderRemuneration() {
     initializeRemunerationFilters();
     if (!remunerationReport) {
         summaryBox.innerHTML = '';
-        table.innerHTML = '<p class="empty-state">Pilih rentang periode untuk melihat rekap.</p>';
+        table.innerHTML = '<p class="empty-state py-8 text-center text-sm text-base-content/60">Pilih rentang periode untuk melihat rekap.</p>';
         note.textContent = '';
         if (finalizeButton) {
             finalizeButton.disabled = true;
@@ -4694,7 +5020,7 @@ function renderRemuneration() {
         finalizeButton.title = finalizationHint;
         finalizeButton.setAttribute('aria-describedby', 'remuneration-validation-note');
     }
-    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Data manual menggunakan periode ${escapeHtml(String(period.payroll_period || '-'))} · Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)}</small>${finalizeButton ? `<small id="remuneration-validation-note" class="remuneration-validation-note ${isComplete ? 'is-complete' : 'is-pending'}">${escapeHtml(finalizationHint)}</small>` : ''}</span>`;
+    note.innerHTML = `<span class="material-symbols-outlined" aria-hidden="true">event</span><span class="grid gap-1"><b>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</b><small>Data manual menggunakan periode ${escapeHtml(String(period.payroll_period || '-'))} · Gajian tgl ${Number(period.payday_day || 1)} · Cutoff tgl ${Number(period.cutoff_day || 31)}</small>${finalizeButton ? `<small id="remuneration-validation-note" class="remuneration-validation-note block ${isComplete ? 'is-complete' : 'is-pending'}">${escapeHtml(finalizationHint)}</small>` : ''}</span>`;
     const summaries = [
         ['groups', 'Data karyawan', `${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)}`, 'Sudah diinput'],
         ['paid', 'Komisi layanan', money(summary.commission), 'Otomatis dari kasir'],
@@ -4702,16 +5028,16 @@ function renderRemuneration() {
         ['remove_circle', 'Total potongan', `-${money(summary.deductions)}`, 'Mangkir, telat, kasbon'],
         ['payments', 'Pendapatan bersih', money(summary.net_income), 'Hasil perhitungan sistem'],
     ];
-    summaryBox.innerHTML = summaries.map(([icon, label, value, meta]) => `<article><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${meta}</em></div></article>`).join('');
+    summaryBox.innerHTML = summaries.map(([icon, label, value, meta], index) => `<article class="stat rounded-box border bg-base-100 p-4 shadow-sm ${['border-primary/25 border-t-4 border-t-primary', 'border-secondary/25 border-t-4 border-t-secondary', 'border-info/25 border-t-4 border-t-info', 'border-error/25 border-t-4 border-t-error', 'border-accent/25 border-t-4 border-t-accent'][index % 5]}"><div class="stat-title text-xs">${label}</div><div class="stat-value text-xl tabular-nums">${value}</div><div class="stat-desc mt-1">${meta}</div></article>`).join('');
 
-    table.innerHTML = `<div class="tr th"><span>KARYAWAN</span><span>JHK / GP</span><span>KOMISI & LEMBUR</span><span>PENDAPATAN KOTOR</span><span>POTONGAN</span><span>PENDAPATAN BERSIH</span><span>AKSI</span></div>${array(employeeRows).map((employee) => {
+    table.innerHTML = dataTable(['Karyawan', ['JHK / GP', 'right'], ['Komisi / lembur', 'right'], ['Pendapatan kotor', 'right'], ['Potongan', 'right'], ['Pendapatan bersih', 'right'], 'Aksi'], array(employeeRows).map((employee) => {
         const payrollState = employee.has_payroll_input
-            ? '<em class="remuneration-input-state ready">Data terisi</em>'
-            : '<em class="remuneration-input-state">Belum diinput</em>';
+            ? '<span class="remuneration-input-state ready text-success">Data terisi</span>'
+            : '<span class="remuneration-input-state text-warning-content">Belum diinput</span>';
         // Rekap is read-only: all manual changes belong in Input & Edit
         // Remunerasi. Keeping one Detail action here avoids two competing
         // routes for JHK, GP, bonus, and deductions.
-        const action = `<button type="button" class="remuneration-action detail remuneration-detail ui-action-view" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>`;
+        const action = `<button type="button" class="remuneration-action detail remuneration-detail ui-action-view btn btn-sm btn-info" data-remuneration-detail="${Number(employee.employee_id)}"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>Detail</button>`;
         return `<div class="tr">
             <span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')} · ${payrollState}</small></span>
             <span><b>${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari</b><small>${money(employee.daily_rate)}/hari · GP ${money(employee.base_salary)}</small></span>
@@ -4719,9 +5045,9 @@ function renderRemuneration() {
             <b>${money(employee.gross_income)}</b>
             <span><b>-${money(employee.total_deduction)}</b><small>Mangkir ${Number(employee.absence_days || 0)} hr · Telat ${Number(employee.late_minutes || 0)} mnt</small></span>
             <b>${money(employee.net_salary)}</b>
-            <span class="remuneration-row-actions">${action}</span>
+            <span class="remuneration-row-actions flex items-center justify-end gap-2">${action}</span>
         </div>`;
-    }).join('') || '<p class="empty-state">Tidak ada karyawan aktif pada periode ini.</p>'}`;
+    }).join(''), 'Tidak ada karyawan aktif pada periode ini.');
     table.querySelectorAll('.remuneration-detail').forEach((button) => {
         button.addEventListener('click', () => {
             const employee = array(employeeRows).find((item) => Number(item.employee_id) === Number(button.dataset.remunerationDetail));
@@ -4739,13 +5065,13 @@ async function loadRemunerationArchives() {
     const year = Number(yearInput.value);
     if (!Number.isInteger(year) || year < 2000 || year > 2100) return;
     detail.hidden = true;
-    grid.innerHTML = '<p class="empty-state">Memuat arsip…</p>';
+    grid.innerHTML = '<p class="empty-state py-8 text-center text-sm text-base-content/60">Memuat arsip…</p>';
     const archives = await api(`/operasional/penggajian/arsip?year=${year}`);
     const byMonth = new Map(array(archives).map((archive) => [Number(archive.month), archive]));
     const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     grid.innerHTML = monthNames.map((name, index) => {
         const archive = byMonth.get(index + 1);
-        return `<article class="remuneration-archive-card ${archive ? 'is-saved' : ''}"><div class="remuneration-archive-card-top"><span class="material-symbols-outlined" aria-hidden="true">${archive ? 'inventory_2' : 'calendar_month'}</span><em>${archive ? 'Tersimpan' : 'Belum ada arsip'}</em></div><h3>${name} ${year}</h3><p>${archive ? `${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}` : 'Belum difinalisasi'}</p>${archive ? `<button type="button" class="secondary ui-action-view" data-archive-id="${Number(archive.id)}">Lihat hasil</button>` : ''}</article>`;
+        return `<article class="remuneration-archive-card ${archive ? 'is-saved' : ''} card bg-base-100 border border-base-300 p-5 gap-4 shadow-sm"><div class="remuneration-archive-card-top flex flex-wrap items-center justify-between gap-3"><span class="material-symbols-outlined" aria-hidden="true">${archive ? 'inventory_2' : 'calendar_month'}</span><span class="badge badge-soft badge-sm ${archive ? 'badge-success' : 'badge-ghost'}">${archive ? 'Tersimpan' : 'Belum ada arsip'}</span></div><h3>${name} ${year}</h3><p>${archive ? `${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}` : 'Belum difinalisasi'}</p>${archive ? `<button type="button" class="secondary ui-action-view btn btn-sm btn-secondary" data-archive-id="${Number(archive.id)}">Lihat hasil</button>` : ''}</article>`;
     }).join('');
     grid.querySelectorAll('[data-archive-id]').forEach((button) => {
         button.addEventListener('click', async () => {
@@ -4763,7 +5089,7 @@ async function showRemunerationArchive(id) {
     const report = archive.snapshot || {};
     const employees = array(report.employees);
     detail.hidden = false;
-    detail.innerHTML = `<div class="remuneration-archive-detail-head"><div><small>HASIL FINAL · ${escapeHtml(String(archive.year))}-${String(archive.month).padStart(2, '0')}</small><h3>${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}</h3><p>${employees.length} karyawan · Pendapatan bersih ${money(report.summary?.net_income)}</p></div><a class="secondary" href="/operasional/penggajian/rekap/ekspor?archive_id=${id}"><span class="material-symbols-outlined" aria-hidden="true">download</span>Unduh rekap & slip</a></div><div class="remuneration-archive-employee-list">${employees.map((employee) => `<div><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')}</small></span><span>Komisi <b>${money(employee.commission)}</b></span><span>Gaji bersih <strong>${money(employee.net_salary)}</strong></span></div>`).join('')}</div>`;
+    detail.innerHTML = `<div class="remuneration-archive-detail-head flex flex-wrap items-center justify-between gap-3"><div><small>HASIL FINAL · ${escapeHtml(String(archive.year))}-${String(archive.month).padStart(2, '0')}</small><h3>${escapeHtml(remunerationDateLabel(archive.period_start))} – ${escapeHtml(remunerationDateLabel(archive.period_end))}</h3><p>${employees.length} karyawan · Pendapatan bersih ${money(report.summary?.net_income)}</p></div><a class="secondary btn btn-secondary" href="/operasional/penggajian/rekap/ekspor?archive_id=${id}"><span class="material-symbols-outlined" aria-hidden="true">download</span>Unduh rekap & slip</a></div><div class="remuneration-archive-employee-list grid gap-3">${employees.map((employee) => `<div><span><b>${escapeHtml(employee.employee_name || '-')}</b><small>${escapeHtml(employee.position || '-')}</small></span><span>Komisi <b>${money(employee.commission)}</b></span><span>Gaji bersih <strong>${money(employee.net_salary)}</strong></span></div>`).join('')}</div>`;
     detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -4777,8 +5103,8 @@ function confirmRemunerationArchive() {
         return;
     }
     const overlay = document.createElement('div');
-    overlay.className = 'modal open remuneration-archive-confirm';
-    overlay.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title"><div class="modal-head"><div><h2 id="archive-confirm-title">Finalisasi remunerasi?</h2><p>Periksa rentang dan nominal sebelum menyimpan arsip.</p></div></div><div class="remuneration-archive-confirm-body"><p><b>Periode komisi</b><span>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</span></p><p><b>Input gaji bulan</b><span>${escapeHtml(String(period.payroll_period || '-'))}</span></p><p><b>Data gaji terisi</b><span>${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)} karyawan</span></p><p><b>Total gaji bersih</b><strong>${money(summary.net_income)}</strong></p><small>Hasil ini disimpan sebagai arsip tetap, bukan tanda gaji sudah dibayar. Data sumber yang berubah kemudian tidak mengubah arsip. Arsip untuk bulan akhir periode yang sama tidak bisa ditimpa.</small></div><footer><button type="button" class="secondary" data-cancel>Batal</button><button type="button" class="primary" data-confirm>Simpan arsip final</button></footer></div>`;
+    overlay.className = 'modal open remuneration-archive-confirm p-4';
+    overlay.innerHTML = `<div class="modal-box w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2 id="archive-confirm-title">Finalisasi remunerasi?</h2><p>Periksa rentang dan nominal sebelum menyimpan arsip.</p></div></div><div class="remuneration-archive-confirm-body"><p><b>Periode komisi</b><span>${escapeHtml(remunerationDateLabel(period.from))} – ${escapeHtml(remunerationDateLabel(period.to))}</span></p><p><b>Input gaji bulan</b><span>${escapeHtml(String(period.payroll_period || '-'))}</span></p><p><b>Data gaji terisi</b><span>${Number(summary.payroll_input_count || 0)}/${Number(summary.employee_count || 0)} karyawan</span></p><p><b>Total gaji bersih</b><strong>${money(summary.net_income)}</strong></p><small>Hasil ini disimpan sebagai arsip tetap, bukan tanda gaji sudah dibayar. Data sumber yang berubah kemudian tidak mengubah arsip. Arsip untuk bulan akhir periode yang sama tidak bisa ditimpa.</small></div><footer><button type="button" class="secondary btn btn-secondary" data-cancel>Batal</button><button type="button" class="primary btn btn-primary" data-confirm>Simpan arsip final</button></footer></div>`;
     document.body.appendChild(overlay);
     overlay.querySelector('[data-cancel]').onclick = () => overlay.remove();
     overlay.querySelector('[data-confirm]').onclick = async (event) => {
@@ -4802,10 +5128,10 @@ function openRemunerationDetail(employee) {
     const attendance = array(remunerationReport.attendance)
         .filter((item) => Number(item.employee_id) === Number(employee.employee_id));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open remuneration-detail-overlay';
+    wrapper.className = 'modal open remuneration-detail-overlay p-4';
     const attendanceRows = attendance.length
         ? attendance.map((item) => `<li><time>${escapeHtml(remunerationDateLabel(item.date))}</time><b>${item.status === 'off' ? 'Libur' : 'Masuk'}</b><span>${escapeHtml(item.notes || '-')}</span></li>`).join('')
-        : '<li class="empty-state">Tidak ada catatan kehadiran pada periode ini.</li>';
+        : '<li class="empty-state py-8 text-center text-sm text-base-content/60">Tidak ada catatan kehadiran pada periode ini.</li>';
     const manualRows = [
         ['GP / JHK', `${Number(employee.paid_work_days || 0).toLocaleString('id-ID')} hari × ${money(employee.daily_rate)} = ${money(employee.base_salary)}`],
         ['Lembur / uang makan', `${money(employee.overtime)} + ${money(employee.meal_allowance)}`],
@@ -4815,12 +5141,12 @@ function openRemunerationDetail(employee) {
         ['Keterlambatan', `${Number(employee.late_minutes || 0).toLocaleString('id-ID')} menit × ${money(employee.late_rate_per_minute)} · -${money(employee.late_deduction)}`],
         ['Kasbon / pot. lain', `-${money(employee.cash_advance)} / -${money(employee.other_deduction)}`],
     ].map(([label, value]) => `<li><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></li>`).join('');
-    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
-        <div class="modal-head"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
-        <div class="remuneration-detail-body">
-            <div class="remuneration-detail-totals"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Pendapatan kotor</small><b>${money(employee.gross_income)}</b></span><span><small>Total potongan</small><b>-${money(employee.total_deduction)}</b></span><span><small>Pendapatan bersih</small><b>${money(employee.net_salary)}</b></span></div>
-            <section><div class="remuneration-detail-section-head"><h3>Input remunerasi</h3><strong>${employee.has_payroll_input ? 'Tersimpan' : 'Belum diinput'}</strong></div><ul class="remuneration-detail-list remuneration-input-list">${manualRows}</ul></section>
-            <section><div class="remuneration-detail-section-head"><h3>Kehadiran</h3><strong>${Number(employee.recorded_off_days || 0)} libur tercatat</strong></div><ul class="remuneration-detail-list attendance">${attendanceRows}</ul></section>
+    wrapper.innerHTML = `<section class="modal-box remuneration-detail-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="remuneration-detail-title">
+        <div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2 id="remuneration-detail-title">${escapeHtml(employee.employee_name)}</h2><p>${escapeHtml(employee.position || 'Karyawan')} · ${escapeHtml(remunerationDateLabel(remunerationReport.period?.from))} – ${escapeHtml(remunerationDateLabel(remunerationReport.period?.to))}</p></div><button type="button" class="remuneration-close btn btn-sm btn-info" aria-label="Tutup"><span class="material-symbols-outlined">close</span></button></div>
+        <div class="remuneration-detail-body grid gap-4">
+            <div class="remuneration-detail-totals grid gap-3 sm:grid-cols-2 [&>span]:grid [&>span]:gap-1 [&>span]:rounded-box [&>span]:bg-base-200 [&>span]:p-4 [&_b]:text-lg"><span><small>Komisi otomatis</small><b>${money(employee.commission)}</b></span><span><small>Pendapatan kotor</small><b>${money(employee.gross_income)}</b></span><span><small>Total potongan</small><b>-${money(employee.total_deduction)}</b></span><span><small>Pendapatan bersih</small><b>${money(employee.net_salary)}</b></span></div>
+            <section><div class="remuneration-detail-section-head flex flex-wrap items-center justify-between gap-3 mb-3"><h3>Input remunerasi</h3><strong>${employee.has_payroll_input ? 'Tersimpan' : 'Belum diinput'}</strong></div><ul class="remuneration-detail-list remuneration-input-list divide-y divide-base-300 [&>li]:flex [&>li]:flex-wrap [&>li]:justify-between [&>li]:gap-3 [&>li]:py-3">${manualRows}</ul></section>
+            <section><div class="remuneration-detail-section-head flex flex-wrap items-center justify-between gap-3 mb-3"><h3>Kehadiran</h3><strong>${Number(employee.recorded_off_days || 0)} libur tercatat</strong></div><ul class="remuneration-detail-list attendance grid gap-3">${attendanceRows}</ul></section>
         </div>
     </section>`;
     const close = () => wrapper.remove();
@@ -4845,26 +5171,6 @@ function activityCategory(action) {
     if (value.startsWith('therapist')) return 'Kehadiran terapis';
     if (value.startsWith('settings')) return 'Pengaturan';
     return 'Aktivitas sistem';
-}
-
-function activityIcon(action) {
-    const category = activityCategory(action);
-    return {
-        Reservasi: 'calendar_month',
-        'Stok opname': 'inventory_2',
-        Produk: 'inventory',
-        Treatment: 'spa',
-        Penjualan: 'payments',
-        Retur: 'assignment_return',
-        'Arus kas': 'account_balance_wallet',
-        Remunerasi: 'payments',
-        Membership: 'workspace_premium',
-        'Promo membership': 'campaign',
-        Pegawai: 'badge',
-        'Kehadiran terapis': 'event_available',
-        'Penilaian therapist': 'sentiment_satisfied',
-        Pengaturan: 'settings',
-    }[category] || 'work_history';
 }
 
 function renderActivity() {
@@ -4906,11 +5212,15 @@ function renderActivity() {
             && (!searchTerm || searchable.includes(searchTerm));
     });
 
-    box.innerHTML = rows.map((activity) => `<div class="activity">
-        <time>${new Date(activity.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</time>
-        <i class="material-symbols-outlined">${activityIcon(activity.action)}</i>
-        <span><b>${escapeHtml(activity.description || activityCategory(activity.action))}</b><small>${activity.reservation_customer_name ? `Customer: ${escapeHtml(activity.reservation_customer_name)}${activity.reservation_queue_number ? ` (${escapeHtml(activity.reservation_queue_number)})` : ''} · ` : ''}Oleh ${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</small><em>${escapeHtml(activityCategory(activity.action))}</em></span>
-    </div>`).join('') || '<p class="empty-state">Tidak ada aktivitas yang sesuai filter.</p>';
+    box.innerHTML = rows.map((activity) => `<tr>
+        <td class="whitespace-nowrap align-top text-sm"><time datetime="${escapeHtml(activity.created_at || '')}">${escapeHtml(formatTransactionDate(activity.created_at))}</time></td>
+        <td class="min-w-32 align-top font-medium">${escapeHtml(activity.user_name || activity.user?.name || 'Sistem')}</td>
+        <td class="align-top"><span class="badge badge-primary badge-soft h-auto whitespace-nowrap py-1 text-xs">${escapeHtml(activityCategory(activity.action))}</span></td>
+        <td class="min-w-64 max-w-xl whitespace-normal align-top leading-relaxed [overflow-wrap:anywhere]">${escapeHtml(activity.description || activityCategory(activity.action))}</td>
+        <td class="min-w-40 align-top"><span class="block font-medium">${escapeHtml(activity.reservation_customer_name || '-')}</span>${activity.reservation_queue_number ? `<small class="mt-1 block text-base-content/60">${escapeHtml(activity.reservation_queue_number)}</small>` : ''}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="py-10 text-center text-sm text-base-content/60">Tidak ada aktivitas yang sesuai filter.</td></tr>';
+    const count = document.getElementById('activity-count');
+    if (count) count.textContent = `${rows.length} aktivitas`;
 }
 
 function compactMoney(value) {
@@ -4969,7 +5279,7 @@ function renderRevenueTrend(dashboard) {
     });
 
     if (!revenue.length) {
-        chart.innerHTML = `<p class="empty-state">${config.emptyLabel}</p>`;
+        chart.innerHTML = `<p class="empty-state py-8 text-center text-sm text-base-content/60">${config.emptyLabel}</p>`;
         return;
     }
 
@@ -5005,7 +5315,7 @@ function renderRevenueTrend(dashboard) {
         .map((point) => `<span title="${escapeHtml(point.date)}">${escapeHtml(point.label)}</span>`)
         .join('');
 
-    chart.innerHTML = `<div class="revenue-chart-summary"><span><small>${config.totalLabel}</small><strong>${money(total)}</strong></span><span><small>${config.averageLabel}</small><strong>${money(average)}</strong></span></div><div class="revenue-line-canvas"><div class="revenue-line-plot"><span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(middleAxis)}</span><span class="axis a3">${compactMoney(minimum)}</span><div class="chart-grid"></div><svg class="revenue-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="${config.ariaLabel}"><defs><linearGradient id="revenue-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map((point) => `<button type="button" class="revenue-line-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.date)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="revenue-line-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${labels}</div></div>`;
+    chart.innerHTML = `<div class="revenue-chart-summary flex flex-wrap items-start justify-between gap-4 [&>span]:grid [&>span]:gap-1 [&_strong]:text-lg [&_strong]:font-semibold"><span><small>${config.totalLabel}</small><strong>${money(total)}</strong></span><span><small>${config.averageLabel}</small><strong>${money(average)}</strong></span></div><div class="revenue-line-canvas"><div class="revenue-line-plot"><span class="axis a1">${compactMoney(maximum)}</span><span class="axis a2">${compactMoney(middleAxis)}</span><span class="axis a3">${compactMoney(minimum)}</span><div class="chart-grid"></div><svg class="revenue-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="${config.ariaLabel}"><defs><linearGradient id="revenue-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map((point) => `<button type="button" class="revenue-line-point" style="--x:${point.px}%;--y:${point.py}%" aria-label="Pendapatan ${escapeHtml(point.date)}: ${money(point.total)}" data-date="${escapeHtml(point.date)}" data-total="${money(point.total)}"></button>`).join('')}<div class="revenue-line-tooltip" role="status" aria-live="polite"><small></small><strong></strong></div></div><div class="chart-labels">${labels}</div></div>`;
 
     const tooltip = chart.querySelector('.revenue-line-tooltip');
     chart.querySelectorAll('.revenue-line-point').forEach((point) => {
@@ -5048,7 +5358,6 @@ function renderDashboard() {
 
     const paymentRevenue = array(dashboard.revenue_by_payment_method_today);
     const paymentRevenueList = document.getElementById('payment-revenue-list');
-    const totalPaymentRevenue = paymentRevenue.find((payment) => payment.key === 'total');
     const paymentMethodsRevenue = paymentRevenue.filter((payment) => payment.key !== 'total');
     const paymentTypeMeta = {
         cash: { name: 'Tunai', icon: 'payments' },
@@ -5056,7 +5365,7 @@ function renderDashboard() {
         card: { name: 'Kartu / EDC', icon: 'credit_card' },
         qris: { name: 'QRIS', icon: 'qr_code_2' },
     };
-    set('payment-revenue-total', money(totalPaymentRevenue?.total || 0));
+    set('payment-revenue-total', money(paymentMethodsRevenue.reduce((sum, payment) => sum + Number(payment.net ?? payment.total ?? 0), 0)));
     set('payment-revenue-note', `${paymentMethodsRevenue.length} metode pembayaran`);
     if (paymentRevenueList) {
         const totalInflow = paymentMethodsRevenue.reduce((sum, payment) => sum + Number(payment.inflow || 0), 0);
@@ -5067,11 +5376,11 @@ function renderDashboard() {
             const meta = paymentTypeMeta[key] || { icon: 'payments' };
             const percent = totalInflow > 0 ? Math.round((inflow / totalInflow) * 100) : 0;
             const methodName = payment.name || 'Metode pembayaran';
-            return `<article class="payment-revenue-item">
-                <div class="payment-method-label"><i class="material-symbols-outlined" aria-hidden="true">${meta.icon}</i><span><b>${escapeHtml(methodName)}</b><small>${percent}% dari pendapatan hari ini</small></span></div>
-                <strong>${money(net)}</strong>
+            return `<article class="payment-revenue-item grid min-w-0 gap-2 rounded-box border border-base-300 bg-primary/5 p-4">
+                <div class="payment-method-label flex items-center gap-2"><i class="material-symbols-outlined text-primary" aria-hidden="true">${meta.icon}</i><b class="break-words">${escapeHtml(methodName)}</b></div>
+                <strong class="text-lg tabular-nums">${money(net)}</strong><small>${percent}% dari dana masuk hari ini</small>
             </article>`;
-        }).join('') : '<p class="empty-state">Belum ada metode pembayaran aktif.</p>';
+        }).join('') : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada metode pembayaran aktif.</p>';
     }
 
     const low = Number(dashboard.low_stock_count || 0);
@@ -5110,7 +5419,7 @@ function renderDashboard() {
         });
         const line = points.map(({ x, y }) => `${x},${y}`).join(' ');
         const area = `${points[0]?.x || 0},152 ${line} ${points.at(-1)?.x || 0},152`;
-        performance.innerHTML = total > 0 ? `<div class="treatment-bar-summary"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-line-chart"><div class="treatment-line-yaxis"><span>${maximum}</span><span>${maximum > 1 ? Math.round(maximum / 2) : ''}</span><span>0</span></div><div class="treatment-line-main"><div class="treatment-line-plot"><svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="treatment-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map(({ x, y, tooltip }) => `<button type="button" class="treatment-line-point" style="left:${x / 10}%;top:${y / 160 * 100}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></button>`).join('')}</div><div class="treatment-line-dates">${points.map(({ x, date }, index) => index === 0 || index === points.length - 1 || (index % 5 === 0 && index < points.length - 3) ? `<small style="left:${x / 10}%">${escapeHtml(String(date))}</small>` : '').join('')}</div></div></div>` : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><b>Belum ada data treatment</b><p>Data treatment yang sudah dibayar akan ditampilkan di sini.</p></div>';
+        performance.innerHTML = total > 0 ? `<div class="treatment-bar-summary flex flex-wrap items-start justify-between gap-4 [&>span]:grid [&>span]:gap-1 [&_strong]:text-lg [&_strong]:font-semibold"><span><small>Total bulan ini</small><strong>${total.toLocaleString('id-ID')} treatment</strong></span><span><small>Tertinggi per hari</small><strong>${maximum.toLocaleString('id-ID')} treatment</strong></span></div><div class="treatment-line-chart"><div class="treatment-line-yaxis"><span>${maximum}</span><span>${maximum > 1 ? Math.round(maximum / 2) : ''}</span><span>0</span></div><div class="treatment-line-main"><div class="treatment-line-plot"><svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="treatment-area-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a87559" stop-opacity=".20"></stop><stop offset="100%" stop-color="#a87559" stop-opacity=".015"></stop></linearGradient></defs><polygon points="${area}"></polygon><polyline points="${line}"></polyline></svg>${points.map(({ x, y, tooltip }) => `<button type="button" class="treatment-line-point" style="left:${x / 10}%;top:${y / 160 * 100}%" data-tooltip="${escapeHtml(tooltip)}" aria-label="${escapeHtml(tooltip)}"></button>`).join('')}</div><div class="treatment-line-dates">${points.map(({ x, date }, index) => index === 0 || index === points.length - 1 || (index % 5 === 0 && index < points.length - 3) ? `<small style="left:${x / 10}%">${escapeHtml(String(date))}</small>` : '').join('')}</div></div></div>` : '<div class="dashboard-empty-state grid justify-items-center gap-2 py-8 text-center text-sm text-base-content/60"><span class="material-symbols-outlined" aria-hidden="true">assignment</span><b>Belum ada data treatment</b><p>Data treatment yang sudah dibayar akan ditampilkan di sini.</p></div>';
 
         let tooltip = document.getElementById('treatment-chart-tooltip');
         if (!tooltip) {
@@ -5154,17 +5463,17 @@ function renderDashboard() {
                 const total = Number(item.total || 0);
                 const quantity = total.toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
-                return `<article class="performance-item"><span class="performance-rank">${index + 1}</span><div><b>${escapeHtml(item.name || 'Treatment')}</b></div><strong>${quantity}×</strong></article>`;
+                return `<article class="performance-item grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-base-300 py-3"><span class="performance-rank badge badge-ghost badge-sm justify-self-start">${index + 1}</span><div><b>${escapeHtml(item.name || 'Treatment')}</b></div><strong>${quantity}×</strong></article>`;
             }).join('')
-            : '<div class="dashboard-empty-state"><span class="material-symbols-outlined" aria-hidden="true">bar_chart</span><b>Belum ada data treatment</b><p>Data treatment teratas akan ditampilkan di sini.</p></div>';
+            : '<div class="dashboard-empty-state grid justify-items-center gap-2 py-8 text-center text-sm text-base-content/60"><span class="material-symbols-outlined" aria-hidden="true">bar_chart</span><b>Belum ada data treatment</b><p>Data treatment teratas akan ditampilkan di sini.</p></div>';
     }
 
     const treatmentStockAlerts = document.getElementById('treatment-stock-alerts');
     if (treatmentStockAlerts) {
         const alerts = array(dashboard.treatment_stock_alerts);
         treatmentStockAlerts.innerHTML = alerts.length
-            ? alerts.map((alert) => `<div class="treatment-stock-alert"><i class="material-symbols-outlined" aria-hidden="true">warning</i><span><b>${escapeHtml(alert.treatment_name)}</b><small>${escapeHtml(alert.product_name)} · tersisa ${Number(alert.current_stock || 0).toLocaleString('id-ID')} ${escapeHtml(alert.unit || '')}</small></span><em>Menipis</em></div>`).join('')
-            : '<p class="empty-state">Semua bahan resep aman. Menu treatment siap dijual.</p>';
+            ? alerts.map((alert) => `<div class="treatment-stock-alert grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-b border-base-300 py-3 [&_b]:block [&_small]:block [&_small]:mt-1"><i class="material-symbols-outlined" aria-hidden="true">warning</i><span><b>${escapeHtml(alert.treatment_name)}</b><small>${escapeHtml(alert.product_name)} · tersisa ${Number(alert.current_stock || 0).toLocaleString('id-ID')} ${escapeHtml(alert.unit || '')}</small></span><span class="badge badge-warning badge-soft badge-sm col-start-2 justify-self-start">Menipis</span></div>`).join('')
+            : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Semua bahan resep aman. Menu treatment siap dijual.</p>';
     }
 
     const therapistAvailability = document.getElementById('therapist-availability');
@@ -5173,13 +5482,17 @@ function renderDashboard() {
         const present = array(attendance.present);
         const off = array(attendance.off);
         const names = (therapists) => therapists.length
-            ? therapists.map((therapist) => `<span class="therapist-name">${escapeHtml(therapist.name)}</span>`).join('')
+            ? therapists.map((therapist) => `<span class="therapist-name badge badge-ghost badge-sm h-auto py-1 whitespace-normal">${escapeHtml(therapist.name)}</span>`).join('')
             : '<small>Tidak ada</small>';
 
-        therapistAvailability.innerHTML = `<div class="therapist-attendance-summary">
-            <span><i class="material-symbols-outlined present" aria-hidden="true">check_circle</i><b>${present.length}</b><small>hadir</small></span>
-            <span><i class="material-symbols-outlined off" aria-hidden="true">event_busy</i><b>${off.length}</b><small>libur</small></span>
-        </div><div class="therapist-attendance-status present"><div><i class="material-symbols-outlined" aria-hidden="true">check</i><b>Hadir</b></div><p>${names(present)}</p></div><div class="therapist-attendance-status off"><div><i class="material-symbols-outlined" aria-hidden="true">hotel</i><b>Libur</b></div><p>${names(off)}</p></div>`;
+        therapistAvailability.innerHTML = `<div class="grid gap-4">
+            <div class="therapist-attendance-summary flex flex-wrap gap-3 text-sm">
+                <span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-success" aria-hidden="true">check_circle</span><b>${present.length}</b> hadir</span>
+                <span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-base-content/40" aria-hidden="true">event_busy</span><b>${off.length}</b> libur</span>
+            </div>
+            <div class="therapist-attendance-status grid gap-2"><span class="text-xs font-medium text-base-content/60">Hadir</span><div class="flex flex-wrap gap-2">${names(present)}</div></div>
+            <div class="therapist-attendance-status grid gap-2"><span class="text-xs font-medium text-base-content/60">Libur</span><div class="flex flex-wrap gap-2">${names(off)}</div></div>
+        </div>`;
     }
 
     const therapistRatingLists = [
@@ -5199,9 +5512,9 @@ function renderDashboard() {
                 const [label, tone] = quality(therapist.average);
                 const score = Math.max(0, Math.min(100, (Number(therapist.average || 0) / 5) * 100));
                 const reviewCount = Number(therapist.review_count || 0);
-                return `<article class="therapist-rating-summary"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews ui-action-view" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
+                return `<article class="therapist-rating-summary grid gap-3"><span class="therapist-rating-rank">${index + 1}</span><div class="therapist-rating-person flex items-center gap-3"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.position || 'Therapist')} · ${Number(therapist.total || 0)} rating</small><i><em style="width:${score}%"></em></i></div><div class="therapist-rating-score"><em class="${tone}">${label}</em><span class="therapist-rating-stars">${stars(therapist.average)}</span><strong>${Number(therapist.average || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}/5</strong><small>${Number(therapist.stars_5 || 0)} rating bintang 5</small><button type="button" class="therapist-rating-reviews ui-action-view btn btn-sm btn-info" data-therapist-review-index="${index}" ${reviewCount ? '' : 'disabled'}><span class="material-symbols-outlined" aria-hidden="true">reviews</span>${reviewCount ? `Lihat ${reviewCount} review` : 'Belum ada review'}</button></div></article>`;
             }).join('')
-            : '<p class="empty-state">Belum ada rating therapist pada bulan ini.</p>';
+            : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada rating therapist pada bulan ini.</p>';
         therapistRatingLists.forEach((list) => {
             list.innerHTML = markup;
             list.querySelectorAll('[data-therapist-review-index]').forEach((button) => {
@@ -5229,23 +5542,23 @@ function renderDashboard() {
                     offset += total ? (Number(count || 0) / total) * 100 : 0;
                     return `${colors[index]} ${start}% ${offset}%`;
                 });
-                return `<article class="customer-survey-mini-chart is-donut"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-donut-content"><div class="customer-survey-donut" style="--chart-fill:${total ? `conic-gradient(${slices.join(',')})` : '#e2e8f0'}" role="img" aria-label="${escapeHtml(title)}: ${total} penilaian"><strong>${total}</strong></div><ul>${items.map(([name, count], index) => `<li><i style="background:${colors[index]}"></i><span>${escapeHtml(name)}</span><b>${Number(count || 0)}</b></li>`).join('')}</ul></div></article>`;
+                return `<article class="customer-survey-mini-chart is-donut rounded-box border border-base-300 p-4"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-donut-content grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-4"><div class="customer-survey-donut grid place-items-center" style="--chart-fill:${total ? `conic-gradient(${slices.join(',')})` : '#e2e8f0'}" role="img" aria-label="${escapeHtml(title)}: ${total} penilaian"><strong class="grid size-20 place-items-center rounded-full bg-base-100 text-lg font-semibold">${total}</strong></div><ul>${items.map(([name, count], index) => `<li class="flex items-center gap-2 py-1"><i class="size-2.5 shrink-0 rounded-full" style="background:${colors[index]}"></i><span class="min-w-0 flex-1 text-xs">${escapeHtml(name)}</span><b class="text-sm">${Number(count || 0)}</b></li>`).join('')}</ul></div></article>`;
             }
             const highest = Math.max(1, ...items.map(([, count]) => Number(count || 0)));
-            return `<article class="customer-survey-mini-chart"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-bars">${items.map(([name, count]) => `<div title="${escapeHtml(name)}: ${Number(count || 0)}"><span style="height:${Math.max(5, (Number(count || 0) / highest) * 100)}%"></span><small>${escapeHtml(name)} <b>${Number(count || 0)}</b></small></div>`).join('')}</div></article>`;
+            return `<article class="customer-survey-mini-chart"><header><b>${escapeHtml(title)}</b></header><div class="customer-survey-bars flex h-40 items-end gap-3">${items.map(([name, count]) => `<div class="grid h-full min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto] items-end gap-2" title="${escapeHtml(name)}: ${Number(count || 0)}"><span class="block w-full rounded-t bg-primary" style="height:${Math.max(5, (Number(count || 0) / highest) * 100)}%"></span><small>${escapeHtml(name)} <b>${Number(count || 0)}</b></small></div>`).join('')}</div></article>`;
         };
         const summaryMarkup = (compact) => {
             const therapistRows = array(survey.therapists).map((therapist) => compact
-                ? `<article class="customer-survey-therapist is-compact"><b>${escapeHtml(therapist.name)}</b><ul class="customer-survey-therapist-counts"><li title="Sangat baik dan standar">Baik <strong>${Number(therapist.very_satisfied || 0) + Number(therapist.standard || 0)}</strong></li><li>Kurang <strong>${Number(therapist.dissatisfied || 0)}</strong></li><li>Buruk <strong>${Number(therapist.very_dissatisfied || 0)}</strong></li></ul></article>`
-                : `<article class="customer-survey-therapist"><b>${escapeHtml(therapist.name)}</b><small>${Number(therapist.total)} penilaian · ${Number(therapist.very_satisfied)} sangat baik</small><div><span style="width:${Number(therapist.total) ? (Number(therapist.very_satisfied) / Number(therapist.total)) * 100 : 0}%"></span></div></article>`).join('') || '<p class="empty-state">Belum ada penilaian pelayanan therapist.</p>';
-            const metrics = compact ? '' : `<div class="customer-survey-metrics"><article><b>${total}</b><small>survey masuk</small></article><article><b>${label(survey.return_intent, 'yes', 'ingin kembali')}</b><small>niat kembali</small></article><article><b>${label(survey.facility, 'very_suitable', 'fasilitas sangat sesuai')}</b><small>fasilitas</small></article></div>`;
-            return total ? `${metrics}<div class="customer-survey-breakdown">${miniSurveyChart('Fasilitas', [['Sesuai', survey.facility?.very_suitable], ['Standar', survey.facility?.standard], ['Kurang', survey.facility?.poor]], compact)}${miniSurveyChart('Resepsionis', [['Sangat baik', survey.reception?.very_good], ['Baik', survey.reception?.good], ['Biasa', survey.reception?.neutral], ['Buruk', survey.reception?.bad]], compact)}${miniSurveyChart('Harga', [['Cocok', survey.price?.fair], ['Worth it', survey.price?.worth_it], ['Mahal', survey.price?.expensive]], compact)}${miniSurveyChart('Kembali', [['Ya', survey.return_intent?.yes], ['Mungkin', survey.return_intent?.maybe], ['Tidak', survey.return_intent?.no]], compact)}</div><h4>Pelayanan therapist</h4><div class="customer-survey-therapists">${therapistRows}</div>` : '<p class="empty-state">Belum ada Customer Survey pada bulan ini.</p>';
+                ? `<article class="customer-survey-therapist is-compact grid gap-3 rounded-box border border-base-300 p-4"><b>${escapeHtml(therapist.name)}</b><ul class="customer-survey-therapist-counts flex flex-wrap gap-3 text-xs"><li title="Sangat baik dan standar">Baik <strong>${Number(therapist.very_satisfied || 0) + Number(therapist.standard || 0)}</strong></li><li>Kurang <strong>${Number(therapist.dissatisfied || 0)}</strong></li><li>Buruk <strong>${Number(therapist.very_dissatisfied || 0)}</strong></li></ul></article>`
+                : `<article class="customer-survey-therapist"><b>${escapeHtml(therapist.name)}</b><small>${Number(therapist.total)} penilaian · ${Number(therapist.very_satisfied)} sangat baik</small><div><span style="width:${Number(therapist.total) ? (Number(therapist.very_satisfied) / Number(therapist.total)) * 100 : 0}%"></span></div></article>`).join('') || '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada penilaian pelayanan therapist.</p>';
+            const metrics = compact ? '' : `<div class="customer-survey-metrics grid gap-3 sm:grid-cols-2"><article><b>${total}</b><small>survey masuk</small></article><article><b>${label(survey.return_intent, 'yes', 'ingin kembali')}</b><small>niat kembali</small></article><article><b>${label(survey.facility, 'very_suitable', 'fasilitas sangat sesuai')}</b><small>fasilitas</small></article></div>`;
+            return total ? `${metrics}<div class="customer-survey-breakdown grid gap-4 md:grid-cols-2">${miniSurveyChart('Fasilitas', [['Sesuai', survey.facility?.very_suitable], ['Standar', survey.facility?.standard], ['Kurang', survey.facility?.poor]], compact)}${miniSurveyChart('Resepsionis', [['Sangat baik', survey.reception?.very_good], ['Baik', survey.reception?.good], ['Biasa', survey.reception?.neutral], ['Buruk', survey.reception?.bad]], compact)}${miniSurveyChart('Harga', [['Cocok', survey.price?.fair], ['Worth it', survey.price?.worth_it], ['Mahal', survey.price?.expensive]], compact)}${miniSurveyChart('Kembali', [['Ya', survey.return_intent?.yes], ['Mungkin', survey.return_intent?.maybe], ['Tidak', survey.return_intent?.no]], compact)}</div><h4>Pelayanan therapist</h4><div class="customer-survey-therapists grid gap-3">${therapistRows}</div>` : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada Customer Survey pada bulan ini.</p>';
         };
         surveySummaryTargets.forEach((target) => { target.innerHTML = summaryMarkup(target.id === 'customer-survey-overview'); });
         const feedbackTarget = document.getElementById('customer-survey-feedback');
         if (feedbackTarget) {
             const feedbacks = array(survey.feedbacks);
-            feedbackTarget.innerHTML = feedbacks.length ? feedbacks.map((feedback) => `<article class="customer-survey-feedback-item"><b>${escapeHtml(feedback.customer_name)}</b><time>${escapeHtml(formatTransactionDate(feedback.submitted_at))}</time><p>${escapeHtml(feedback.feedback)}</p></article>`).join('') : '<p class="empty-state">Belum ada masukan pelanggan.</p>';
+            feedbackTarget.innerHTML = feedbacks.length ? feedbacks.map((feedback) => `<article class="customer-survey-feedback-item rounded-box bg-base-200 p-3"><b>${escapeHtml(feedback.customer_name)}</b><time>${escapeHtml(formatTransactionDate(feedback.submitted_at))}</time><p>${escapeHtml(feedback.feedback)}</p></article>`).join('') : '<p class="empty-state py-8 text-center text-sm text-base-content/60">Belum ada masukan pelanggan.</p>';
         }
     }
 }
@@ -5315,11 +5628,19 @@ function closeReservationTreatmentPickers(except = null) {
 function positionReservationPicker(label, menu) {
     label.classList.remove('opens-up');
     menu.style.maxHeight = '';
-    const bounds = label.closest('.reservation-form')?.getBoundingClientRect();
-    const footer = label.closest('.reservation-form')?.querySelector('.reservation-footer')?.getBoundingClientRect();
+    const form = label.closest('.reservation-form');
+    const bounds = form?.getBoundingClientRect();
+    const footer = form?.querySelector('.reservation-footer')?.getBoundingClientRect();
     const anchor = label.getBoundingClientRect();
+    const bottom = Math.min(innerHeight - 16, bounds?.bottom || innerHeight, footer?.top || innerHeight);
     const above = anchor.top - Math.max(16, bounds?.top || 0) - 10;
-    const below = Math.min(innerHeight - 16, bounds?.bottom || innerHeight, footer?.top || innerHeight) - anchor.bottom - 10;
+    const below = bottom - anchor.bottom - 10;
+    if (menu.classList.contains('therapist-picker-menu')) {
+        const height = Math.min(menu.scrollHeight, 248, Math.max(0, bottom - Math.max(16, bounds?.top || 0) - anchor.height - 20));
+        if (form && height > below) form.scrollTop += height - below;
+        menu.style.maxHeight = `${Math.max(0, Math.min(height, bottom - label.getBoundingClientRect().bottom - 10))}px`;
+        return;
+    }
     const opensUp = below < Math.min(menu.scrollHeight, 248) && above > below;
     label.classList.toggle('opens-up', opensUp);
     menu.style.maxHeight = `${Math.max(0, Math.min(248, opensUp ? above : below))}px`;
@@ -5335,8 +5656,8 @@ function renderReservationTreatmentPicker(card, { showResults = false } = {}) {
     const matches = reservationTreatmentMatches(input.value);
     const selectedId = Number(select.value || 0);
     results.innerHTML = matches.map((item) => item.kind === 'bundle'
-        ? `<button type="button" class="treatment-search-option treatment-search-bundle" data-bundle-id="${Number(item.id)}" role="option"><span><b><em>Bundle</em> ${escapeHtml(item.name)}</b><small>${escapeHtml(array(item.items).map((bundleItem) => bundleItem.name).join(' · '))} &middot; ${money(item.bundle_price)}</small></span><i class="material-symbols-outlined" aria-hidden="true">inventory_2</i></button>`
-        : `<button type="button" class="treatment-search-option${Number(item.id) === selectedId ? ' selected' : ''}" data-treatment-id="${Number(item.id)}" role="option" aria-selected="${Number(item.id) === selectedId}"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.category_name || item.category?.name || item.category || 'Treatment')} &middot; ${money(treatmentPrice(item))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment atau bundle tidak ditemukan.</p>';
+        ? `<button type="button" class="treatment-search-option treatment-search-bundle flex items-center justify-between gap-3 p-3 text-left hover:bg-base-200" data-bundle-id="${Number(item.id)}" role="option"><span><b><em>Bundle</em> ${escapeHtml(item.name)}</b><small>${escapeHtml(array(item.items).map((bundleItem) => bundleItem.name).join(' · '))} &middot; ${money(item.bundle_price)}</small></span><i class="material-symbols-outlined" aria-hidden="true">inventory_2</i></button>`
+        : `<button type="button" class="treatment-search-option${Number(item.id) === selectedId ? ' selected' : ''} flex items-center justify-between gap-3 p-3 text-left hover:bg-base-200" data-treatment-id="${Number(item.id)}" role="option" aria-selected="${Number(item.id) === selectedId}"><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.category_name || item.category?.name || item.category || 'Treatment')} &middot; ${money(treatmentPrice(item))}</small></span><i class="material-symbols-outlined" aria-hidden="true">add_circle</i></button>`).join('') || '<p class="treatment-search-empty">Treatment atau bundle tidak ditemukan.</p>';
     results.hidden = !showResults;
     label.classList.toggle('open', showResults);
     if (showResults) positionReservationPicker(label, results);
@@ -5391,11 +5712,11 @@ function syncReservationCommission(card, force = false) {
 
 function addStaffRow(container, role = 'primary') {
     const row = document.createElement('div');
-    row.className = 'staff-row';
-    row.innerHTML = `<label class="therapist-picker-label">Therapist<select class="item-employee" aria-hidden="true" tabindex="-1"><option value="">Pilih therapist</option>${employeeOptions()}</select><button type="button" class="therapist-picker" aria-haspopup="listbox" aria-expanded="false"><span>Pilih therapist</span><i class="material-symbols-outlined" aria-hidden="true">expand_more</i></button><div class="therapist-picker-menu" role="listbox" hidden></div></label>
-        <label>Peran<select class="item-staff-role"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
-        <label>Komisi<select class="item-commission">${commissionPercentOptions()}</select></label>
-        <button type="button" class="icon-button remove-staff ui-action-delete" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
+    row.className = 'staff-row grid gap-3 sm:grid-cols-3';
+    row.innerHTML = `<label class="therapist-picker-label min-w-0">Terapis<select class="item-employee select w-full min-w-0" aria-hidden="true" tabindex="-1"><option value="">Pilih terapis</option>${employeeOptions()}</select><button type="button" class="therapist-picker select w-full min-w-0 text-left" aria-haspopup="listbox" aria-expanded="false"><span class="min-w-0 truncate">Pilih terapis</span></button><div class="therapist-picker-menu absolute inset-x-0 top-full z-30 grid w-full gap-2 overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg" hidden><input class="therapist-picker-search input w-full min-w-0 shrink-0" type="search" autocomplete="off" aria-label="Cari terapis" placeholder="Cari nama atau keahlian..."><div class="therapist-picker-options grid gap-1" role="listbox" aria-label="Terapis tersedia"></div></div></label>
+        <label>Peran<select class="item-staff-role select w-full min-w-0"><option value="primary" ${role === 'primary' ? 'selected' : ''}>Utama</option><option value="assistant" ${role === 'assistant' ? 'selected' : ''}>Pendamping</option></select></label>
+        <label>Komisi<select class="item-commission select w-full min-w-0">${commissionPercentOptions()}</select></label>
+        <button type="button" class="icon-button remove-staff ui-action-delete btn btn-sm btn-error" aria-label="Hapus therapist"><span class="material-symbols-outlined">close</span></button>`;
     container.appendChild(row);
     row.querySelector('.item-employee').addEventListener('change', () => {
         const card = container.closest('.reservation-item-card');
@@ -5403,6 +5724,10 @@ function addStaffRow(container, role = 'primary') {
         refreshReservationItemSummary(card);
     });
     row.querySelector('.therapist-picker').addEventListener('click', () => toggleReservationTherapistPicker(row));
+    row.querySelector('.therapist-picker-search').addEventListener('input', () => {
+        renderReservationTherapistPicker(row, container.closest('.reservation-item-card')?._therapistAvailability || []);
+        positionReservationPicker(row.querySelector('.therapist-picker-label'), row.querySelector('.therapist-picker-menu'));
+    });
     row.querySelector('.therapist-picker-menu').addEventListener('click', (event) => {
         const option = event.target.closest('[data-employee-id]');
         if (!option || option.disabled) return;
@@ -5478,6 +5803,7 @@ function closeReservationTherapistPickers(except = null) {
         label.querySelector('.therapist-picker')?.setAttribute('aria-expanded', 'false');
         const menu = label.querySelector('.therapist-picker-menu');
         if (menu) menu.hidden = true;
+        label.closest('.cashier-treatment-picker-modal')?.querySelector('.staff-rows')?.style.removeProperty('padding-bottom');
     });
 }
 
@@ -5493,15 +5819,22 @@ function toggleReservationTherapistPicker(row) {
     }
 
     menu.hidden = false;
+    const search = row.querySelector('.therapist-picker-search');
+    search.value = '';
+    renderReservationTherapistPicker(row, row.closest('.reservation-item-card')?._therapistAvailability || []);
     label.classList.add('open');
     picker.setAttribute('aria-expanded', 'true');
+    const cashierStaff = label.closest('.cashier-treatment-picker-modal')?.querySelector('.staff-rows');
+    if (cashierStaff) cashierStaff.style.paddingBottom = '248px';
     positionReservationPicker(label, menu);
+    requestAnimationFrame(() => search.focus({ preventScroll: true }));
 }
 
 function renderReservationTherapistPicker(row, availability) {
     const select = row.querySelector('.item-employee');
     const picker = row.querySelector('.therapist-picker');
-    const menu = row.querySelector('.therapist-picker-menu');
+    const options = row.querySelector('.therapist-picker-options');
+    const query = row.querySelector('.therapist-picker-search').value.trim().toLocaleLowerCase('id-ID');
     const employees = array(availability).length ? array(availability) : serviceProviders().map((employee) => ({ ...employee, available: true, conflicts: [] }));
     let selectedId = Number(select.value || 0);
     const selectedEmployee = employees.find((employee) => Number(employee.id) === selectedId);
@@ -5512,16 +5845,21 @@ function renderReservationTherapistPicker(row, availability) {
 
     const selected = employees.find((employee) => Number(employee.id) === selectedId);
     picker.querySelector('span').textContent = selected
-        ? `${selected.name}${selected.specialty ? ` · ${selected.specialty}` : ''}`
-        : 'Pilih therapist';
-    menu.innerHTML = employees.map((employee) => {
+        ? selected.name
+        : 'Pilih terapis';
+    const matches = employees.filter((employee) => !query || `${employee.name} ${employee.specialty || employee.position || ''}`.toLocaleLowerCase('id-ID').includes(query));
+    options.innerHTML = matches.map((employee) => {
         const off = employee.attendance_status === 'off';
-        const detail = off
-            ? '<small>Libur hari ini</small>'
-            : `<small>${escapeHtml(employee.specialty || employee.position || 'Therapist')}</small>`;
+        const status = off ? 'off' : employee.schedule_status || 'unknown';
+        const [statusLabel, statusColor] = ({ available: ['Tersedia', 'text-success'], in_service: ['Sedang melayani', 'text-accent'],
+            scheduled: ['Terjadwal', 'text-primary'], resting: ['Istirahat', 'text-warning-content'], off: ['Libur', 'text-base-content/60'],
+            unknown: ['Belum dicek', 'text-base-content/60'] })[status];
+        const ready = reservationReadyTime(employee.ready_at);
+        const readyLabel = ready ? ready.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).replace('.', ':') : '';
+        const detail = `<small class="block">${escapeHtml(employee.specialty || employee.position || 'Terapis')}</small><span class="text-xs font-medium ${statusColor}">${statusLabel}${readyLabel ? ` · Siap ${escapeHtml(readyLabel)}` : ''}</span>`;
 
-        return `<button type="button" role="option" class="therapist-picker-option${off ? ' unavailable' : ''}${Number(employee.id) === selectedId ? ' selected' : ''}" data-employee-id="${Number(employee.id)}" aria-selected="${Number(employee.id) === selectedId}" ${off ? 'disabled' : ''}><span><b>${escapeHtml(employee.name)}</b>${detail}</span></button>`;
-    }).join('') || '<p class="therapist-picker-empty">Tidak ada therapist tersedia.</p>';
+        return `<button type="button" role="option" class="therapist-picker-option grid w-full gap-1 rounded-field px-3 py-2 text-left text-sm whitespace-normal break-words hover:bg-base-200 focus-visible:bg-base-200 aria-selected:bg-primary/10 aria-selected:text-primary disabled:opacity-50" data-employee-id="${Number(employee.id)}" aria-selected="${Number(employee.id) === selectedId}" ${off ? 'disabled' : ''}><b class="font-medium">${escapeHtml(employee.name)}</b>${detail}</button>`;
+    }).join('') || (query ? '<p class="therapist-picker-empty p-2 text-sm text-base-content/60">Terapis tidak ditemukan.</p>' : '');
 }
 
 async function refreshReservationTherapistAvailability(card) {
@@ -5530,7 +5868,7 @@ async function refreshReservationTherapistAvailability(card) {
     const startTime = card.querySelector('.item-time')?.value;
     const statusRows = () => card.querySelectorAll('.staff-row');
 
-    if (!date || !treatmentId || !startTime) {
+    if (!date || !startTime) {
         card._therapistAvailability = [];
         statusRows().forEach((row) => renderReservationTherapistPicker(row, []));
         return;
@@ -5539,7 +5877,7 @@ async function refreshReservationTherapistAvailability(card) {
     const requestId = (card._therapistAvailabilityRequestId || 0) + 1;
     card._therapistAvailabilityRequestId = requestId;
     try {
-        const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(date)}&start_time=${encodeURIComponent(startTime)}&treatment_id=${treatmentId}`);
+        const data = await api(`/operasional/reservasi/terapis-tersedia?date=${encodeURIComponent(date)}&start_time=${encodeURIComponent(startTime)}${treatmentId ? `&treatment_id=${treatmentId}` : ''}`);
         if (card._therapistAvailabilityRequestId !== requestId) return;
         card._therapistAvailability = array(data.employees);
         statusRows().forEach((row) => renderReservationTherapistPicker(row, card._therapistAvailability));
@@ -5565,17 +5903,17 @@ function addReservationItem(values = {}) {
     const container = document.getElementById('reservation-items');
     if (!container) return;
     const card = document.createElement('article');
-    card.className = 'reservation-item-card';
+    card.className = 'reservation-item-card rounded-box border border-base-300 p-4';
     if (values.bundle_id) card.dataset.bundleId = String(values.bundle_id);
     if (values.actual_price !== undefined) card.dataset.actualPrice = String(values.actual_price);
     const itemNumber = container.children.length + 1;
-    card.innerHTML = `<div class="reservation-item-title"><strong><span class="reservation-item-name">Treatment ${itemNumber}</span><small class="reservation-item-summary">Belum dipilih</small></strong><span class="reservation-item-actions"><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></span></div>
-        <div class="reservation-item-body"><div class="reservation-item-grid">
-            <label class="treatment-picker-label">Treatment<select class="item-treatment" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results" role="listbox" hidden></div></label>
-            <label class="time-field">Jam mulai (24 jam)<select class="item-time" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
-            ${capabilities.override_price ? `<label>Harga aktual<input class="item-price" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : `<span class="reservation-price-note"><small>Harga</small><b>${values.actual_price !== undefined ? `Harga bundle ${money(values.actual_price)}` : 'Mengikuti harga normal'}</b></span>`}
-        </div><details class="reservation-item-more"><summary>Catatan treatment (opsional)</summary><label class="item-notes"><textarea class="item-note" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label></details>
-        <div class="staff-block"><div class="staff-block-head"><span>Therapist & komisi</span><button type="button" class="link add-staff"><span class="material-symbols-outlined">add</span> Tambah</button></div><div class="staff-rows"></div><small class="reservation-commission-note"></small></div></div>`;
+    card.innerHTML = `<div class="reservation-item-title flex flex-wrap items-center justify-between gap-3"><strong><span class="reservation-item-name">Treatment ${itemNumber}</span><small class="reservation-item-summary flex flex-wrap items-center justify-between gap-3">Belum dipilih</small></strong><span class="reservation-item-actions"><button type="button" class="icon-button remove-reservation-item ui-action-delete btn btn-sm btn-error" aria-label="Hapus treatment ${itemNumber}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></span></div>
+        <div class="reservation-item-body grid gap-4"><div class="reservation-item-grid grid gap-4 md:grid-cols-2">
+            <label class="treatment-picker-label">Treatment<select class="item-treatment select w-full min-w-0" required aria-hidden="true" tabindex="-1"><option value="">Pilih treatment</option>${treatmentOptions(values.treatment_id)}</select><div class="treatment-search relative"><span class="material-symbols-outlined" aria-hidden="true">search</span><input class="item-treatment-search input w-full min-w-0" type="search" autocomplete="off" placeholder="Cari treatment..." aria-label="Cari treatment"></div><div class="treatment-search-results absolute inset-x-0 top-full z-30 grid max-h-72 overflow-auto rounded-box border border-base-300 bg-base-100 shadow-lg" role="listbox" hidden></div></label>
+            <label class="time-field">Jam mulai (24 jam)<select class="item-time select w-full min-w-0" required>${reservationTimeOptions(values.start_time || '09:00')}</select><small>Slot setiap 5 menit</small></label>
+            ${capabilities.override_price ? `<label>Harga aktual<input class="item-price input w-full min-w-0" type="number" min="0" step="1" placeholder="Harga normal" value="${escapeHtml(values.actual_price || '')}"></label>` : `<span class="reservation-price-note"><small>Harga</small><b>${values.actual_price !== undefined ? `Harga bundle ${money(values.actual_price)}` : 'Mengikuti harga normal'}</b></span>`}
+        </div><details class="reservation-item-more grid gap-4 md:grid-cols-2"><summary>Catatan treatment (opsional)</summary><label class="item-notes"><textarea class="item-note textarea w-full min-w-0" placeholder="Opsional">${escapeHtml(values.notes || '')}</textarea></label></details>
+        <div class="staff-block grid gap-4"><div class="staff-block-head flex flex-wrap items-center justify-between gap-3"><span>Therapist & komisi</span><button type="button" class="link add-staff btn btn-sm no-underline btn-info"><span class="material-symbols-outlined">add</span> Tambah</button></div><div class="staff-rows grid gap-4"></div><small class="reservation-commission-note"></small></div></div>`;
     container.appendChild(card);
 
     const staffContainer = card.querySelector('.staff-rows');
@@ -5671,7 +6009,7 @@ function renderReservationCart() {
         const bundle = bundleId ? array(state.treatment_bundles).find((item) => Number(item.id) === Number(bundleId)) : null;
         groups.push({ card, cards: [card], bundleId, index, name: bundle?.name || treatment.name, time: card.querySelector('.item-time')?.value || '09:00', isBundle: Boolean(bundle) });
     });
-    box.innerHTML = `<div class="reservation-cart-head"><b>Keranjang treatment</b><small>${groups.length} pilihan</small></div>${groups.length ? `<div class="reservation-cart-items">${groups.map((group) => `<div class="reservation-cart-item"><span><b>${group.isBundle ? 'Bundle · ' : ''}${escapeHtml(group.name)}</b><small>${group.isBundle ? `${group.bundleCount || group.cards.length} treatment · ` : ''}${escapeHtml(group.time)}</small></span><button type="button" class="reservation-cart-remove" data-index="${group.index}" aria-label="Kurangi ${escapeHtml(group.name)}"><span class="material-symbols-outlined">remove</span></button></div>`).join('')}</div>` : '<p class="reservation-cart-empty">Belum ada treatment dipilih. Gunakan pencarian di bawah.</p>'}`;
+    box.innerHTML = `<div class="reservation-cart-head flex flex-wrap items-center justify-between gap-3"><b>Keranjang treatment</b><small>${groups.length} pilihan</small></div>${groups.length ? `<div class="reservation-cart-items grid gap-2">${groups.map((group) => `<div class="reservation-cart-item flex items-center justify-between gap-3 rounded-box border border-base-300 p-3"><span><b>${group.isBundle ? 'Bundle · ' : ''}${escapeHtml(group.name)}</b><small>${group.isBundle ? `${group.bundleCount || group.cards.length} treatment · ` : ''}${escapeHtml(group.time)}</small></span><button type="button" class="reservation-cart-remove btn btn-sm btn-info" data-index="${group.index}" aria-label="Kurangi ${escapeHtml(group.name)}"><span class="material-symbols-outlined">remove</span></button></div>`).join('')}</div>` : '<p class="reservation-cart-empty text-sm text-base-content/60 py-4">Belum ada treatment dipilih. Gunakan pencarian di bawah.</p>'}`;
     box.querySelectorAll('.reservation-cart-remove').forEach((button) => {
         button.onclick = () => removeReservationItemCard(cards[Number(button.dataset.index)]);
     });
@@ -5716,12 +6054,12 @@ function addReservationBundle(bundle, sourceCard = null) {
         || container.lastElementChild?.querySelector('.item-time, .bundle-time')?.value
         || '09:00';
     const card = document.createElement('article');
-    card.className = 'reservation-item-card reservation-bundle-card';
+    card.className = 'reservation-item-card reservation-bundle-card rounded-box border border-base-300 p-4';
     card.dataset.bundleId = String(bundle.id);
     card.dataset.bundleInstance = `bundle-${Number(bundle.id)}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     card.dataset.actualPrice = String(bundle.bundle_price);
     const prices = bundlePriceAllocations(bundle);
-    card.innerHTML = `<div class="reservation-item-title"><strong><span class="reservation-item-name">Bundle · ${escapeHtml(bundle.name)}</span><small class="reservation-item-summary">${array(bundle.items).length} treatment · ${money(bundle.bundle_price)}</small></strong><button type="button" class="icon-button remove-reservation-item ui-action-delete" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div><div class="bundle-start-time"><label>Jam mulai paket<select class="bundle-time">${reservationTimeOptions(start)}</select></label><small>Urutan jam treatment dihitung otomatis.</small></div><div class="bundle-treatment-table"><div class="bundle-treatment-head"><span>Treatment</span><span>Therapist</span><span>Komisi</span></div>${array(bundle.items).map((item, index) => `<div class="bundle-treatment-row" data-treatment-id="${Number(item.treatment_id)}" data-duration="${Number(item.duration_minutes)}" data-price="${prices[index]}"><span><b>${escapeHtml(item.name)}</b><small class="bundle-item-time"></small></span><label><select class="bundle-employee"><option value="">Pilih therapist</option>${employeeOptions()}</select></label><label><select class="bundle-commission">${commissionPercentOptions(item.default_commission_percent ?? 0)}</select></label></div>`).join('')}</div>`;
+    card.innerHTML = `<div class="reservation-item-title flex flex-wrap items-center justify-between gap-3"><strong><span class="reservation-item-name">Bundle · ${escapeHtml(bundle.name)}</span><small class="reservation-item-summary flex flex-wrap items-center justify-between gap-3">${array(bundle.items).length} treatment · ${money(bundle.bundle_price)}</small></strong><button type="button" class="icon-button remove-reservation-item ui-action-delete btn btn-sm btn-error" aria-label="Hapus bundle ${escapeHtml(bundle.name)}"><span class="material-symbols-outlined" aria-hidden="true">delete</span><span>Hapus</span></button></div><div class="bundle-start-time"><label>Jam mulai paket<select class="bundle-time select w-full min-w-0">${reservationTimeOptions(start)}</select></label><small>Urutan jam treatment dihitung otomatis.</small></div><div class="bundle-treatment-table"><div class="bundle-treatment-head"><span>Treatment</span><span>Therapist</span><span>Komisi</span></div>${array(bundle.items).map((item, index) => `<div class="bundle-treatment-row" data-treatment-id="${Number(item.treatment_id)}" data-duration="${Number(item.duration_minutes)}" data-price="${prices[index]}"><span><b>${escapeHtml(item.name)}</b><small class="bundle-item-time"></small></span><label><select class="bundle-employee select w-full min-w-0"><option value="">Pilih therapist</option>${employeeOptions()}</select></label><label><select class="bundle-commission select w-full min-w-0">${commissionPercentOptions(item.default_commission_percent ?? 0)}</select></label></div>`).join('')}</div>`;
     if (replaceableCard) {
         container.insertBefore(card, replaceableCard);
         replaceableCard.remove();
@@ -5750,6 +6088,8 @@ function addReservationBundle(bundle, sourceCard = null) {
 function resetReservationForm() {
     const form = document.getElementById('reservation-form');
     form?.reset();
+    const memberId = document.getElementById('reservation-member-id');
+    if (memberId) memberId.value = '';
     const depositAmount = form?.querySelector('[name="deposit_amount"]');
     if (depositAmount) depositAmount.dataset.autoDefault = 'true';
     syncReservationCustomerType();
@@ -5766,18 +6106,11 @@ function resetReservationForm() {
 function syncReservationDeposit() {
     const choice = document.querySelector('#reservation-form [name="payment_stage"]:checked')?.value || 'unpaid';
     const fields = document.getElementById('reservation-deposit-fields');
-    const method = document.querySelector('#reservation-form [name="deposit_payment_method_id"]');
     const amount = document.querySelector('#reservation-form [name="deposit_amount"]');
     const hint = document.getElementById('reservation-deposit-hint');
-    const active = canProcessCashier && choice === 'deposit';
+    const active = choice === 'deposit';
 
     if (fields) fields.hidden = !active;
-    if (method) {
-        const selected = method.value;
-        method.innerHTML = `<option value="">Pilih metode</option>${paymentMethods().map((item) => `<option value="${Number(item.id)}">${escapeHtml(item.name)}</option>`).join('')}`;
-        method.value = [...method.options].some((option) => option.value === selected) ? selected : '';
-        method.required = active;
-    }
     if (amount) {
         amount.required = active;
         if (!active) {
@@ -5808,8 +6141,8 @@ function setReservationLaunchContext(context = 'reservation') {
 
     if (title) title.textContent = fromCashier ? 'Transaksi baru' : 'Reservasi baru';
     if (subtitle) subtitle.textContent = fromCashier
-        ? 'Catat pelanggan walk-in dan treatment untuk langsung diproses di kasir'
-        : 'Satu kunjungan dapat memuat beberapa treatment dan therapist';
+        ? 'Pelanggan dan treatment untuk diproses di kasir'
+        : 'Pelanggan, jadwal, dan treatment';
     if (submitLabel) submitLabel.textContent = fromCashier ? 'Buka di kasir' : 'Simpan reservasi';
 }
 
@@ -5859,6 +6192,7 @@ function syncReservationCustomerType() {
     [name, phone].filter(Boolean).forEach((field) => {
         field.disabled = isMember;
         field.required = !isMember;
+        field.closest('.reservation-guest-field').hidden = isMember;
     });
     if (select?.tagName === 'SELECT') {
         const selectedMemberId = select.value;
@@ -5873,10 +6207,13 @@ function syncReservationCustomerType() {
     if (memberId && memberId.value && !member) memberId.value = '';
     if (search && member) search.value = reservationMemberLabel(member);
     if (clear) clear.hidden = !member;
-    if (triggerLabel) triggerLabel.textContent = member ? reservationMemberLabel(member) : 'Pilih member';
-    if (preview) preview.textContent = member
-        ? `${member.name} · ${member.phone || 'tanpa nomor telepon'} · Member sejak ${member.member_since ? new Date(`${member.member_since}T00:00:00`).toLocaleDateString('id-ID') : '-'}`
-        : 'Pilih member untuk memakai data pelanggan yang sudah terdaftar.';
+    if (triggerLabel) triggerLabel.textContent = member ? member.name : 'Pilih member';
+    if (preview) {
+        preview.hidden = !isMember || !member;
+        preview.textContent = member
+            ? `Telepon: ${member.phone || '-'} · Berlaku sampai: ${member.member_expires_at ? new Date(`${member.member_expires_at}T00:00:00`).toLocaleDateString('id-ID') : '-'}`
+            : '';
+    }
 }
 
 function reservationMemberLabel(member) {
@@ -5909,12 +6246,12 @@ function renderReservationMemberResults() {
     if (!search || !results || !options) return;
 
     const query = search.value.trim().toLocaleLowerCase('id-ID');
-    const members = array(state.members)
-        .filter((member) => !query || `${member.name || ''} ${member.phone || ''}`.toLocaleLowerCase('id-ID').includes(query))
-        .slice(0, 30);
+    const members = query ? array(state.members)
+        .filter((member) => `${member.name || ''} ${member.phone || ''}`.toLocaleLowerCase('id-ID').includes(query))
+        .slice(0, 30) : [];
     options.innerHTML = members.length
-        ? members.map((member) => `<button type="button" class="reservation-member-option${Number(member.id) === Number(memberId?.value) ? ' selected' : ''}" role="option" aria-selected="${Number(member.id) === Number(memberId?.value)}" data-member-id="${Number(member.id)}">${escapeHtml(reservationMemberLabel(member))}</button>`).join('')
-        : '<p class="reservation-member-empty">Member tidak ditemukan.</p>';
+        ? members.map((member) => `<button type="button" class="reservation-member-option grid w-full gap-1 rounded-field px-3 py-2 text-left text-sm whitespace-normal break-words hover:bg-base-200 focus-visible:bg-base-200 aria-selected:bg-primary/10 aria-selected:text-primary" role="option" aria-selected="${Number(member.id) === Number(memberId?.value)}" data-member-id="${Number(member.id)}"><span class="font-medium">${escapeHtml(member.name)}</span><small>${escapeHtml(member.phone || '-')}</small></button>`).join('')
+        : query ? '<p class="reservation-member-empty">Member tidak ditemukan.</p>' : '';
     results.hidden = false;
     results.style.display = 'block';
     if (trigger) trigger.setAttribute('aria-expanded', 'true');
@@ -5988,11 +6325,9 @@ function collectReservationPayload(form) {
         payload.phone = formData.get('phone');
     }
 
-    if (canProcessCashier && formData.get('payment_stage') === 'deposit') {
+    if (formData.get('payment_stage') === 'deposit') {
         payload.deposit = {
-            payment_method_id: Number(formData.get('deposit_payment_method_id')),
             amount: Number(formData.get('deposit_amount')),
-            reference_number: formData.get('deposit_reference_number') || null,
         };
     }
 
@@ -6033,7 +6368,7 @@ function showConflictPanel(error) {
     panel.classList.remove('hidden');
     panel.innerHTML = `<strong>Konflik jadwal ditemukan</strong>
         <ul>${conflicts.map((conflict) => `<li>${escapeHtml(conflictDescription(conflict))}</li>`).join('') || '<li>Jadwal therapist bertabrakan dengan reservasi aktif.</li>'}</ul>
-        ${data.can_override ? '<label>Alasan override<textarea id="override-reason" placeholder="Wajib diisi untuk audit"></textarea></label><div class="conflict-actions"><button type="button" class="primary" id="confirm-override">Simpan dengan izin</button></div>' : '<p>Anda tidak memiliki izin override. Minta Admin mengubah jadwal atau menyetujui konflik ini.</p>'}`;
+        ${data.can_override ? '<label>Alasan override<textarea class="textarea w-full min-w-0" id="override-reason" placeholder="Wajib diisi untuk audit"></textarea></label><div class="conflict-actions"><button type="button" class="primary btn btn-primary" id="confirm-override">Simpan dengan izin</button></div>' : '<p>Anda tidak memiliki izin override. Minta Admin mengubah jadwal atau menyetujui konflik ini.</p>'}`;
     if (data.can_override) {
         panel.querySelector('#confirm-override').onclick = async () => {
             const reason = panel.querySelector('#override-reason').value.trim();
@@ -6111,7 +6446,7 @@ function paymentMethods() {
 function paymentModeOptions() {
     const methods = paymentMethods();
     return [
-        { key: 'cash', label: 'Cash', methods: methods.filter((method) => Boolean(Number(method.is_cash))) },
+        { key: 'cash', label: 'Tunai', methods: methods.filter((method) => Boolean(Number(method.is_cash))) },
         { key: 'card', label: 'Kartu', methods: methods.filter((method) => method.type === 'card') },
         { key: 'bank_transfer', label: 'Transfer', methods: methods.filter((method) => method.type === 'bank_transfer') },
         { key: 'qris', label: 'QRIS', methods: methods.filter((method) => method.type === 'qris') },
@@ -6123,13 +6458,13 @@ function paymentSourceDetails(option) {
 
     const method = option.methods.find((item) => Number(item.id) === Number(selectedPaymentMethodId)) || option.methods[0];
     const sourceLabel = option.key === 'card' ? 'Mesin EDC' : option.key === 'bank_transfer' ? 'Bank tujuan' : 'QRIS tujuan';
-    const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
+    const sourceSelect = `<label>${sourceLabel} *<select class="payment-source-select select w-full min-w-0" aria-label="${sourceLabel}">${option.methods.map((item) => `<option value="${Number(item.id)}" ${Number(item.id) === Number(method.id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>`;
 
     if (option.key === 'card') {
-        return `<section class="payment-source-details card-source-details"><div class="payment-source-fields">${sourceSelect}<label>Nomor kartu<input class="payment-card-number" inputmode="numeric" maxlength="32" placeholder="Opsional"></label><label>Nomor transaksi<input class="payment-card-reference" maxlength="100" placeholder="Opsional"></label></div></section>`;
+        return `<section class="payment-source-details card-source-details grid gap-3"><div class="payment-source-fields grid gap-3 sm:grid-cols-2">${sourceSelect}<label>Nomor kartu<input class="payment-card-number input w-full min-w-0" inputmode="numeric" maxlength="32" placeholder="Opsional"></label><label>Nomor transaksi<input class="payment-card-reference input w-full min-w-0" maxlength="100" placeholder="Opsional"></label></div></section>`;
     }
 
-    return `<section class="payment-source-details"><div class="payment-source-fields payment-source-fields-single">${sourceSelect}</div></section>`;
+    return `<section class="payment-source-details grid gap-3"><div class="payment-source-fields payment-source-fields-single grid gap-3 sm:grid-cols-2">${sourceSelect}</div></section>`;
 }
 
 function renderPaymentModeChoices() {
@@ -6148,8 +6483,8 @@ function renderPaymentModeChoices() {
 
     const choices = document.createElement('div');
     choices.id = 'payment-method-choices';
-    choices.className = 'payment-method-choices';
-    choices.innerHTML = `<div class="payment-mode-list">${options.map((option) => `<button type="button" class="payment-mode${paymentMode === option.key ? ' active' : ''}" data-mode="${option.key}" aria-pressed="${paymentMode === option.key}"><i aria-hidden="true"></i>${escapeHtml(option.label)}</button>`).join('')}${canSplit ? `<button type="button" class="payment-mode${paymentMode === 'split' ? ' active' : ''}" data-mode="split" aria-pressed="${paymentMode === 'split'}"><i aria-hidden="true"></i>Split</button>` : ''}</div>${paymentSourceDetails(activeOption)}`;
+    choices.className = 'payment-method-choices grid gap-3';
+    choices.innerHTML = `<div class="payment-mode-list grid grid-cols-2 gap-2 2xl:grid-cols-5">${options.map((option) => `<button type="button" class="payment-mode${paymentMode === option.key ? ' active' : ''} btn btn-secondary btn-sm" data-mode="${option.key}" aria-pressed="${paymentMode === option.key}"><span class="material-symbols-outlined" aria-hidden="true">${({ cash: 'payments', card: 'credit_card', bank_transfer: 'account_balance', qris: 'qr_code_2' })[option.key]}</span>${escapeHtml(option.label)}</button>`).join('')}${canSplit ? `<button type="button" class="payment-mode${paymentMode === 'split' ? ' active' : ''} col-span-full 2xl:col-span-1 btn btn-secondary btn-sm" data-mode="split" aria-pressed="${paymentMode === 'split'}"><span class="material-symbols-outlined" aria-hidden="true">call_split</span>Split</button>` : ''}</div>${paymentSourceDetails(activeOption)}`;
     container.before(choices);
     choices.querySelectorAll('.payment-mode').forEach((button) => {
         button.onclick = () => {
@@ -6215,17 +6550,17 @@ function addPaymentRow(values = {}) {
     const methods = paymentMethods();
     const selectedMethod = methods.find((method) => Number(method.id) === Number(values.payment_method_id));
     const row = document.createElement('div');
-    row.className = `payment-row${values.fixed_method ? ' fixed-method' : ''}${values.fixed_method && selectedMethod?.type === 'card' ? ' has-card-details' : ''}`;
+    row.className = `payment-row sm:grid-cols-2${values.fixed_method ? ' fixed-method' : ''}${values.fixed_method && selectedMethod?.type === 'card' ? ' has-card-details' : ''}`;
     row.dataset.autoBalance = values.auto_balance ? 'true' : 'false';
     row.dataset.baseAmount = String(Number(values.amount || 0));
     row.dataset.autoTendered = 'true';
     row.dataset.chargeEnabled = values.charge_enabled === undefined ? '' : String(Boolean(values.charge_enabled));
-    row.innerHTML = `<div class="payment-row-head"><strong>Pembayaran</strong><button type="button" class="remove-payment ui-action-delete" aria-label="Hapus pembayaran" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span> Hapus</button></div>
-        <label>Metode<select class="payment-method" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
-        <label>Nominal pembayaran<input class="payment-amount" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
-        <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
-        <label class="payment-reference-label">Referensi<input class="payment-reference" placeholder="Opsional"></label>
-        <div class="payment-charge-control" hidden><span class="payment-charge-label">Charge</span><label class="payment-charge-choice">Pilih charge<select class="payment-charge-percent" aria-label="Pilihan charge"><option value="0">Tidak ada</option><option value="2">2%</option><option value="3.5">3,5%</option></select></label><small class="payment-charge-summary"></small></div>`;
+    row.innerHTML = `<div class="payment-row-head col-span-full flex flex-wrap items-center justify-between gap-3"><strong>Pembayaran</strong><button type="button" class="remove-payment ui-action-delete btn btn-sm btn-error" aria-label="Hapus pembayaran" hidden><span class="material-symbols-outlined" aria-hidden="true">close</span> Hapus</button></div>
+        <label>Metode<select class="payment-method select w-full min-w-0" required>${methods.map((method) => `<option value="${Number(method.id)}" ${Number(method.id) === Number(values.payment_method_id) ? 'selected' : ''}>${escapeHtml(method.name)}</option>`).join('')}</select></label>
+        <label>Nominal pembayaran<input class="payment-amount input w-full min-w-0" type="number" min="1" step="1" required value="${Number(values.amount || 0)}"></label>
+        <label class="payment-tendered-label" hidden>Uang diterima<input class="payment-tendered input w-full min-w-0" type="number" min="1" step="1" value="${Number(values.tendered_amount || values.amount || 0)}"></label>
+        <label class="payment-reference-label">Referensi<input class="payment-reference input w-full min-w-0" placeholder="Opsional"></label>
+        <div class="payment-charge-control col-span-full grid items-end gap-2 sm:grid-cols-2" hidden><label class="payment-charge-choice">Charge pembayaran<select class="payment-charge-percent select w-full min-w-0" aria-label="Pilihan charge">${Array.from({ length: 41 }, (_, index) => `<option value="${index / 2}">${index === 0 ? 'Tidak ada' : `${(index / 2).toLocaleString('id-ID')}%`}</option>`).join('')}</select></label><small class="payment-charge-summary"></small></div>`;
     container.appendChild(row);
     syncPaymentRowHeaders();
     row.querySelector('.payment-amount').addEventListener('input', () => {
@@ -6243,12 +6578,14 @@ function addPaymentRow(values = {}) {
         updatePaymentReconciliation();
     });
     row.querySelector('.payment-method').disabled = Boolean(values.fixed_method);
+    row.querySelector('.payment-method').closest('label').hidden = Boolean(values.fixed_method);
     row.querySelector('.payment-method').addEventListener('change', () => {
         syncPaymentReference(row, true);
         updatePaymentReconciliation();
     });
     row.querySelector('.payment-charge-percent').addEventListener('change', () => {
-        syncPaymentCharge(row);
+        const charge = syncPaymentCharge(row);
+        row.querySelector('.payment-amount').value = charge.total;
         syncCashTendered(row);
         updatePaymentReconciliation();
     });
@@ -6295,7 +6632,9 @@ function syncPaymentReference(row, resetCharge = false) {
     if (isCash) {
         syncCashTendered(row);
     }
-    syncPaymentCharge(row, resetCharge);
+    const charge = syncPaymentCharge(row, resetCharge);
+    row.querySelector('.payment-amount').value = charge.total;
+    syncCashTendered(row);
 }
 
 function syncCashTendered(row) {
@@ -6324,7 +6663,7 @@ function syncSplitAutoBalance() {
     if (!amountInput) return;
     const remaining = splitRemainingAmount(autoRow);
     autoRow.dataset.baseAmount = String(remaining);
-    amountInput.value = remaining;
+    amountInput.value = paymentChargeMeta(autoRow).total;
     syncCashTendered(autoRow);
 }
 
@@ -6359,6 +6698,13 @@ function updatePaymentReconciliation() {
     const entered = charges.reduce((sum, charge) => sum + charge.paidAmount, 0);
     const totalCharge = charges.reduce((sum, charge) => sum + charge.amount, 0);
     const payable = total + totalCharge;
+    if (selectedReservation && selectedCashierStage !== 'deposit') {
+        document.getElementById('grand-total').textContent = money(selectedInvoiceTotal() + totalCharge);
+        const remaining = document.querySelector('#remaining-summary strong');
+        if (remaining) remaining.textContent = money(payable);
+        const stageAmount = document.querySelector('.cashier-item.active[data-stage="settlement"] .cashier-stage-amount');
+        if (stageAmount) stageAmount.textContent = money(payable);
+    }
     const cashRows = [...document.querySelectorAll('.payment-row.is-cash')];
     const cashTendered = cashRows.reduce((sum, row) => sum + Number(row.querySelector('.payment-tendered')?.value || 0), 0);
     const cashAllocated = cashRows.reduce((sum, row) => sum + paymentChargeMeta(row).total, 0);
@@ -6367,6 +6713,8 @@ function updatePaymentReconciliation() {
     const difference = payable - entered;
     const panel = document.querySelector('.payment-reconciliation');
     document.getElementById('payment-base-total').textContent = money(total);
+    document.getElementById('payment-payable-total').textContent = money(payable);
+    document.getElementById('payment-charge-value').textContent = money(totalCharge);
     document.getElementById('payment-entered').textContent = money(entered);
     document.getElementById('payment-difference').textContent = difference > 0
         ? `Kurang ${money(difference)}`
@@ -6385,7 +6733,7 @@ function updatePaymentReconciliation() {
     panel?.classList.toggle('has-difference', difference !== 0);
     const button = document.getElementById('complete-payment');
     if (button) {
-        button.disabled = difference !== 0 || entered <= 0 || !paymentMethods().length || invalidCashTender;
+        button.disabled = selectedCashierStage === 'deposit' || difference !== 0 || entered <= 0 || !paymentMethods().length || invalidCashTender;
         button.title = invalidCashTender
             ? 'Uang tunai yang diterima tidak boleh kurang dari nominal pembayaran.'
             : (difference > 0 ? `Pembayaran masih kurang ${money(difference)}.` : (difference < 0 ? `Pembayaran lebih ${money(Math.abs(difference))}.` : ''));
@@ -6394,12 +6742,12 @@ function updatePaymentReconciliation() {
 
 function quickForm(title, fields, submit) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select name="${escapeHtml(name)}">${array(options).map((option) => {
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><h2>${escapeHtml(title)}</h2><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup dialog"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div><form><div class="quick-fields grid gap-4">${fields.map(([name, label, type, options, value]) => `<label>${escapeHtml(label)}${type === 'select' ? `<select class="select w-full min-w-0" name="${escapeHtml(name)}">${array(options).map((option) => {
         const parts = String(option).split('|');
         const optionValue = parts.length > 1 ? parts[0] : option;
         return `<option value="${escapeHtml(optionValue)}" ${String(optionValue) === String(value ?? '') ? 'selected' : ''}>${escapeHtml(parts[1] || parts[0])}</option>`;
-    }).join('')}</select>` : `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${String(label).includes('(opsional)') ? '' : 'required'}>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan</button></footer></form></div>`;
+    }).join('')}</select>` : `<input class="input w-full min-w-0" name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${String(label).includes('(opsional)') ? '' : 'required'}>`}</label>`).join('')}</div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.onclick = () => wrapper.remove();
@@ -6442,7 +6790,7 @@ function populateSelects() {
     const promo = document.getElementById('discount');
     if (promo) {
         const selected = promo.value;
-        promo.innerHTML = `<option value="0">Tidak menggunakan diskon</option>${array(state.promotions).map((promotion) => `<option value="${Number(promotion.discount_percent)}">${escapeHtml(promotion.name)} · ${Number(promotion.discount_percent)}%</option>`).join('')}`;
+        promo.innerHTML = `<option value="0">Tanpa diskon</option>${array(state.promotions).map((promotion) => `<option value="${Number(promotion.discount_percent)}">${escapeHtml(promotion.name)} · ${Number(promotion.discount_percent)}%</option>`).join('')}`;
         promo.value = [...promo.options].some((option) => option.value === selected) ? selected : '0';
     }
 }
@@ -6471,7 +6819,7 @@ function renderTherapistAttendanceCalendar() {
     }).format(monthStart);
     const weekdayLabels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
     const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => {
-        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty" aria-hidden="true"></span>';
+        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty aspect-square" aria-hidden="true"></span>';
 
         const day = index - firstWeekday + 1;
         const date = attendanceDateFromMonth(month, day);
@@ -6492,7 +6840,7 @@ function renderTherapistAttendanceCalendar() {
         return `<button type="button" class="therapist-attendance-calendar-day${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${names.length ? ' has-off' : ''}" data-attendance-date="${date}" aria-label="${escapeHtml(label)}"><span class="therapist-attendance-calendar-day-value">${names.length ? escapeHtml(marker) : day}</span>${tooltip}</button>`;
     }).join('');
 
-    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender kehadiran</h3><p>Penanda terapis yang libur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis libur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
+    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender kehadiran</h3><p>Penanda terapis yang libur</p></div><div class="therapist-attendance-calendar-nav grid grid-cols-[auto_1fr_auto] items-center gap-2 text-center my-4"><button class="btn btn-sm btn-info" type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button class="btn btn-sm btn-info" type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays grid grid-cols-7 gap-1 text-center text-xs text-base-content/60" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid grid grid-cols-7 gap-1 mt-2">${cells}</div><p class="therapist-attendance-calendar-note text-xs text-base-content/60 mt-4"><i aria-hidden="true">A</i> Satu terapis libur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
 
     box.querySelectorAll('[data-attendance-date]').forEach((button) => {
         button.addEventListener('click', () => loadTherapistAttendance(button.dataset.attendanceDate));
@@ -6526,7 +6874,7 @@ function renderTherapistOvertimeCalendar() {
     }).format(monthStart);
     const weekdayLabels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
     const cells = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => {
-        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty" aria-hidden="true"></span>';
+        if (index < firstWeekday) return '<span class="therapist-attendance-calendar-empty aspect-square" aria-hidden="true"></span>';
 
         const day = index - firstWeekday + 1;
         const date = attendanceDateFromMonth(month, day);
@@ -6547,7 +6895,7 @@ function renderTherapistOvertimeCalendar() {
         return `<button type="button" class="therapist-attendance-calendar-day${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${names.length ? ' has-overtime' : ''}" data-attendance-date="${date}" aria-label="${escapeHtml(label)}"><span class="therapist-attendance-calendar-day-value">${names.length ? escapeHtml(marker) : day}</span>${tooltip}</button>`;
     }).join('');
 
-    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender lembur</h3><p>Penanda tanggal therapist yang lembur</p></div><div class="therapist-attendance-calendar-nav"><button type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid">${cells}</div><p class="therapist-attendance-calendar-note"><i aria-hidden="true">A</i> Satu terapis lembur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
+    box.innerHTML = `<div class="therapist-attendance-calendar-head"><div><h3>Kalender lembur</h3><p>Penanda tanggal therapist yang lembur</p></div><div class="therapist-attendance-calendar-nav grid grid-cols-[auto_1fr_auto] items-center gap-2 text-center my-4"><button class="btn btn-sm btn-info" type="button" data-attendance-calendar-month="previous" aria-label="Bulan sebelumnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><strong>${escapeHtml(monthLabel)}</strong><button class="btn btn-sm btn-info" type="button" data-attendance-calendar-month="next" aria-label="Bulan berikutnya"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div><div class="therapist-attendance-calendar-weekdays grid grid-cols-7 gap-1 text-center text-xs text-base-content/60" aria-hidden="true">${weekdayLabels.map((label) => `<span>${label}</span>`).join('')}</div><div class="therapist-attendance-calendar-grid grid grid-cols-7 gap-1 mt-2">${cells}</div><p class="therapist-attendance-calendar-note text-xs text-base-content/60 mt-4"><i aria-hidden="true">A</i> Satu terapis lembur &middot; <i aria-hidden="true">+2</i> Dua atau lebih</p>`;
 
     box.querySelectorAll('[data-attendance-date]').forEach((button) => {
         button.addEventListener('click', () => loadTherapistAttendance(button.dataset.attendanceDate));
@@ -6572,7 +6920,7 @@ function renderTherapistAttendance() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const editable = canManageTherapistAttendance;
-    box.innerHTML = `<div class="card-head therapist-attendance-head"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)} · Nominal lembur diisi dari Penggajian.</p></div><label>Tanggal<input type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head"><span>TERAPIS</span><span>STATUS KEHADIRAN</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row"><span><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><fieldset class="therapist-status-options" data-status-options="${Number(therapist.employee_id)}"><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="present" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'present' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Hadir</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="off" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Libur</label><label class="therapist-status-option"><input type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="overtime" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'overtime' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Lembur</label></fieldset></div>`).join('')}</div>${editable ? '<footer><button type="submit" class="primary">Simpan kehadiran</button></footer>' : ''}</form>`;
+    box.innerHTML = `<div class="card-head therapist-attendance-head mb-4 flex flex-wrap items-end justify-between gap-3"><div><h3>Kehadiran terapis</h3><p>${escapeHtml(dateLabel)} · Nominal lembur diisi dari Penggajian.</p></div><label>Tanggal<input class="input w-full min-w-0" type="date" id="therapist-attendance-date" value="${escapeHtml(therapistAttendanceDate)}"></label></div><form id="therapist-attendance-form"><div class="therapist-attendance-table"><div class="therapist-attendance-row therapist-attendance-table-head hidden gap-3 rounded-field bg-primary/10 px-3 py-4 text-xs font-semibold text-primary md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><span>TERAPIS</span><span>STATUS KEHADIRAN</span></div>${therapistAttendance.map((therapist) => `<div class="therapist-attendance-row grid gap-3 border-b border-base-300 px-3 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"><span class="grid gap-1"><b>${escapeHtml(therapist.name)}</b><small>${escapeHtml(therapist.specialty || 'Terapis')}</small></span><fieldset class="therapist-status-options flex flex-wrap gap-3" data-status-options="${Number(therapist.employee_id)}"><label class="therapist-status-option flex items-center gap-2 rounded-field border border-base-300 p-3 has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="present" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'present' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Hadir</label><label class="therapist-status-option flex items-center gap-2 rounded-field border border-base-300 p-3 has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="off" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Libur</label><label class="therapist-status-option flex items-center gap-2 rounded-field border border-base-300 p-3 has-checked:border-primary has-checked:bg-primary/10 [&>.material-symbols-outlined]:text-3xl"><input class="radio radio-primary radio-sm" type="radio" name="attendance-status-${Number(therapist.employee_id)}" value="overtime" data-attendance-status="${Number(therapist.employee_id)}" ${therapist.status === 'overtime' ? 'checked' : ''} ${editable ? '' : 'disabled'}><span aria-hidden="true"></span>Lembur</label></fieldset></div>`).join('')}</div>${editable ? '<footer class="mt-5 flex justify-end"><button type="submit" class="primary btn btn-primary">Simpan kehadiran</button></footer>' : ''}</form>`;
     box.querySelector('#therapist-attendance-date')?.addEventListener('change', (event) => {
         loadTherapistAttendance(event.currentTarget.value);
     });
@@ -6619,8 +6967,8 @@ function openTherapistAttendanceManager() {
         weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     }).format(new Date(`${therapistAttendanceDate}T12:00:00`));
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal therapist-attendance-modal';
-    wrapper.innerHTML = `<div class="modal-box small"><div class="modal-head"><div><h2>Atur kehadiran</h2><p>${escapeHtml(dateLabel)}</p></div><button type="button" class="quick-close" aria-label="Tutup">×</button></div><form><p class="therapist-attendance-modal-note">Centang therapist yang libur. Therapist yang tidak dicentang dianggap masuk.</p><div class="therapist-attendance-form-list">${therapistAttendance.map((therapist) => `<label><input type="checkbox" value="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''}><span>${escapeHtml(therapist.name)}</span></label>`).join('')}</div><footer><button type="button" class="secondary quick-close">Batal</button><button type="submit" class="primary">Simpan</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal therapist-attendance-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box small w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Atur kehadiran</h2><p>${escapeHtml(dateLabel)}</p></div><button type="button" class="quick-close btn btn-sm btn-error" aria-label="Tutup">×</button></div><form><p class="therapist-attendance-modal-note">Centang therapist yang libur. Therapist yang tidak dicentang dianggap masuk.</p><div class="therapist-attendance-form-list grid gap-3">${therapistAttendance.map((therapist) => `<label><input class="checkbox checkbox-primary checkbox-sm" type="checkbox" value="${Number(therapist.employee_id)}" ${therapist.status === 'off' ? 'checked' : ''}><span>${escapeHtml(therapist.name)}</span></label>`).join('')}</div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button type="submit" class="primary btn btn-primary">Simpan</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => {
         button.addEventListener('click', () => wrapper.remove());
@@ -6853,6 +7201,7 @@ document.getElementById('sales-search')?.addEventListener('input', () => {
     salesSearchTimer = setTimeout(() => loadSalesPage(1).catch((error) => toast(error.message, true)), 250);
 });
 document.getElementById('sales-payment-filter')?.addEventListener('change', () => loadSalesPage(1).catch((error) => toast(error.message, true)));
+['sales-deposit-from', 'sales-deposit-to'].forEach(id => document.getElementById(id)?.addEventListener('change', () => loadSalesPage(1).catch(error => toast(error.message, true))));
 document.getElementById('member-search')?.addEventListener('input', () => {
     clearTimeout(memberSearchTimer);
     memberSearchTimer = setTimeout(() => loadMembersPage(1).catch((error) => toast(error.message, true)), 250);
@@ -6961,7 +7310,7 @@ function syncReservationMemberSearch() {
     const memberId = document.getElementById('reservation-member-id');
     const clear = document.getElementById('reservation-member-clear');
     const query = search?.value.trim().toLocaleLowerCase('id-ID') || '';
-    const member = array(state.members).find((item) => reservationMemberLabel(item).toLocaleLowerCase('id-ID') === query);
+    const member = query ? array(state.members).find((item) => reservationMemberLabel(item).toLocaleLowerCase('id-ID') === query) : null;
 
     if (member) {
         selectReservationMember(member.id);
@@ -7094,19 +7443,21 @@ function prepareInlinePayment() {
     const description = document.getElementById('payment-description');
     const total = modalElement.querySelector('.payment-total');
     const splitHead = modalElement.querySelector('.split-payment-head');
+    const addPayment = document.getElementById('add-payment-row');
     const rows = document.getElementById('payment-rows');
     const reconciliation = modalElement.querySelector('.payment-reconciliation');
     const completeButton = document.getElementById('complete-payment');
-    if (!description || !total || !splitHead || !rows || !reconciliation || !completeButton) return;
+    if (!description || !total || !splitHead || !addPayment || !rows || !reconciliation || !completeButton) return;
 
     const inline = document.createElement('section');
     inline.id = 'inline-payment';
     inline.className = 'inline-payment';
     const heading = document.createElement('div');
-    heading.className = 'inline-payment-head';
+    heading.className = 'inline-payment-head flex flex-wrap items-center justify-between gap-2';
     heading.innerHTML = '<h3>Pembayaran</h3>';
-    heading.append(description);
-    inline.append(heading, total, splitHead, rows, reconciliation, completeButton);
+    description.classList.add('sr-only');
+    heading.append(description, addPayment);
+    inline.append(heading, total, rows, reconciliation, completeButton);
     cashier.append(inline);
     completeButton.textContent = 'Proses transaksi';
     document.getElementById('open-payment').hidden = true;
@@ -7124,6 +7475,7 @@ document.getElementById('add-payment-row')?.addEventListener('click', () => {
     addPaymentRow({ amount: remaining, auto_balance: true });
 });
 document.getElementById('complete-payment')?.addEventListener('click', async () => {
+    if (!selectedReservation || selectedCashierStage === 'deposit') return;
     const button = document.getElementById('complete-payment');
     const cardNumber = document.querySelector('.payment-card-number')?.value.trim() || null;
     const cardReference = document.querySelector('.payment-card-reference')?.value.trim() || null;
@@ -7163,6 +7515,7 @@ document.getElementById('complete-payment')?.addEventListener('click', async () 
         receipt.number = compactInvoiceNumber(result.number || result.transaction_number || receipt.number);
         receipt.transactionId = Number(result.id || receipt.transactionId || 0) || null;
         receipt.total = Number(result.total || receipt.total);
+        receipt.date = formatTransactionDate(result.transacted_at);
         receipt.baseTotal = Number(result.base_total || receipt.baseTotal);
         receipt.paymentCharge = Number(result.payment_charge_amount || receipt.paymentCharge);
         receipt.change = Number(result.change_amount || receipt.change || 0);
@@ -7194,16 +7547,16 @@ document.getElementById('open-treatment-bundle')?.addEventListener('click', () =
     const treatments = array(state.treatments);
     const selectedTreatmentIds = [];
     const wrapper = document.createElement('div');
-    wrapper.className = 'modal open quick-modal';
-    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal"><div class="modal-head"><div><h2>Buat treatment bundle</h2><p>Pilih treatment, lalu susun urutan pengerjaan customer.</p></div><button type="button" class="quick-close"><span class="material-symbols-outlined">close</span></button></div><form><div class="form-grid"><label>Nama bundle<input name="name" required maxlength="150" placeholder="Contoh: Aurora Package"></label><label>Harga bundle<input name="bundle_price" type="number" min="1" required></label><label class="full-width">Keterangan<textarea name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><div class="bundle-editor-grid"><section><div class="bundle-editor-heading"><b>Pilih treatment</b><small>Centang treatment yang termasuk paket</small></div><div class="recipe-checklist bundle-treatment-options">${treatments.map((treatment) => `<label class="recipe-product"><input type="checkbox" name="treatment_ids" value="${Number(treatment.id)}"><span><b>${escapeHtml(treatment.name)}</b><small>${Number(treatment.duration_minutes)} menit · ${money(treatmentPrice(treatment))}</small></span></label>`).join('')}</div></section><section><div class="bundle-editor-heading"><b>Urutan pengerjaan</b><small>Gunakan panah untuk mengatur urutan</small></div><div class="bundle-order-list"><p class="bundle-order-empty">Treatment yang dipilih akan muncul di sini.</p></div></section></div><footer><button type="button" class="secondary quick-close">Batal</button><button class="primary ui-action-create">Simpan bundle</button></footer></form></div>`;
+    wrapper.className = 'modal open quick-modal p-4';
+    wrapper.innerHTML = `<div class="modal-box bundle-editor-modal w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"><div class="modal-head grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-base-300 pb-4 mb-5"><div><h2>Buat treatment bundle</h2><p>Pilih treatment, lalu susun urutan pengerjaan customer.</p></div><button type="button" class="quick-close btn btn-sm btn-error"><span class="material-symbols-outlined">close</span></button></div><form><div class="form-grid grid gap-4 md:grid-cols-2"><label>Nama bundle<input class="input w-full min-w-0" name="name" required maxlength="150" placeholder="Contoh: Aurora Package"></label><label>Harga bundle<input class="input w-full min-w-0" name="bundle_price" type="number" min="1" required></label><label class="full-width col-span-full">Keterangan<textarea class="textarea w-full min-w-0" name="description" maxlength="2000" placeholder="Opsional"></textarea></label></div><div class="bundle-editor-grid grid gap-4 md:grid-cols-2"><section><div class="bundle-editor-heading grid gap-1 mb-3"><b>Pilih treatment</b><small>Centang treatment yang termasuk paket</small></div><div class="recipe-checklist bundle-treatment-options grid max-h-96 overflow-y-auto">${treatments.map((treatment) => `<label class="recipe-product grid grid-cols-[auto_minmax(0,1fr)] gap-3 items-center border-b border-base-300 p-3"><input class="checkbox checkbox-primary checkbox-sm" type="checkbox" name="treatment_ids" value="${Number(treatment.id)}"><span class="grid gap-1"><b>${escapeHtml(treatment.name)}</b><small>${Number(treatment.duration_minutes)} menit · ${money(treatmentPrice(treatment))}</small></span></label>`).join('')}</div></section><section><div class="bundle-editor-heading grid gap-1 mb-3"><b>Urutan pengerjaan</b><small>Gunakan panah untuk mengatur urutan</small></div><div class="bundle-order-list"><p class="bundle-order-empty text-sm text-base-content/60 py-4">Treatment yang dipilih akan muncul di sini.</p></div></section></div><footer><button type="button" class="secondary quick-close btn btn-error">Batal</button><button class="primary ui-action-create btn btn-primary">Simpan bundle</button></footer></form></div>`;
     document.body.appendChild(wrapper);
     wrapper.querySelectorAll('.quick-close').forEach((button) => { button.onclick = () => wrapper.remove(); });
     const renderOrder = () => {
         const list = wrapper.querySelector('.bundle-order-list');
         list.innerHTML = selectedTreatmentIds.length ? selectedTreatmentIds.map((id, index) => {
             const treatment = treatments.find((item) => Number(item.id) === id);
-            return `<div class="bundle-order-item" data-id="${id}"><span class="bundle-order-number">${index + 1}</span><span><b>${escapeHtml(treatment?.name || 'Treatment')}</b><small>${Number(treatment?.duration_minutes || 0)} menit</small></span><span class="bundle-order-actions"><button type="button" data-direction="up" ${index === 0 ? 'disabled' : ''} aria-label="Naikkan urutan"><span class="material-symbols-outlined">arrow_upward</span></button><button type="button" data-direction="down" ${index === selectedTreatmentIds.length - 1 ? 'disabled' : ''} aria-label="Turunkan urutan"><span class="material-symbols-outlined">arrow_downward</span></button></span></div>`;
-        }).join('') : '<p class="bundle-order-empty">Treatment yang dipilih akan muncul di sini.</p>';
+            return `<div class="bundle-order-item rounded-box border border-base-300 p-4" data-id="${id}"><span class="bundle-order-number badge badge-ghost">${index + 1}</span><span><b>${escapeHtml(treatment?.name || 'Treatment')}</b><small>${Number(treatment?.duration_minutes || 0)} menit</small></span><span class="bundle-order-actions flex gap-1 ml-auto"><button class="btn btn-sm btn-info" type="button" data-direction="up" ${index === 0 ? 'disabled' : ''} aria-label="Naikkan urutan"><span class="material-symbols-outlined">arrow_upward</span></button><button class="btn btn-sm btn-info" type="button" data-direction="down" ${index === selectedTreatmentIds.length - 1 ? 'disabled' : ''} aria-label="Turunkan urutan"><span class="material-symbols-outlined">arrow_downward</span></button></span></div>`;
+        }).join('') : '<p class="bundle-order-empty text-sm text-base-content/60 py-4">Treatment yang dipilih akan muncul di sini.</p>';
         list.querySelectorAll('.bundle-order-actions button').forEach((button) => {
             button.onclick = () => {
                 const row = button.closest('.bundle-order-item');
@@ -7405,6 +7758,13 @@ window.setInterval(updateJakartaClock, 1000);
 
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') document.querySelector('.modal.open')?.classList.remove('open');
+    if (event.key === 'Escape') document.querySelectorAll('.treatment-edit-menu[open]').forEach((menu) => { menu.open = false; });
+});
+
+document.addEventListener('click', (event) => {
+    document.querySelectorAll('.treatment-edit-menu[open]').forEach((menu) => {
+        if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+    });
 });
 
 populateSelects();

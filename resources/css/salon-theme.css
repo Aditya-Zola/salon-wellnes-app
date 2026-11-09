@@ -1,53 +1,61 @@
 @theme {
     --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-    --color-brand: #2563eb;
-    --color-brand-hover: #1d4ed8;
-    --color-sky: #60a5fa;
-    --color-brand-soft: #dbeafe;
-    --color-canvas: #f3f6fa;
-    --color-surface-soft: #f8fafc;
-    --color-ink: #14284c;
-    --color-muted: #64748b;
-    --color-line: #e2e8f0;
-    --color-success: #0f8a70;
-    --color-warning: #d97706;
-    --color-danger: #dc3545;
+    --color-canvas: #f4f7fc;
+    --color-sidebar: #102b50;
+    --color-sidebar-header: #173b69;
+    --color-sidebar-hover: #1d4678;
+    --color-sidebar-content: #ffffff;
+    --color-sidebar-muted: #d6e7ff;
 }
 
-/* Shared tokens also theme feature layouts during the Tailwind migration. */
+@plugin 'daisyui/theme' {
+    name: 'selesa';
+    default: true;
+    color-scheme: light;
+    --color-base-100: #ffffff;
+    --color-base-200: #f2f6fc;
+    --color-base-300: #dce5f1;
+    --color-base-content: #1e293b;
+    --color-primary: #2563eb;
+    --color-primary-content: #ffffff;
+    --color-secondary: #0f766e;
+    --color-secondary-content: #ffffff;
+    --color-accent: #7c3aed;
+    --color-accent-content: #ffffff;
+    --color-neutral: #24344d;
+    --color-neutral-content: #f8fafc;
+    --color-info: #0369a1;
+    --color-info-content: #ffffff;
+    --color-success: #15803d;
+    --color-success-content: #ffffff;
+    --color-warning: #fbbf24;
+    --color-warning-content: #713f12;
+    --color-error: #dc2626;
+    --color-error-content: #ffffff;
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.875rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 1;
+    --noise: 0;
+}
+
+/* Chart and scheduling hooks use the same daisyUI palette as the controls. */
 :root {
     color-scheme: light;
-    --font-primary: var(--font-sans);
-    --ui-brand: var(--color-brand);
-    --ui-brand-hover: var(--color-brand-hover);
-    --ui-soft: var(--color-brand-soft);
-    --ui-canvas: var(--color-canvas);
-    --ui-surface: #fff;
-    --ui-surface-soft: var(--color-surface-soft);
-    --ui-ink: var(--color-ink);
-    --ui-muted: var(--color-muted);
-    --ui-line: var(--color-line);
+    --ink: var(--color-base-content);
+    --muted: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+    --line: var(--color-base-300);
+    --clay: var(--color-primary);
+    --sage: var(--color-success);
+    --rose: var(--color-error);
+    --ui-brand: var(--color-primary);
+    --ui-ink: var(--color-base-content);
+    --ui-muted: var(--muted);
+    --ui-line: var(--color-base-300);
     --ui-success: var(--color-success);
-    --ui-success-soft: #e5f7f2;
+    --ui-danger: var(--color-error);
     --ui-warning: var(--color-warning);
-    --ui-warning-soft: #fff4e5;
-    --ui-danger: var(--color-danger);
-    --ui-danger-soft: #fff0f2;
-    --ui-blue: var(--ui-brand);
-    --ui-blue-soft: var(--ui-soft);
-    --ui-radius: 16px;
-    --ui-control-radius: 12px;
-    --ui-shadow: 0 6px 24px rgb(37 99 235 / .065);
-    --ui-shadow-hover: 0 10px 28px rgb(37 99 235 / .12);
-    --ui-ring: 0 0 0 3px rgb(37 99 235 / .14);
-    --ui-primary-gradient: linear-gradient(135deg, #2563eb 0%, #60a5fa 100%);
-    /* A quiet shade keeps white labels readable over the sky-blue end. */
-    --ui-glossy-gradient: linear-gradient(90deg, transparent, rgb(20 50 105 / .45)), var(--ui-primary-gradient);
-    --ui-sidebar-width: 208px;
-    --ink: var(--ui-ink);
-    --muted: var(--ui-muted);
-    --line: var(--ui-line);
-    --clay: var(--ui-brand);
-    --selesa-brown: var(--ui-brand);
-    --selesa-tint: var(--ui-soft);
 }

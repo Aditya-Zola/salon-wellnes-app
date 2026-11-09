@@ -12,6 +12,11 @@ class SalesReturnService
 {
     public function __construct(private readonly ActivityLogger $logger) {}
 
+    public static function formatNumber(string $number): string
+    {
+        return preg_replace('/[-_\s]+/', '', $number);
+    }
+
     public function create(int $transactionId, array $data, Request $request): array
     {
         return DB::transaction(function () use ($transactionId, $data, $request): array {
@@ -250,6 +255,7 @@ class SalesReturnService
                 'id' => $returnId,
                 'number' => $number,
                 'transaction_id' => $transactionId,
+                'transaction_number' => $transaction->number,
                 'total_amount' => $total,
                 'status' => 'posted',
                 'idempotent_replay' => false,
@@ -272,15 +278,16 @@ class SalesReturnService
             'updated_at' => now(),
         ]);
 
-        return sprintf('RTN-%s-%03d', $dateCode, $next);
+        return sprintf('%s%s%03d', DocumentNumberService::prefix('return_prefix', 'RTN'), $dateCode, $next);
     }
 
     private function result(object $return, bool $replay): array
     {
         return [
             'id' => (int) $return->id,
-            'number' => $return->number,
+            'number' => self::formatNumber($return->number),
             'transaction_id' => (int) $return->transaction_id,
+            'transaction_number' => DB::table('transactions')->where('id', $return->transaction_id)->value('number'),
             'total_amount' => (int) $return->total_amount,
             'status' => $return->status,
             'idempotent_replay' => $replay,

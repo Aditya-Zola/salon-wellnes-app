@@ -55,6 +55,9 @@ class MonthlyCashAndRemunerationFlowTest extends TestCase
             'deposit' => ['payment_method_id' => $qris->id, 'amount' => 30000],
         ])->assertCreated();
         $firstReservationId = (int) $firstReservation->json('id');
+        $this->actingAs($cashier)->postJson("/operasional/reservasi/{$firstReservationId}/dp", [
+            'payment_method_id' => $qris->id,
+        ])->assertCreated();
         $this->finishReservation($firstReservationId);
         $firstTotal = (int) $facial->normal_price + 2 * (int) $product->selling_price;
         $firstTransactionId = (int) $this->actingAs($cashier)->postJson('/operasional/pembayaran', [

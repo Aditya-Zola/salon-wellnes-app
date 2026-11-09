@@ -11,6 +11,7 @@ use App\Http\Requests\UpdateReservationItemStatusRequest;
 use App\Http\Requests\UpdateReservationStatusRequest;
 use App\Http\Services\ActivityLogger;
 use App\Http\Services\CheckoutService;
+use App\Http\Services\DepositReceiptService;
 use App\Http\Services\ProductSpreadsheetImportService;
 use App\Http\Services\RemunerationReportService;
 use App\Http\Services\ReservationService;
@@ -650,6 +651,33 @@ class SalonController extends Controller
         ));
     }
 
+    public function depositHistory(Request $request, DepositReceiptService $receipts): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:50'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'payment_method' => ['nullable', 'string', 'max:100'],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d', Rule::when($request->filled('from'), 'after_or_equal:from')],
+        ]);
+
+        return response()->json($receipts->history($data));
+    }
+
+    public function depositReceipt(int $deposit, DepositReceiptService $receipts): JsonResponse
+    {
+        return response()->json($receipts->receipt($deposit));
+    }
+
+    public function depositPdf(int $deposit, DepositReceiptService $receipts): Response
+    {
+        $data = $receipts->viewData($deposit);
+
+        return Pdf::loadView('pdf.invoice', [...$data, ...$this->invoiceBranding()])
+            ->setPaper('a4')->stream(str_replace('/', '', $data['invoice']->number).'.pdf');
+    }
+
     public function salesReturnsPage(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -666,6 +694,115 @@ class SalonController extends Controller
             $data['search'] ?? null,
             $data['payment_method'] ?? null,
         ));
+    }
+
+    public function cancelledReservations(Request $request)
+    {
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'], 'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d'], 'type' => ['nullable', Rule::in(['full', 'partial'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        abort_if(! empty($filters['from']) && ! empty($filters['to']) && $filters['from'] > $filters['to'], 422, 'Rentang tanggal tidak valid.');
+        $cancelledItems = DB::table('reservation_items')->where('work_status', 'cancelled')
+            ->selectRaw('reservation_id, MAX(cancelled_at) as last_cancelled_at')->groupBy('reservation_id');
+        $cancelledAt = DB::raw('COALESCE(reservation.cancelled_at, cancelled.last_cancelled_at)');
+        $reservations = DB::table('reservations as reservation')
+            ->join('customers as customer', 'customer.id', '=', 'reservation.customer_id')
+            ->leftJoin('users as actor', 'actor.id', '=', 'reservation.cancelled_by')
+            ->leftJoinSub($cancelledItems, 'cancelled', 'cancelled.reservation_id', '=', 'reservation.id')
+            ->where(fn ($query) => $query->where('reservation.status', 'cancelled')->orWhereNotNull('cancelled.reservation_id'))
+            ->when($filters['type'] ?? null, fn ($query, $type) => $type === 'full' ? $query->where('reservation.status', 'cancelled') : $query->where('reservation.status', '!=', 'cancelled'))
+            ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate($cancelledAt, '>=', $date))
+            ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate($cancelledAt, '<=', $date))
+            ->when(trim($filters['search'] ?? ''), function ($query, $search): void {
+                $query->where(fn ($query) => $query->where('reservation.queue_number', 'like', "%$search%")
+                    ->orWhere('reservation.booking_code', 'like', "%$search%")->orWhere('reservation.cancellation_number', 'like', "%$search%")
+                    ->orWhereExists(fn ($items) => $items->selectRaw('1')->from('reservation_items')->whereColumn('reservation_items.reservation_id', 'reservation.id')->where('cancellation_number', 'like', "%$search%"))
+                    ->orWhere('customer.name', 'like', "%$search%"));
+            })
+            ->orderByDesc($cancelledAt)->orderByDesc('reservation.id')
+            ->paginate(20, ['reservation.id', 'reservation.queue_number', 'reservation.booking_code', 'reservation.reservation_date', 'reservation.reservation_time',
+                'reservation.status', 'reservation.cancellation_number', 'reservation.cancellation_reason', 'actor.name as cancelled_by_name', 'customer.name as customer_name', DB::raw('COALESCE(reservation.cancelled_at, cancelled.last_cancelled_at) as cancelled_at')])
+            ->withQueryString();
+        $items = DB::table('reservation_items')->whereIn('reservation_id', $reservations->pluck('id'))->where('work_status', 'cancelled')
+            ->orderBy('sort_order')->get(['id', 'reservation_id', 'treatment_name', 'cancellation_number'])->groupBy('reservation_id');
+        $logs = DB::table('activity_logs as log')->leftJoin('users as actor', 'actor.id', '=', 'log.user_id')
+            ->where('log.subject_type', 'reservation_item')->where('log.action', 'reservation_item.status_changed')
+            ->whereIn('log.subject_id', $items->flatten(1)->pluck('id'))->orderByDesc('log.id')
+            ->get(['log.subject_id', 'log.metadata', 'actor.name as actor_name'])
+            ->filter(fn ($log) => (json_decode($log->metadata ?? '{}', true)['to'] ?? null) === 'cancelled')->unique('subject_id')->keyBy('subject_id');
+        $deposits = DB::table('reservation_deposits')->whereIn('reservation_id', $reservations->pluck('id'))->where('status', 'confirmed')
+            ->selectRaw('reservation_id, SUM(amount) as total')->groupBy('reservation_id')->pluck('total', 'reservation_id');
+        $refunds = DB::table('reservation_deposit_refunds as refund')
+            ->join('payment_methods as method', 'method.id', '=', 'refund.payment_method_id')
+            ->join('users as actor', 'actor.id', '=', 'refund.refunded_by')
+            ->whereIn('refund.reservation_id', $reservations->pluck('id'))
+            ->get(['refund.*', 'method.name as payment_method_name', 'actor.name as cashier_name'])->keyBy('reservation_id');
+        $reservations->getCollection()->each(function ($reservation) use ($items, $logs, $deposits, $refunds): void {
+            $reservation->deposit_amount = (int) $deposits->get($reservation->id, 0);
+            $reservation->deposit_refund = $refunds->get($reservation->id);
+            $reservation->cancelled_items = collect($items->get($reservation->id, []))->map(function ($item) use ($logs) {
+                $log = $logs->get($item->id);
+                $item->reason = $log ? (json_decode($log->metadata ?? '{}', true)['reason'] ?? null) : null;
+                $item->actor = $log?->actor_name;
+
+                return $item;
+            });
+        });
+
+        $refundMethods = DB::table('payment_methods')->where('is_active', true)->whereNull('archived_at')->orderBy('sort_order')->get(['id', 'name', 'requires_reference']);
+
+        return view('reservations.cancelled', compact('reservations', 'filters', 'refundMethods'));
+    }
+
+    public function refundCancelledDeposit(Request $request, int $reservation)
+    {
+        $data = $request->validate([
+            'payment_method_id' => ['required', 'integer', 'exists:payment_methods,id'],
+            'reference_number' => ['nullable', 'string', 'max:255'],
+        ]);
+        $result = $this->checkout->refundCancelledDeposit($reservation, $data, $request);
+        if ($request->expectsJson()) {
+            return response()->json($result, $result['idempotent_replay'] ? 200 : 201);
+        }
+
+        return redirect()->route('reservations.cancelled')->with('success', $result['idempotent_replay'] ? 'DP sudah dikembalikan sebelumnya.' : 'Pengembalian DP telah dicatat oleh kasir.');
+    }
+
+    public function memberHistory(Request $request, int $member)
+    {
+        $data = $request->validate(['search' => ['nullable', 'string', 'max:100'], 'page' => ['nullable', 'integer', 'min:1']]);
+        $member = DB::table('customers')->where('id', $member)->where('is_member', true)->where('is_active', true)->first();
+        abort_unless($member, 404);
+        $search = trim($data['search'] ?? '');
+        $history = DB::table('transaction_items as item')
+            ->join('transactions as transaction', 'transaction.id', '=', 'item.transaction_id')
+            ->join('reservations as reservation', 'reservation.id', '=', 'transaction.reservation_id')
+            ->where('transaction.customer_id', $member->id)->where('transaction.status', 'paid')
+            ->where('item.item_type', 'treatment')
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where(function ($query) use ($search): void {
+                    $query->where('item.name', 'like', '%'.$search.'%')->orWhereExists(function ($staff) use ($search): void {
+                        $staff->selectRaw('1')->from('reservation_item_staff as assignment')
+                            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+                            ->whereColumn('assignment.reservation_item_id', 'item.reservation_item_id')
+                            ->where('employee.name', 'like', '%'.$search.'%');
+                    });
+                });
+            })
+            ->orderByDesc('reservation.reservation_date')->orderByDesc('transaction.transacted_at')->orderByDesc('item.id')
+            ->paginate(20, ['item.id', 'item.name', 'item.reservation_item_id', 'reservation.reservation_date'])->withQueryString();
+        $therapists = DB::table('reservation_item_staff as assignment')
+            ->join('employees as employee', 'employee.id', '=', 'assignment.employee_id')
+            ->whereIn('assignment.reservation_item_id', $history->pluck('reservation_item_id'))
+            ->orderBy('assignment.id')->get(['assignment.reservation_item_id', 'employee.name'])
+            ->groupBy('reservation_item_id');
+        $history->getCollection()->each(function ($item) use ($therapists): void {
+            $item->therapist_name = collect($therapists->get($item->reservation_item_id, []))->pluck('name')->unique()->join(', ') ?: '-';
+        });
+
+        return view('members.history', compact('member', 'history', 'search'));
     }
 
     public function membersPage(Request $request): JsonResponse
@@ -1057,9 +1194,9 @@ class SalonController extends Controller
         $data = $request->validate([
             'date' => ['required', 'date_format:Y-m-d'],
             'start_time' => ['required', 'date_format:H:i'],
-            'treatment_id' => ['required', 'integer', 'exists:treatments,id'],
+            'treatment_id' => ['nullable', 'integer', 'exists:treatments,id'],
         ]);
-        $employees = $this->reservations->availability($data['date'], $data['start_time'], (int) $data['treatment_id']);
+        $employees = $this->reservations->availability($data['date'], $data['start_time'], isset($data['treatment_id']) ? (int) $data['treatment_id'] : null);
 
         return response()->json([
             'employees' => $employees,
@@ -1227,6 +1364,13 @@ class SalonController extends Controller
             'message' => 'Treatment tambahan masuk ke reservasi dan invoice.',
             ...$item,
         ], 201);
+    }
+
+    public function replaceReservationItem(StoreReservationItemRequest $request, int $reservation, int $item): JsonResponse
+    {
+        $replacement = $this->reservations->replaceItem($reservation, $item, $request->validated(), $request);
+
+        return response()->json(['message' => 'Treatment diganti. DP tetap diperhitungkan pada reservasi ini.', ...$replacement]);
     }
 
     public function storeReservationProduct(Request $request, int $reservation): JsonResponse
@@ -1866,6 +2010,22 @@ class SalonController extends Controller
         return response()->json(['message' => 'Harga treatment berhasil diperbarui.']);
     }
 
+    public function updateTreatmentDuration(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate(['duration_minutes' => ['required', 'integer', 'min:1', 'max:1440']]);
+        DB::transaction(function () use ($request, $id, $data): void {
+            $treatment = DB::table('treatments')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($treatment, 404, 'Treatment tidak ditemukan.');
+            $duration = (int) $data['duration_minutes'];
+            DB::table('treatments')->where('id', $id)->update(['duration_minutes' => $duration, 'updated_at' => now()]);
+            $this->logger->log($request, 'treatment.duration_updated', 'treatment', $id,
+                "Memperbarui durasi treatment {$treatment->name}",
+                ['before' => (int) $treatment->duration_minutes, 'after' => $duration]);
+        });
+
+        return response()->json(['message' => 'Durasi treatment berhasil diperbarui.']);
+    }
+
     public function destroyTreatment(Request $request, int $id): JsonResponse
     {
         $treatment = DB::table('treatments')->where('id', $id)->first();
@@ -2086,6 +2246,20 @@ class SalonController extends Controller
             'members_only' => (bool) $data['members_only'],
             'is_active' => (bool) $data['is_active'],
         ];
+    }
+
+    public function storeDepositPayment(Request $request, int $reservation): JsonResponse
+    {
+        $data = $request->validate([
+            'payment_method_id' => ['required', 'integer', 'exists:payment_methods,id'],
+            'reference_number' => ['nullable', 'string', 'max:100'],
+        ]);
+        $deposit = $this->checkout->payDeposit($reservation, $data, $request);
+
+        return response()->json([
+            'message' => $deposit['idempotent_replay'] ? 'Pembayaran DP sudah pernah diproses.' : 'Pembayaran DP berhasil diproses.',
+            ...$deposit,
+        ], $deposit['idempotent_replay'] ? 200 : 201);
     }
 
     public function storePayment(CheckoutRequest $request): JsonResponse
@@ -2370,6 +2544,20 @@ class SalonController extends Controller
             ->pluck('employee.name')
             ->unique()
             ->values();
+        $deposits = DB::table('reservation_deposits')->where('reservation_id', $invoice->reservation_id)
+            ->where('status', 'confirmed')->get(['id', 'amount', 'paid_at']);
+        $depositAmount = (int) $deposits->sum('amount');
+        $settlementAmount = (int) $payments->sum('amount');
+        $invoiceFilename = preg_replace('/[-_\s]+/', '', $invoice->number);
+
+        return Pdf::loadView('pdf.invoice', [
+            ...compact('invoice', 'items', 'displayItems', 'payments', 'therapists', 'deposits', 'depositAmount', 'settlementAmount'),
+            ...$this->invoiceBranding(),
+        ])->setPaper('a4')->stream($invoiceFilename.'.pdf');
+    }
+
+    private function invoiceBranding(): array
+    {
         $logoPath = public_path('images/selesa-logo.png');
         $logoDataUri = is_file($logoPath)
             ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
@@ -2382,11 +2570,7 @@ class SalonController extends Controller
             'whatsapp' => $salonSettings->get('salon_whatsapp') ?: '081128702019',
         ];
 
-        $invoiceFilename = preg_replace('/[-_\s]+/', '', $invoice->number);
-
-        return Pdf::loadView('pdf.invoice', compact('invoice', 'items', 'displayItems', 'payments', 'therapists', 'logoDataUri', 'salon'))
-            ->setPaper('a4')
-            ->stream($invoiceFilename.'.pdf');
+        return compact('logoDataUri', 'salon');
     }
 
     public function storeSalesReturn(StoreSalesReturnRequest $request, int $transaction): JsonResponse
@@ -2401,7 +2585,7 @@ class SalonController extends Controller
         ], $salesReturn['idempotent_replay'] ? 200 : 201);
     }
 
-    public function salesReturnPdf(int $salesReturn): Response
+    public function salesReturnPdf(int $salesReturn, string $format = 'struk'): Response
     {
         $return = DB::table('sales_returns as sales_return')
             ->join('transactions as transaction', 'transaction.id', '=', 'sales_return.transaction_id')
@@ -2418,7 +2602,8 @@ class SalonController extends Controller
                 'method.name as payment_method_name',
                 'user.name as created_by_name',
             ]);
-        abort_unless($return, 404, 'Struk retur tidak ditemukan.');
+        abort_unless($return, 404, 'Bukti retur tidak ditemukan.');
+        $return->number = SalesReturnService::formatNumber($return->number);
 
         $productItems = DB::table('sales_return_items')
             ->where('sales_return_id', $return->id)
@@ -2441,16 +2626,26 @@ class SalonController extends Controller
                 return $item;
             });
         $items = $productItems->concat($treatmentItems)->values();
-        $logoPath = public_path('images/selesa-logo.png');
-        $logoDataUri = is_file($logoPath)
-            ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoPath))
-            : null;
+        if ($format === 'nota') {
+            return Pdf::loadView('pdf.sales-return-note', [
+                ...compact('return', 'items'), ...$this->invoiceBranding(),
+            ])->setPaper('a4')->stream($return->number.'-nota.pdf');
+        }
+        $paperWidth = (int) config('printing.receipt_width_mm', 58);
+        $paperWidth = in_array($paperWidth, [58, 80], true) ? $paperWidth : 58;
+        $data = [...compact('return', 'items', 'paperWidth'), ...$this->invoiceBranding()];
+        $width = $paperWidth * 72 / 25.4;
+        $probeHeight = 600 + strlen($return->reason) * 2 + $items->sum(fn ($item) => 80 + strlen($item->name) * 2);
+        $bottom = 0;
+        $probe = Pdf::loadView('pdf.sales-return', $data)->setPaper([0, 0, $width, $probeHeight]);
+        $probe->getDomPDF()->setCallbacks([['event' => 'end_frame', 'f' => function ($frame) use (&$bottom): void {
+            if ($frame->get_node()->nodeName === 'main') {
+                $bottom = max($bottom, $frame->get_position('y') + $frame->get_margin_height());
+            }
+        }]]);
+        $probe->render();
 
-        $reasonLines = max(1, (int) ceil(strlen((string) $return->reason) / 42));
-        $receiptHeight = max(440, 370 + ($items->count() * 38) + ($reasonLines * 12));
-
-        return Pdf::loadView('pdf.sales-return', compact('return', 'items', 'logoDataUri'))
-            ->setPaper([0, 0, 164.41, $receiptHeight])
+        return Pdf::loadView('pdf.sales-return', $data)->setPaper([0, 0, $width, max(85, ceil($bottom + 9))])
             ->stream($return->number.'.pdf');
     }
 
