@@ -224,8 +224,6 @@ class ReservationService
 
             $deposit = null;
             if (isset($data['deposit'])) {
-                abort_unless($request->user()?->can('cashier.process'), 403);
-
                 $depositInput = $data['deposit'];
                 $reservationSubtotal = array_sum(array_column($createdItems, 'unit_price'));
                 $depositAmount = (int) $depositInput['amount'];
@@ -235,37 +233,37 @@ class ReservationService
                     ]);
                 }
 
-                $method = DB::table('payment_methods')
+                $method = empty($depositInput['payment_method_id']) ? null : DB::table('payment_methods')
                     ->where('id', (int) $depositInput['payment_method_id'])
                     ->where('is_active', true)
                     ->whereNull('archived_at')
                     ->lockForUpdate()
                     ->first();
-                if (! $method) {
+                if (! empty($depositInput['payment_method_id']) && ! $method) {
                     throw ValidationException::withMessages([
                         'deposit.payment_method_id' => ['Metode pembayaran DP tidak tersedia atau tidak aktif.'],
                     ]);
                 }
                 $referenceNumber = trim((string) ($depositInput['reference_number'] ?? '')) ?: null;
-                $depositId = DB::table('reservation_deposits')->insertGetId([
+                $depositId = DB::table('reservation_deposit_plans')->insertGetId([
                     'reservation_id' => $reservationId,
-                    'payment_method_id' => $method->id,
+                    'payment_method_id' => $method?->id,
                     'amount' => $depositAmount,
                     'reference_number' => $referenceNumber,
-                    'paid_at' => $now,
-                    'status' => 'confirmed',
                     'notes' => trim((string) ($depositInput['notes'] ?? '')) ?: null,
-                    'received_by' => $request->user()?->id,
+                    'created_by' => $request->user()?->id,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]);
                 $deposit = [
-                    'id' => $depositId,
+                    'id' => null,
+                    'plan_id' => $depositId,
+                    'status' => 'pending',
                     'amount' => $depositAmount,
-                    'payment_method_id' => (int) $method->id,
-                    'payment_method_name' => $method->name,
+                    'payment_method_id' => $method ? (int) $method->id : null,
+                    'payment_method_name' => $method?->name,
                     'reference_number' => $referenceNumber,
-                    'paid_at' => $now->toDateTimeString(),
+                    'paid_at' => null,
                 ];
             }
 
@@ -297,24 +295,13 @@ class ReservationService
                         ->filter()
                         ->values()
                         ->all(),
-                    'deposit_amount' => $deposit['amount'] ?? 0,
+                    'deposit_planned_amount' => $deposit['amount'] ?? 0,
                     'bundle_conflict_override' => $bundleConflicts !== [] && $isOverridden ? [
                         'reason' => $overrideReason,
                         'conflicts' => $bundleConflicts,
                     ] : null,
                 ],
             );
-
-            if ($deposit) {
-                $this->logger->log(
-                    $request,
-                    'reservation.deposit_received',
-                    'reservation',
-                    $reservationId,
-                    "Menerima DP Rp{$deposit['amount']} untuk reservasi {$bookingCode}",
-                    ['deposit_id' => $deposit['id'], 'amount' => $deposit['amount'], 'payment_method_id' => $deposit['payment_method_id']],
-                );
-            }
 
             $firstItem = $createdItems[0] ?? null;
             $primaryStaff = collect($firstItem['staff'] ?? [])->firstWhere('role', 'primary')
@@ -336,7 +323,7 @@ class ReservationService
                 'created_at' => $now->toDateTimeString(),
                 'updated_at' => $now->toDateTimeString(),
                 'is_paid' => false,
-                'deposit_amount' => $deposit['amount'] ?? 0,
+                'deposit_amount' => 0,
                 'deposit' => $deposit,
                 'items' => $createdItems,
                 'product_items' => [],
@@ -374,6 +361,26 @@ class ReservationService
      * Layanan tetap menjadi reservation item agar jadwal, therapist, resep,
      * stok, dan komisi mengikuti alur yang sama dengan reservasi awal.
      */
+    public function replaceItem(int $reservationId, int $itemId, array $data, Request $request): array
+    {
+        return DB::transaction(function () use ($reservationId, $itemId, $data, $request): array {
+            $reservation = DB::table('reservations')->where('id', $reservationId)->lockForUpdate()->first();
+            abort_unless($reservation, 404, 'Reservasi tidak ditemukan.');
+            $this->ensureNotPaid($reservationId);
+            $item = DB::table('reservation_items')->where('reservation_id', $reservationId)->where('id', $itemId)->lockForUpdate()->first();
+            abort_unless($item, 404, 'Treatment tidak ditemukan.');
+            abort_if(in_array($item->work_status, ['finished', 'cancelled'], true), 422, 'Treatment yang selesai atau dibatalkan tidak dapat diganti.');
+
+            $replacement = $this->addItem($reservationId, $data, $request);
+            $this->updateItemStatus($reservationId, $itemId, 'cancelled', 'Diganti dengan '.$replacement['treatment_name'], $request);
+            $this->logger->log($request, 'reservation_item.replaced', 'reservation_item', $itemId,
+                "Mengganti {$item->treatment_name} dengan {$replacement['treatment_name']}",
+                ['reservation_id' => $reservationId, 'replacement_item_id' => $replacement['id']]);
+
+            return $replacement;
+        }, 3);
+    }
+
     public function addItem(int $reservationId, array $data, Request $request): array
     {
         return DB::transaction(function () use ($reservationId, $data, $request): array {
@@ -660,6 +667,7 @@ class ReservationService
 
             if ($status === 'cancelled') {
                 $updates += [
+                    'cancellation_number' => $reservation->cancellation_number ?: DocumentNumberService::cancellation(),
                     'cancelled_by' => $request->user()?->id,
                     'cancelled_at' => $now,
                     'cancellation_reason' => $reason ?: 'Dibatalkan dari status reservasi',
@@ -740,6 +748,9 @@ class ReservationService
                 'cancelled' => 'cancelled_at',
             ];
             $updates = ['work_status' => $status, 'updated_at' => $now];
+            if ($status === 'cancelled') {
+                $updates['cancellation_number'] = $item->cancellation_number ?: DocumentNumberService::cancellation();
+            }
 
             if (isset($timestampColumns[$status])) {
                 $column = $timestampColumns[$status];
@@ -749,7 +760,7 @@ class ReservationService
             }
 
             DB::table('reservation_items')->where('id', $itemId)->update($updates);
-            $reservationStatus = $this->syncHeaderStatus($reservationId, $request->user()?->id, $reason);
+            $reservationStatus = $this->syncHeaderStatus($reservationId, $request->user()?->id, $reason, $updates['cancellation_number'] ?? null);
             $this->logger->log(
                 $request,
                 'reservation_item.status_changed',
@@ -812,10 +823,20 @@ class ReservationService
         }, 3);
     }
 
-    public function availability(string $date, string $time, int $treatmentId): array
+    public function availability(string $date, string $time, ?int $treatmentId = null): array
     {
-        $treatment = DB::table('treatments')->where('id', $treatmentId)->where('is_active', true)->first();
-        abort_unless($treatment, 404, 'Treatment tidak ditemukan atau tidak aktif.');
+        if ($treatmentId !== null) {
+            abort_unless(DB::table('treatments')->where('id', $treatmentId)->where('is_active', true)->exists(), 404, 'Treatment tidak ditemukan atau tidak aktif.');
+        }
+        $start = CarbonImmutable::createFromFormat('!Y-m-d H:i', "$date $time", config('app.timezone'));
+        $now = CarbonImmutable::now();
+        $schedules = DB::table('reservation_item_staff as staff')
+            ->join('reservation_items as item', 'item.id', '=', 'staff.reservation_item_id')
+            ->join('reservations as reservation', 'reservation.id', '=', 'item.reservation_id')
+            ->where('reservation.status', '!=', 'cancelled')->where('item.work_status', '!=', 'cancelled')
+            ->where('item.scheduled_start_at', '<=', $start)->where('item.scheduled_ready_at', '>', $start)
+            ->get(['staff.employee_id', 'item.work_status', 'item.scheduled_start_at', 'item.scheduled_end_at', 'item.scheduled_ready_at'])
+            ->groupBy('employee_id');
 
         $offEmployeeIds = DB::table('employee_attendances')
             ->where('attendance_date', $date)
@@ -829,8 +850,13 @@ class ReservationService
             ->where('is_service_provider', true)
             ->orderBy('name')
             ->get(['id', 'code', 'name', 'position', 'specialty'])
-            ->map(function (object $employee) use ($offEmployeeIds): array {
+            ->map(function (object $employee) use ($offEmployeeIds, $schedules, $start, $now): array {
                 $isOff = in_array((int) $employee->id, $offEmployeeIds, true);
+                $slots = $schedules->get($employee->id, collect());
+                $hasService = $slots->contains(fn ($slot) => $slot->work_status !== 'finished' && CarbonImmutable::parse($slot->scheduled_end_at)->gt($start));
+                $isServing = $slots->contains(fn ($slot) => $slot->work_status !== 'finished'
+                    && CarbonImmutable::parse($slot->scheduled_start_at)->lte($now) && CarbonImmutable::parse($slot->scheduled_end_at)->gt($now));
+                $status = $slots->isEmpty() ? 'available' : ($hasService ? ($isServing ? 'in_service' : 'scheduled') : 'resting');
 
                 return [
                     'id' => (int) $employee->id,
@@ -840,6 +866,8 @@ class ReservationService
                     'specialty' => $employee->specialty,
                     'available' => ! $isOff,
                     'attendance_status' => $isOff ? 'off' : 'present',
+                    'schedule_status' => $isOff ? 'off' : $status,
+                    'ready_at' => $isOff ? null : $slots->max('scheduled_ready_at'),
                     'conflicts' => [],
                 ];
             })
@@ -1313,7 +1341,7 @@ class ReservationService
         );
     }
 
-    private function syncHeaderStatus(int $reservationId, ?int $userId, ?string $reason): string
+    private function syncHeaderStatus(int $reservationId, ?int $userId, ?string $reason, ?string $cancellationNumber = null): string
     {
         $statuses = DB::table('reservation_items')->where('reservation_id', $reservationId)->pluck('work_status');
         $reservation = DB::table('reservations')->where('id', $reservationId)->first();
@@ -1321,6 +1349,7 @@ class ReservationService
 
         if ($statuses->every(fn (string $status): bool => $status === 'cancelled')) {
             DB::table('reservations')->where('id', $reservationId)->update([
+                'cancellation_number' => $reservation->cancellation_number ?: $cancellationNumber ?: DocumentNumberService::cancellation(),
                 'status' => 'cancelled',
                 'updated_by' => $userId,
                 'cancelled_by' => $userId,

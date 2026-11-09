@@ -22,11 +22,14 @@ class SettingsController extends Controller
     public function sale(): View
     {
         $settings = DB::table('sale_settings')
-            ->whereIn('key', ['invoice_prefix', 'salon_address', 'salon_whatsapp'])
+            ->whereIn('key', ['invoice_prefix', 'deposit_prefix', 'return_prefix', 'cancellation_prefix', 'salon_address', 'salon_whatsapp'])
             ->pluck('value', 'key');
 
         return view('settings.sale', [
             'invoicePrefix' => $settings->get('invoice_prefix') ?: 'INV',
+            'depositPrefix' => $settings->get('deposit_prefix') ?: 'DP',
+            'returnPrefix' => $settings->get('return_prefix') ?: 'RTN',
+            'cancellationPrefix' => $settings->get('cancellation_prefix') ?: 'CNL',
             'salonAddress' => $settings->get('salon_address') ?: 'Jl. Telaga Asmara, Tlogosari Kulon, Semarang',
             'salonWhatsapp' => $settings->get('salon_whatsapp') ?: '081128702019',
         ]);
@@ -36,6 +39,9 @@ class SettingsController extends Controller
     {
         $data = $request->validate([
             'invoice_prefix' => ['required', 'string', 'min:1', 'max:20', 'regex:/^[A-Za-z0-9]+$/'],
+            'deposit_prefix' => ['sometimes', 'required', 'string', 'max:20', 'regex:/^[A-Za-z0-9]+$/'],
+            'return_prefix' => ['sometimes', 'required', 'string', 'max:20', 'regex:/^[A-Za-z0-9]+$/'],
+            'cancellation_prefix' => ['sometimes', 'required', 'string', 'max:20', 'regex:/^[A-Za-z0-9]+$/'],
             'salon_address' => ['nullable', 'string', 'max:255'],
             'salon_whatsapp' => ['nullable', 'string', 'max:30', 'regex:/^[0-9+()\-\s]+$/'],
         ]);
@@ -46,6 +52,11 @@ class SettingsController extends Controller
             ['key' => 'invoice_prefix'],
             ['value' => $prefix, 'updated_at' => $now, 'created_at' => $now],
         );
+        foreach (['deposit_prefix', 'return_prefix', 'cancellation_prefix'] as $key) {
+            if (isset($data[$key])) {
+                DB::table('sale_settings')->updateOrInsert(['key' => $key], ['value' => Str::upper($data[$key]), 'updated_at' => $now, 'created_at' => $now]);
+            }
+        }
         foreach (['salon_address', 'salon_whatsapp'] as $key) {
             if (! $request->has($key)) {
                 continue;
@@ -58,7 +69,7 @@ class SettingsController extends Controller
         }
         $this->logger->log($request, 'settings.invoice_prefix_updated', 'sale_setting', null, 'Memperbarui prefix invoice menjadi '.$prefix);
 
-        return back()->with('success', 'Prefix invoice berhasil disimpan.');
+        return back()->with('success', 'Pengaturan penjualan berhasil disimpan.');
     }
 
     public function paymentMethods(Request $request, string $section): View

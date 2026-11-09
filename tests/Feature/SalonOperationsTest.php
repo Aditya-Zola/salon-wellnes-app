@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Services\SpreadsheetExportService;
+use App\Http\Services\DepositReceiptService;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -150,56 +151,223 @@ class SalonOperationsTest extends TestCase
 
     public function test_reservation_deposit_is_recorded_and_reduces_the_cashier_balance(): void
     {
+        Carbon::setTestNow('2033-06-03 10:00:00');
         $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
         $therapist = $this->employee('EMP-SARI');
-        $depositMethod = $this->paymentMethod('QRIS-001');
+        $qris = $this->paymentMethod('QRIS-001');
         $cash = $this->paymentMethod('CASH');
         $deposit = 50000;
+        $reservation = $this->createReservation($this->marketing, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['phone' => '081290000012', 'deposit' => ['amount' => $deposit]])
+            ->assertCreated()->assertJsonPath('reservation.deposit_amount', 0)
+            ->assertJsonPath('reservation.deposit.status', 'pending')->assertJsonPath('reservation.deposit.paid_at', null);
+        $id = (int) $reservation->json('id');
+        $this->assertDatabaseHas('reservation_deposit_plans', ['reservation_id' => $id, 'amount' => $deposit]);
+        $this->assertDatabaseMissing('reservation_deposits', ['reservation_id' => $id]);
+        $payment = ['reservation_id' => $id, 'payments' => [['payment_method_id' => $cash->id, 'amount' => (int) $treatment->normal_price - $deposit]]];
+        $this->actingAs($this->marketing)->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $qris->id])->assertForbidden();
+        $this->actingAs($this->cashier)->postJson('/operasional/pembayaran', $payment)->assertUnprocessable();
+        $this->assertDatabaseMissing('transactions', ['reservation_id' => $id]);
+        $before = collect($this->getJson('/operasional/data')->assertOk()->json('reservations'))->firstWhere('id', $id);
+        $this->assertSame(0, $before['deposit_amount']);
+        $this->assertNull($before['deposit']['paid_at']);
 
-        $reservation = $this->createReservation($this->admin, [
-            $this->item($treatment->id, '13:00', [
-                ['employee_id' => $therapist->id, 'role' => 'primary'],
-            ]),
-        ], [
-            'phone' => '081290000012',
-            'deposit' => [
-                'payment_method_id' => $depositMethod->id,
-                'amount' => $deposit,
-                'reference_number' => 'QRIS-DP-001',
-            ],
-        ])->assertCreated()
-            ->assertJsonPath('reservation.deposit_amount', $deposit)
-            ->assertJsonPath('reservation.deposit.payment_method_name', $depositMethod->name);
+        Carbon::setTestNow('2033-06-04 14:27:43');
+        $confirmation = ['payment_method_id' => $qris->id, 'reference_number' => 'QRIS-DP-001', 'paid_at' => '2030-01-01 00:00:00'];
+        $this->postJson("/operasional/reservasi/{$id}/dp", $confirmation)->assertCreated()
+            ->assertJsonPath('amount', $deposit)->assertJsonPath('paid_at', '2033-06-04 14:27:43');
+        Carbon::setTestNow('2033-06-04 15:00:00');
+        $this->postJson("/operasional/reservasi/{$id}/dp", $confirmation)->assertOk()
+            ->assertJsonPath('idempotent_replay', true)->assertJsonPath('paid_at', '2033-06-04 14:27:43');
+        $this->assertSame(1, DB::table('reservation_deposits')->where('reservation_id', $id)->count());
+        $this->assertDatabaseMissing('transactions', ['reservation_id' => $id]);
+        $after = collect($this->getJson('/operasional/data')->assertOk()->json('reservations'))->firstWhere('id', $id);
+        $this->assertSame($deposit, $after['deposit_amount']);
+        $this->assertSame('confirmed', $after['deposit']['status']);
 
-        $reservationId = (int) $reservation->json('id');
-        $this->assertDatabaseHas('reservation_deposits', [
-            'reservation_id' => $reservationId,
-            'payment_method_id' => $depositMethod->id,
-            'amount' => $deposit,
-            'status' => 'confirmed',
-        ]);
-
-        $snapshot = $this->actingAs($this->cashier)->getJson('/operasional/data')->assertOk()->json();
-        $snapshotReservation = collect($snapshot['reservations'])->firstWhere('id', $reservationId);
-        $this->assertSame($deposit, $snapshotReservation['deposit_amount']);
-
-        $this->actingAs($this->cashier)
-            ->postJson('/operasional/pembayaran', [
-                'reservation_id' => $reservationId,
-                'payments' => [[
-                    'payment_method_id' => $cash->id,
-                    'amount' => (int) $treatment->normal_price - $deposit,
-                ]],
-            ])
-            ->assertCreated()
+        Carbon::setTestNow('2033-06-05 15:00:00');
+        $transaction = $this->postJson('/operasional/pembayaran', $payment)->assertCreated()
             ->assertJsonPath('base_total', (int) $treatment->normal_price)
             ->assertJsonPath('deposit_amount', $deposit)
             ->assertJsonPath('remaining_base_total', (int) $treatment->normal_price - $deposit);
-
         $this->assertDatabaseHas('transaction_payments', [
-            'payment_method_id' => $cash->id,
-            'base_amount' => (int) $treatment->normal_price - $deposit,
+            'transaction_id' => $transaction->json('id'), 'base_amount' => (int) $treatment->normal_price - $deposit,
+            'paid_at' => '2033-06-05 15:00:00',
         ]);
+        $this->postJson('/operasional/pembayaran', $payment)->assertOk()->assertJsonPath('id', $transaction->json('id'));
+        $this->assertSame(1, DB::table('transaction_payments')->where('transaction_id', $transaction->json('id'))->count());
+        $this->assertDatabaseHas('reservation_deposits', [
+            'reservation_id' => $id, 'amount' => $deposit, 'received_by' => $this->cashier->id,
+            'reference_number' => 'QRIS-DP-001', 'paid_at' => '2033-06-04 14:27:43',
+        ]);
+    }
+
+    public function test_deposit_confirmation_rejects_unavailable_method_and_cancelled_reservation(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $cash = $this->paymentMethod('CASH');
+        $id = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['deposit' => ['amount' => 10000]])->assertCreated()->json('id');
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => false]);
+        $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $cash->id])->assertUnprocessable();
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => true]);
+        DB::table('reservations')->where('id', $id)->update(['status' => 'cancelled']);
+        $this->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $cash->id])->assertUnprocessable();
+        $this->assertDatabaseMissing('reservation_deposits', ['reservation_id' => $id]);
+    }
+
+    public function test_deposit_and_settlement_receipts_keep_separate_dates_and_amounts(): void
+    {
+        Carbon::setTestNow('2033-06-03 10:00:00');
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $bank = $this->paymentMethod('BANK-001');
+        $cash = $this->paymentMethod('CASH');
+        $total = (int) $treatment->normal_price;
+        $id = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['name' => 'Pelanggan Nota DP', 'phone' => '081299900201', 'deposit' => ['amount' => 40000]])->assertCreated()->json('id');
+        $this->getJson('/operasional/dp')->assertOk()->assertJsonPath('meta.total', 0);
+        $this->get('/operasional/dp/999999/nota.pdf')->assertNotFound();
+
+        Carbon::setTestNow('2033-06-04 14:27:43');
+        $depositId = $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", [
+            'payment_method_id' => $bank->id, 'reference_number' => 'TRANSFER-DP',
+        ])->assertCreated()->json('id');
+        $original = DB::table('reservation_deposits')->find($depositId);
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()
+            ->assertJsonPath('isDeposit', true)->assertJsonPath('depositReceiptId', $depositId)
+            ->assertJsonPath('number', sprintf('DP20330604%03d', $depositId))
+            ->assertJsonPath('total', $total)->assertJsonPath('depositAmount', 40000)
+            ->assertJsonPath('remainingAmount', $total - 40000)->assertJsonPath('date', '2033-06-04 14:27:43')
+            ->assertJsonPath('therapists.0', $therapist->name)
+            ->assertJsonPath('payments.0.isCash', false)->assertJsonPath('payments.0.reference', 'TRANSFER-DP');
+        $receipt = app(DepositReceiptService::class)->viewData($depositId);
+        $this->assertSame($total, $receipt['invoice']->total);
+        $this->assertSame(40000, $receipt['depositAmount']);
+        $this->assertSame($total - 40000, $receipt['remainingAmount']);
+        $this->assertSame('2033-06-04 14:27:43', $receipt['invoice']->transacted_at);
+        $documents = [];
+        \Illuminate\Support\Facades\View::composer('pdf.invoice', function ($view) use (&$documents): void {
+            $documents[] = $view->getData();
+        });
+        $this->get("/operasional/dp/{$depositId}/nota.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+
+        // Harga akhir dapat berubah; nota DP harus tetap memakai rincian saat uang diterima.
+        DB::table('reservation_items')->where('reservation_id', $id)->update(['unit_price' => $total + 20000]);
+        DB::table('employees')->where('id', $therapist->id)->update(['name' => 'Nama terapis setelah DP']);
+        Carbon::setTestNow('2033-06-06 16:15:00');
+        $finalTotal = $total + 20000;
+        $charge = (int) round($finalTotal * 0.035);
+        $transactionId = $this->postJson('/operasional/pembayaran', [
+            'reservation_id' => $id, 'payments' => [[
+                'payment_method_id' => $bank->id, 'amount' => $finalTotal - 40000,
+                'charge_enabled' => true, 'charge_percent' => 3.5,
+            ]],
+        ])->assertCreated()->json('id');
+        $this->get("/operasional/penjualan/{$transactionId}/nota.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+        $this->get("/operasional/dp/{$depositId}/nota.pdf")->assertOk();
+        $this->assertTrue($documents[0]['depositReceipt']);
+        $this->assertSame($total, $documents[2]['invoice']->total);
+        $this->assertSame([$therapist->name], $documents[2]['therapists']->all());
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()->assertJsonPath('total', $total)
+            ->assertJsonPath('items.0.unitPrice', $total)->assertJsonPath('depositAmount', 40000);
+        $this->assertEquals($documents[0]['displayItems'], $documents[2]['displayItems']);
+        $this->assertSame($documents[0]['invoice']->number, $documents[2]['invoice']->number);
+        $this->assertSame(sprintf('DP20330604%03d', $depositId), $documents[2]['invoice']->number);
+        $this->assertSame(40000, $documents[1]['depositAmount']);
+        $this->assertSame($finalTotal + $charge - 40000, $documents[1]['settlementAmount']);
+        $this->assertSame('2033-06-06 16:15:00', $documents[1]['invoice']->transacted_at);
+        $this->assertSame('2033-06-04 14:27:43', $documents[1]['deposits']->first()->paid_at);
+        $this->assertSame(40000 + $documents[1]['settlementAmount'], (int) $documents[1]['invoice']->total);
+        $this->assertEquals($original, DB::table('reservation_deposits')->find($depositId));
+        $this->assertSame(1, DB::table('transaction_payments')->where('transaction_id', $transactionId)->count());
+        $history = $this->getJson('/operasional/dp?from=2033-06-04&to=2033-06-04')->assertOk()
+            ->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.paid_at', '2033-06-04 14:27:43')
+            ->assertJsonPath('data.0.number', sprintf('DP20330604%03d', $depositId));
+        $this->getJson('/operasional/dp?from=2033-06-05')->assertOk()->assertJsonPath('meta.total', 0);
+        $this->getJson('/operasional/dp?to=2033-06-04')->assertOk()->assertJsonPath('meta.total', 1);
+        $this->getJson('/operasional/dp?search='.$history->json('data.0.number'))->assertOk()->assertJsonPath('data.0.id', $depositId);
+        $this->getJson('/operasional/dp?search=Pelanggan%20Nota%20DP')->assertOk()->assertJsonPath('meta.total', 1);
+        $this->getJson('/operasional/dp?payment_method='.urlencode($cash->name))->assertOk()->assertJsonPath('meta.total', 0);
+        $this->getJson('/operasional/penjualan')->assertOk()->assertJsonPath('data.0.deposit_amount', 40000)->assertJsonPath('data.0.deposit.id', $depositId);
+        $this->actingAs($this->marketing)->getJson('/operasional/dp')->assertForbidden();
+        $this->getJson("/operasional/dp/{$depositId}")->assertForbidden();
+        $this->get("/operasional/dp/{$depositId}/nota.pdf")->assertForbidden();
+    }
+
+    public function test_legacy_deposit_receipt_is_available_without_rewriting_payment_history(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $cash = $this->paymentMethod('CASH');
+        $reservationId = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ])->assertCreated()->json('id');
+        $depositId = DB::table('reservation_deposits')->insertGetId([
+            'reservation_id' => $reservationId, 'payment_method_id' => $cash->id, 'amount' => 10000,
+            'status' => 'confirmed', 'paid_at' => '2033-05-01 09:30:00', 'received_by' => $this->cashier->id,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $before = DB::table('reservation_deposits')->find($depositId);
+        DB::table('reservations')->where('id', $reservationId)->update(['status' => 'cancelled']);
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => false, 'archived_at' => now()]);
+        $this->get("/operasional/dp/{$depositId}/nota.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+        $data = app(DepositReceiptService::class)->viewData($depositId);
+        $this->assertTrue($data['legacyDeposit']);
+        $this->assertSame([$therapist->name], $data['therapists']->all());
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()->assertJsonPath('legacyDeposit', true)
+            ->assertJsonPath('payments.0.isCash', true)->assertJsonPath('date', '2033-05-01 09:30:00');
+        $this->getJson('/operasional/dp/999999')->assertNotFound();
+        $this->assertSame('2033-05-01 09:30:00', $data['invoice']->transacted_at);
+        $this->getJson('/operasional/dp?from=2033-05-01&to=2033-05-01')->assertOk()->assertJsonPath('data.0.id', $depositId);
+        $this->getJson('/operasional/dp?from=2033-05-02&to=2033-05-01')->assertUnprocessable();
+        $this->assertEquals($before, DB::table('reservation_deposits')->find($depositId));
+    }
+
+    public function test_existing_deposit_without_therapist_snapshot_uses_reservation_assignments(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $cash = $this->paymentMethod('CASH');
+        $id = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ], ['deposit' => ['amount' => 10000]])->assertCreated()->json('id');
+        $depositId = $this->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $cash->id])
+            ->assertCreated()->json('id');
+        $snapshot = json_decode(DB::table('reservation_deposits')->where('id', $depositId)->value('receipt_snapshot'), true);
+        unset($snapshot['therapists']);
+        DB::table('reservation_deposits')->where('id', $depositId)->update(['receipt_snapshot' => json_encode($snapshot)]);
+        $before = DB::table('reservation_deposits')->find($depositId);
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()->assertJsonPath('therapists.0', $therapist->name);
+        $data = app(DepositReceiptService::class)->viewData($depositId);
+        $this->assertSame([$therapist->name], $data['therapists']->all());
+        $this->get("/operasional/dp/{$depositId}/nota.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+        $this->assertEquals($before, DB::table('reservation_deposits')->find($depositId));
+    }
+
+    public function test_existing_confirmed_deposit_keeps_its_original_payment_time(): void
+    {
+        $treatment = $this->treatment('TRT-NAIL-GEL-HAND');
+        $therapist = $this->employee('EMP-SARI');
+        $cash = $this->paymentMethod('CASH');
+        $id = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '13:00', [['employee_id' => $therapist->id, 'role' => 'primary']]),
+        ])->assertCreated()->json('id');
+        DB::table('reservation_deposits')->insert([
+            'reservation_id' => $id, 'payment_method_id' => $cash->id, 'amount' => 10000,
+            'status' => 'confirmed', 'paid_at' => '2033-06-01 09:15:00', 'received_by' => $this->cashier->id,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $cash->id])->assertOk()
+            ->assertJsonPath('idempotent_replay', true)->assertJsonPath('paid_at', '2033-06-01 09:15:00');
+        $this->postJson('/operasional/pembayaran', [
+            'reservation_id' => $id, 'payments' => [['payment_method_id' => $cash->id, 'amount' => (int) $treatment->normal_price - 10000]],
+        ])->assertCreated()->assertJsonPath('deposit_amount', 10000);
+        $this->assertSame(1, DB::table('reservation_deposits')->where('reservation_id', $id)->count());
     }
 
     public function test_final_charge_uses_total_bill_before_deposit_and_cashier_can_choose_its_rate(): void
@@ -224,6 +392,10 @@ class SalonOperationsTest extends TestCase
             ],
         ])->assertCreated();
 
+        $this->actingAs($this->cashier)->postJson('/operasional/reservasi/'.$reservation->json('id').'/dp', [
+            'payment_method_id' => $depositMethod->id,
+        ])->assertCreated();
+
         $this->actingAs($this->cashier)
             ->postJson('/operasional/pembayaran', [
                 'reservation_id' => (int) $reservation->json('id'),
@@ -240,6 +412,12 @@ class SalonOperationsTest extends TestCase
             ->assertJsonPath('deposit_amount', $deposit)
             ->assertJsonPath('payment_charge_amount', $charge)
             ->assertJsonPath('total', $baseTotal + $charge);
+
+        $summary = collect($this->getJson('/operasional/data')->assertOk()->json('reservations'))
+            ->firstWhere('id', (int) $reservation->json('id'));
+        $this->assertSame($baseTotal + $charge, $summary['transaction_total']);
+        $this->assertSame($deposit, $summary['deposit_amount']);
+        $this->assertTrue($summary['is_paid']);
 
         $this->assertDatabaseHas('transaction_payments', [
             'payment_method_id' => $bank->id,
@@ -814,6 +992,9 @@ class SalonOperationsTest extends TestCase
         ])->assertCreated();
 
         $this->assertSame($discount, $response->json('discount_amount'));
+        $summary = collect($this->getJson('/operasional/data')->assertOk()->json('reservations'))
+            ->firstWhere('id', $reservationId);
+        $this->assertSame($total - $discount, $summary['transaction_total']);
         $this->assertDatabaseHas('transactions', [
             'reservation_id' => $reservationId,
             'discount_amount' => $discount,
@@ -1298,7 +1479,8 @@ class SalonOperationsTest extends TestCase
             ->assertJsonPath('total_amount', (int) $product->selling_price);
 
         $returnId = (int) $response->json('id');
-        $this->assertStringStartsWith('RTN-20260814-', $response->json('number'));
+        $this->assertStringStartsWith('RTN20260814', $response->json('number'));
+        $response->assertJsonPath('transaction_number', DB::table('transactions')->where('id', $transactionId)->value('number'));
         $this->assertDatabaseHas('sales_returns', [
             'id' => $returnId,
             'transaction_id' => $transactionId,
@@ -1471,6 +1653,90 @@ class SalonOperationsTest extends TestCase
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('treatment_items');
+    }
+
+    public function test_mixed_return_has_a4_note_and_receipt_with_original_refund_records(): void
+    {
+        Carbon::setTestNow('2033-06-03 10:00:00');
+        [$transactionId, $product] = $this->paidProductTransaction('081299900301');
+        $cash = $this->paymentMethod('CASH');
+        $soldItems = DB::table('transaction_items')->where('transaction_id', $transactionId)->get();
+        $productItem = $soldItems->firstWhere('item_type', 'product');
+        $treatmentItem = $soldItems->firstWhere('item_type', 'treatment');
+        Carbon::setTestNow('2033-06-04 14:35:00');
+        $payload = [
+            'items' => [['transaction_item_id' => $productItem->id, 'quantity' => '1.0000', 'restock' => false]],
+            'treatment_items' => [['transaction_item_id' => $treatmentItem->id, 'refund_amount' => 10000]],
+            'payment_method_id' => $cash->id, 'reference_number' => 'REF-MIXED-RETUR',
+            'reason' => 'Produk rusak dan pengembalian sebagian biaya treatment.',
+            'idempotency_key' => 'return-receipt-mixed',
+        ];
+        $returnId = $this->actingAs($this->admin)->postJson("/operasional/penjualan/{$transactionId}/retur", $payload)
+            ->assertCreated()->assertJsonPath('total_amount', (int) $product->selling_price + 10000)->json('id');
+        $before = DB::table('sales_returns')->find($returnId);
+        $stock = DB::table('products')->where('id', $product->id)->value('current_stock');
+        $movements = DB::table('stock_movements')->count();
+        $documents = [];
+        \Illuminate\Support\Facades\View::composer('pdf.sales-return-note', function ($view) use (&$documents): void {
+            $documents[] = $view->getData();
+        });
+        $noteResponse = $this->get("/operasional/retur/{$returnId}/nota.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+        config(['printing.receipt_width_mm' => 58]);
+        $thermalResponse = $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertOk()->assertHeader('content-type', 'application/pdf');
+        $paperSize = function (TestResponse $response): array {
+            $this->assertSame(1, preg_match('~/MediaBox\s*\[0\.000 0\.000 ([\d.]+) ([\d.]+)\]~', $response->getContent(), $match));
+
+            return [(float) $match[1] * 25.4 / 72, (float) $match[2] * 25.4 / 72];
+        };
+        $this->assertEqualsWithDelta(210, $paperSize($noteResponse)[0], 0.01);
+        $this->assertEqualsWithDelta(58, $paperSize($thermalResponse)[0], 0.01);
+        $this->assertLessThan(200, $paperSize($thermalResponse)[1]);
+        config(['printing.receipt_width_mm' => 80]);
+        $wideThermal = $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertOk();
+        $this->assertEqualsWithDelta(80, $paperSize($wideThermal)[0], 0.01);
+        config(['printing.receipt_width_mm' => 58]);
+        $this->assertSame('2033-06-04 14:35:00', $documents[0]['return']->returned_at);
+        $this->assertSame('2033-06-03 10:00:00', $documents[0]['return']->transacted_at);
+        $this->assertSame($productItem->name, $documents[0]['items'][0]->name);
+        $this->assertSame($treatmentItem->name, $documents[0]['items'][1]->name);
+        $this->assertSame(0, (int) $documents[0]['items'][0]->restocked);
+        $this->assertSame(10000, (int) $documents[0]['items'][1]->amount);
+
+        Carbon::setTestNow('2033-06-07 09:00:00');
+        DB::table('products')->where('id', $product->id)->update(['name' => 'Nama produk setelah retur', 'selling_price' => 999000]);
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => false, 'archived_at' => now()]);
+        $this->get("/operasional/retur/{$returnId}/nota.pdf")->assertOk();
+        $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertOk();
+        $this->assertEquals($documents[0]['items'], $documents[1]['items']);
+        $this->assertEquals($documents[0]['return'], $documents[1]['return']);
+        $this->assertEquals($before, DB::table('sales_returns')->find($returnId));
+        $this->assertSame($stock, DB::table('products')->where('id', $product->id)->value('current_stock'));
+        $this->assertSame($movements, DB::table('stock_movements')->count());
+        $this->postJson("/operasional/penjualan/{$transactionId}/retur", $payload)->assertOk()
+            ->assertJsonPath('id', $returnId)->assertJsonPath('idempotent_replay', true);
+        $this->assertSame(1, DB::table('sales_returns')->count());
+        $this->getJson('/operasional/retur?search='.$before->number)->assertOk()->assertJsonPath('data.0.id', $returnId);
+        $this->getJson('/operasional/retur?search='.$before->number)->assertOk()
+            ->assertJsonPath('data.0.transaction_id', $transactionId)
+            ->assertJsonPath('data.0.transaction_number', DB::table('transactions')->where('id', $transactionId)->value('number'));
+        // Cetak dan cari nomor retur lama tanpa mengubah catatan historisnya.
+        DB::table('sales_returns')->where('id', $returnId)->update(['number' => 'RTN-20330604-001']);
+        $this->getJson('/operasional/retur?search=RTN20330604001')->assertOk()
+            ->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.number', 'RTN20330604001');
+        $this->getJson('/operasional/retur?search=RTN-20330604-001')->assertOk()->assertJsonPath('data.0.id', $returnId);
+        $this->get("/operasional/retur/{$returnId}/nota.pdf")->assertOk();
+        $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertOk();
+        $this->postJson("/operasional/penjualan/{$transactionId}/retur", $payload)->assertOk()
+            ->assertJsonPath('number', 'RTN20330604001')
+            ->assertJsonPath('transaction_number', DB::table('transactions')->where('id', $transactionId)->value('number'));
+        $this->assertDatabaseHas('sales_returns', ['id' => $returnId, 'number' => 'RTN-20330604-001']);
+        $this->get('/operasional/retur/999999/nota.pdf')->assertNotFound();
+        $this->get('/operasional/retur/999999/struk.pdf')->assertNotFound();
+        $this->actingAs($this->marketing)->get("/operasional/retur/{$returnId}/nota.pdf")->assertForbidden();
+        $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertForbidden();
+        DB::table('sales_returns')->where('id', $returnId)->update(['status' => 'draft']);
+        $this->actingAs($this->admin)->get("/operasional/retur/{$returnId}/nota.pdf")->assertNotFound();
+        $this->get("/operasional/retur/{$returnId}/struk.pdf")->assertNotFound();
     }
 
     public function test_product_return_rejects_unauthorized_and_excess_quantities_atomically(): void
@@ -2413,6 +2679,29 @@ class SalonOperationsTest extends TestCase
         ]);
     }
 
+    public function test_treatment_duration_can_be_edited_without_changing_existing_reservations(): void
+    {
+        Carbon::setTestNow('2036-06-03 09:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $items = [$this->item($treatment->id, '13:00', [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary']])];
+        $oldId = $this->createReservation($this->admin, $items)->assertCreated()->json('id');
+        $oldItem = DB::table('reservation_items')->where('reservation_id', $oldId)->first();
+        $url = "/operasional/treatment/{$treatment->id}/durasi";
+        $this->actingAs(User::factory()->create())->patchJson($url, ['duration_minutes' => 90])->assertForbidden();
+        foreach ([0, -1, 1.5, 1441, null] as $invalid) {
+            $this->actingAs($this->admin)->patchJson($url, ['duration_minutes' => $invalid])->assertUnprocessable()->assertJsonValidationErrors('duration_minutes');
+        }
+        $this->patchJson($url, ['duration_minutes' => 90])->assertOk()->assertJsonPath('message', 'Durasi treatment berhasil diperbarui.');
+        $this->assertDatabaseHas('treatments', ['id' => $treatment->id, 'duration_minutes' => 90, 'normal_price' => $treatment->normal_price,
+            'default_commission_percent' => $treatment->default_commission_percent]);
+        $this->assertEquals($oldItem, DB::table('reservation_items')->find($oldItem->id));
+        $this->assertDatabaseHas('activity_logs', ['action' => 'treatment.duration_updated', 'subject_type' => 'treatment', 'subject_id' => $treatment->id]);
+        $newId = $this->createReservation($this->admin, $items, ['phone' => '081298989898'])->assertCreated()->json('id');
+        $newItem = DB::table('reservation_items')->where('reservation_id', $newId)->first();
+        $this->assertSame(90, (int) $newItem->duration_minutes);
+        $this->assertEquals(105, Carbon::parse($newItem->scheduled_start_at)->diffInMinutes(Carbon::parse($newItem->scheduled_end_at)));
+    }
+
     public function test_admin_can_archive_an_unused_treatment_without_removing_its_history(): void
     {
         $treatment = $this->treatment('TRT-FACIAL-BARRIER');
@@ -2892,7 +3181,7 @@ class SalonOperationsTest extends TestCase
         $this->actingAs($this->admin)->get('/pengaturan/penjualan')
             ->assertOk()
             ->assertSee('Prefix invoice')
-            ->assertSee('INV20260814001')
+            ->assertSee('INV'.now()->format('Ymd').'001')
             ->assertDontSee('INV-20260814-001');
         $this->actingAs($this->admin)->get('/pengaturan/bank')
             ->assertOk()
@@ -3268,6 +3557,45 @@ class SalonOperationsTest extends TestCase
 
         $this->assertTrue($dita['available']);
         $this->assertSame([], $dita['conflicts']);
+        $this->assertSame('scheduled', $dita['schedule_status']);
+    }
+
+    public function test_therapist_picker_reports_service_rest_and_off_status_without_blocking_selection(): void
+    {
+        Carbon::setTestNow('2038-04-05 09:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $dita = $this->employee('EMP-DITA');
+        $reservation = $this->createReservation($this->admin, [
+            $this->item($treatment->id, '10:00', [['employee_id' => $dita->id, 'role' => 'primary']]),
+        ], ['date' => '2038-04-05', 'phone' => '081290000388'])->assertCreated();
+        $item = DB::table('reservation_items')->where('reservation_id', $reservation->json('id'))->first();
+        $url = '/operasional/reservasi/terapis-tersedia?date=2038-04-05&start_time=';
+        $statusAt = fn (string $time) => collect($this->actingAs($this->cashier)->getJson($url.urlencode($time))
+            ->assertOk()->json('employees'))->firstWhere('id', $dita->id);
+
+        Carbon::setTestNow('2038-04-05 10:15:00');
+        $serving = $statusAt('10:15');
+        $this->assertSame('in_service', $serving['schedule_status']);
+        $this->assertTrue($serving['available']);
+        $this->assertSame($item->scheduled_ready_at, $serving['ready_at']);
+
+        DB::table('reservation_items')->where('id', $item->id)->update(['work_status' => 'finished']);
+        DB::table('reservations')->where('id', $reservation->json('id'))->update(['status' => 'completed']);
+        $restAt = Carbon::parse($item->scheduled_end_at)->addMinutes(10);
+        Carbon::setTestNow($restAt);
+        $resting = $statusAt($restAt->format('H:i'));
+        $this->assertSame('resting', $resting['schedule_status']);
+        $this->assertSame($item->scheduled_ready_at, $resting['ready_at']);
+        $ready = $statusAt(Carbon::parse($item->scheduled_ready_at)->format('H:i'));
+        $this->assertSame('available', $ready['schedule_status']);
+        $this->assertNull($ready['ready_at']);
+
+        DB::table('reservations')->where('id', $reservation->json('id'))->update(['status' => 'cancelled']);
+        $this->assertSame('available', $statusAt('10:15')['schedule_status']);
+        DB::table('employee_attendances')->insert(['employee_id' => $dita->id, 'attendance_date' => '2038-04-05', 'status' => 'off']);
+        $off = $statusAt('10:15');
+        $this->assertSame('off', $off['schedule_status']);
+        $this->assertFalse($off['available']);
     }
 
     public function test_member_page_exposes_paid_treatment_history_with_reservation_date_and_therapist(): void
@@ -3317,6 +3645,262 @@ class SalonOperationsTest extends TestCase
             'therapist_name' => $dita->name,
         ]], $result['treatment_history']);
         $this->assertArrayNotHasKey('last_treatment_at', $result);
+
+        $url = route('members.history', $memberId);
+        $this->get($url)->assertOk()->assertViewIs('members.history')
+            ->assertSee($result['name'])->assertSee($treatment->name)->assertSee($dita->name)
+            ->assertViewHas('history', fn ($history) => $history->total() === 1);
+        $this->get($url.'?search='.urlencode($dita->name))->assertOk()
+            ->assertViewHas('history', fn ($history) => $history->total() === 1);
+        $this->get($url.'?search=TidakDitemukan')->assertOk()->assertSee('Tidak ada riwayat yang cocok.');
+
+        $assignment = (array) DB::table('reservation_item_staff')->where('employee_id', $dita->id)
+            ->whereIn('reservation_item_id', DB::table('reservation_items')->where('reservation_id', $reservationId)->select('id'))->first();
+        unset($assignment['id']);
+        $assignment['employee_id'] = $this->employee('EMP-SARI')->id;
+        $assignment['role'] = 'assistant';
+        DB::table('reservation_item_staff')->insert($assignment);
+        $this->get($url.'?search=Sari')->assertOk()->assertSee($dita->name)->assertSee('Sari')
+            ->assertViewHas('history', fn ($history) => $history->total() === 1);
+
+        $transactionId = DB::table('transactions')->where('reservation_id', $reservationId)->value('id');
+        $line = (array) DB::table('transaction_items')->where('transaction_id', $transactionId)->first();
+        unset($line['id']);
+        DB::table('transaction_items')->insert(array_fill(0, 20, $line));
+        $this->get($url.'?search='.urlencode($dita->name).'&page=2')->assertOk()
+            ->assertViewHas('history', fn ($history) => $history->total() === 21 && $history->count() === 1 && $history->currentPage() === 2)
+            ->assertSee('search='.urlencode($dita->name), false);
+        $this->get(route('members.history', 999999))->assertNotFound();
+        $outsider = User::factory()->create();
+        $this->actingAs($outsider)->get($url)->assertForbidden();
+    }
+
+    public function test_charge_rates_up_to_twenty_percent_work_with_deposit_and_invalid_rates_are_rejected(): void
+    {
+        $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
+        $employee = $this->employee('EMP-DITA');
+        foreach ([0.5, 3.5, 12, 20] as $index => $percent) {
+            $total = (int) $treatment->normal_price;
+            $deposit = intdiv($total, 2);
+            $charge = (int) round($total * $percent / 100);
+            $reservation = $this->createReservation($this->admin, [$this->item($treatment->id, '10:00', [['employee_id' => $employee->id, 'role' => 'primary']])],
+                ['phone' => '0812911100'.$index, 'deposit' => ['amount' => $deposit]])->assertCreated();
+            $id = $reservation->json('id');
+            $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $this->paymentMethod('CASH')->id])->assertCreated();
+            $payload = ['reservation_id' => $id, 'payments' => [['payment_method_id' => $this->paymentMethod('BANK-001')->id, 'amount' => $total - $deposit,
+                'charge_enabled' => true, 'charge_percent' => $percent, 'tendered_amount' => $total - $deposit + $charge]]];
+            if ($index === 0) {
+                foreach ([-1, 20.5, 100] as $invalid) {
+                    $bad = $payload;
+                    $bad['payments'][0]['charge_percent'] = $invalid;
+                    $this->postJson('/operasional/pembayaran', $bad)->assertUnprocessable()->assertJsonValidationErrors('payments.0.charge_percent');
+                }
+                $this->assertDatabaseMissing('transactions', ['reservation_id' => $id]);
+            }
+            $this->postJson('/operasional/pembayaran', $payload)->assertCreated()->assertJsonPath('deposit_amount', $deposit)
+                ->assertJsonPath('payment_charge_amount', $charge)->assertJsonPath('total', $total + $charge);
+            $this->assertSame($deposit, (int) DB::table('reservation_deposits')->where('reservation_id', $id)->value('amount'));
+        }
+    }
+
+    public function test_document_prefixes_apply_to_new_records_and_preserve_previous_numbers(): void
+    {
+        $settings = ['invoice_prefix' => 'INV', 'deposit_prefix' => 'ADV', 'return_prefix' => 'RET', 'cancellation_prefix' => 'CAN'];
+        $this->actingAs($this->admin)->patch('/pengaturan/penjualan', $settings)->assertSessionHas('success');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $employee = $this->employee('EMP-DITA');
+        $reservation = $this->createReservation($this->admin, [$this->item($treatment->id, '10:00', [['employee_id' => $employee->id, 'role' => 'primary']])],
+            ['phone' => '08129112001', 'deposit' => ['amount' => 40000]])->assertCreated();
+        $id = $reservation->json('id');
+        $depositId = $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $this->paymentMethod('CASH')->id])->assertCreated()->json('id');
+        $number = sprintf('ADV%s%03d', today()->format('Ymd'), $depositId);
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()->assertJsonPath('number', $number);
+        [$transactionId, $product] = $this->paidProductTransaction('08129112002');
+        $itemId = DB::table('transaction_items')->where('transaction_id', $transactionId)->where('item_type', 'product')->value('id');
+        $retur = $this->actingAs($this->admin)->postJson("/operasional/penjualan/{$transactionId}/retur", [
+            'items' => [['transaction_item_id' => $itemId, 'quantity' => '1', 'restock' => true]],
+            'payment_method_id' => $this->paymentMethod('CASH')->id, 'reason' => 'Pengujian nomor retur baru.',
+        ])->assertCreated();
+        $this->assertStringStartsWith('RET'.today()->format('Ymd'), $retur->json('number'));
+        $this->patch('/pengaturan/penjualan', [...$settings, 'deposit_prefix' => 'BARU', 'return_prefix' => 'LAIN'])->assertSessionHas('success');
+        $this->getJson("/operasional/dp/{$depositId}")->assertOk()->assertJsonPath('number', $number);
+        $this->getJson('/operasional/dp?search='.$number)->assertOk()->assertJsonPath('data.0.number', $number);
+        $this->getJson('/operasional/retur?search='.$retur->json('number'))->assertOk()->assertJsonPath('data.0.number', $retur->json('number'));
+        $this->patch('/pengaturan/penjualan', [...$settings, 'return_prefix' => 'RET-'])->assertSessionHasErrors('return_prefix');
+    }
+
+    public function test_cancellation_history_has_full_and_partial_records_with_stable_numbers_and_permissions(): void
+    {
+        DB::table('sale_settings')->updateOrInsert(['key' => 'cancellation_prefix'], ['value' => 'CAN']);
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $employee = $this->employee('EMP-DITA');
+        $items = [$this->item($treatment->id, '10:00', [['employee_id' => $employee->id, 'role' => 'primary']]),
+            $this->item($treatment->id, '12:00', [['employee_id' => $employee->id, 'role' => 'primary']])];
+        $full = $this->createReservation($this->admin, $items, ['name' => 'Batal Penuh QA', 'phone' => '08129113001'])->assertCreated()->json('id');
+        $partial = $this->createReservation($this->admin, $items, ['name' => 'Batal Sebagian QA', 'phone' => '08129113002'])->assertCreated()->json('id');
+        $this->patchJson("/operasional/reservasi/{$full}", ['status' => 'cancelled', 'reason' => 'Pelanggan membatalkan kunjungan.'])->assertOk();
+        $number = DB::table('reservations')->where('id', $full)->value('cancellation_number');
+        $this->assertStringStartsWith('CAN'.today()->format('Ymd'), $number);
+        $itemId = DB::table('reservation_items')->where('reservation_id', $partial)->orderByDesc('id')->value('id');
+        $this->patchJson("/operasional/reservasi/{$partial}/item/{$itemId}/status", ['status' => 'cancelled', 'reason' => 'Hanya treatment ini dibatalkan.'])->assertOk();
+        $itemNumber = DB::table('reservation_items')->where('id', $itemId)->value('cancellation_number');
+        $this->assertNotSame($number, $itemNumber);
+        $this->get('/reservasi/dibatalkan')->assertOk()->assertViewIs('reservations.cancelled')->assertSee('Batal Penuh QA')->assertSee('Batal Sebagian QA')
+            ->assertSee('Pelanggan membatalkan kunjungan.')->assertSee('Hanya treatment ini dibatalkan.')->assertSee($this->admin->name);
+        $this->get('/reservasi/dibatalkan?type=full')->assertOk()->assertSee('Batal Penuh QA')->assertDontSee('Batal Sebagian QA');
+        $this->get('/reservasi/dibatalkan?type=partial')->assertOk()->assertSee('Batal Sebagian QA')->assertDontSee('Batal Penuh QA');
+        $this->get('/reservasi/dibatalkan?search='.$itemNumber)->assertOk()->assertSee('Batal Sebagian QA')->assertDontSee('Batal Penuh QA');
+        $this->get('/reservasi/dibatalkan?from='.today()->addDay()->toDateString())->assertOk()->assertDontSee('Batal Penuh QA');
+        DB::table('sale_settings')->where('key', 'cancellation_prefix')->update(['value' => 'LAIN']);
+        $this->patchJson("/operasional/reservasi/{$full}", ['status' => 'cancelled', 'reason' => 'Percobaan ulang'])->assertOk()->assertJsonPath('idempotent_replay', true);
+        $this->assertSame($number, DB::table('reservations')->where('id', $full)->value('cancellation_number'));
+        $this->assertSame(2, (int) DB::table('cancellation_sequences')->where('sequence_date', today()->toDateString())->value('last_number'));
+        $lastItemId = DB::table('reservation_items')->where('reservation_id', $partial)->where('work_status', '!=', 'cancelled')->value('id');
+        $this->patchJson("/operasional/reservasi/{$partial}/item/{$lastItemId}/status", ['status' => 'cancelled', 'reason' => 'Sisa kunjungan dibatalkan.'])->assertOk();
+        $lastNumber = DB::table('reservation_items')->where('id', $lastItemId)->value('cancellation_number');
+        $this->assertStringStartsWith('LAIN', $lastNumber);
+        $this->assertSame($lastNumber, DB::table('reservations')->where('id', $partial)->value('cancellation_number'));
+        $this->assertSame(3, (int) DB::table('cancellation_sequences')->where('sequence_date', today()->toDateString())->value('last_number'));
+        $this->actingAs(User::factory()->create())->get('/reservasi/dibatalkan')->assertForbidden();
+    }
+
+    public function test_cancelled_deposit_is_refunded_once_by_cashier_without_erasing_the_receipt(): void
+    {
+        Carbon::setTestNow('2036-06-03 10:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $staff = [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary']];
+        $id = $this->createReservation($this->admin, [$this->item($treatment->id, '13:00', $staff)],
+            ['deposit' => ['amount' => 47500]])->assertCreated()->json('id');
+        $this->actingAs($this->cashier)->postJson("/operasional/reservasi/{$id}/dp", [
+            'payment_method_id' => $this->paymentMethod('BANK-001')->id, 'reference_number' => 'DP-REFUND-QA',
+        ])->assertCreated();
+        $deposit = DB::table('reservation_deposits')->where('reservation_id', $id)->first();
+        $url = "/reservasi/{$id}/pengembalian-dp";
+        $payload = ['payment_method_id' => $this->paymentMethod('CASH')->id, 'amount' => 1, 'refunded_at' => '2000-01-01'];
+        $this->postJson($url, $payload)->assertUnprocessable();
+        $this->actingAs($this->admin)->patchJson("/operasional/reservasi/{$id}", ['status' => 'cancelled', 'reason' => 'Pelanggan batal'])->assertOk();
+        $this->assertDatabaseCount('reservation_deposit_refunds', 0);
+        $this->get('/reservasi/dibatalkan')->assertOk()->assertSee('Menunggu pengembalian')->assertSee('Kembalikan DP');
+        $this->actingAs($this->marketing)->postJson($url, $payload)->assertForbidden();
+
+        Carbon::setTestNow('2036-06-04 11:17:00');
+        $this->actingAs($this->cashier)->postJson($url, $payload)->assertCreated()->assertJsonPath('amount', 47500);
+        $this->postJson($url, $payload)->assertOk()->assertJsonPath('idempotent_replay', true);
+        $this->assertDatabaseCount('reservation_deposit_refunds', 1);
+        $this->assertDatabaseHas('reservation_deposit_refunds', ['reservation_id' => $id, 'amount' => 47500,
+            'refunded_by' => $this->cashier->id, 'refunded_at' => '2036-06-04 11:17:00']);
+        $this->assertEquals($deposit, DB::table('reservation_deposits')->find($deposit->id));
+        $this->getJson("/operasional/dp/{$deposit->id}")->assertOk()->assertJsonPath('depositAmount', 47500);
+        $this->get('/reservasi/dibatalkan')->assertOk()->assertSee('Sudah dikembalikan')->assertDontSee('Kembalikan DP');
+        $report = $this->actingAs($this->admin)->getJson('/operasional/keuangan/laporan?from=2036-06-03&to=2036-06-04')->assertOk();
+        $flows = collect($report->json('cash_flow.payment_flows'));
+        $this->assertSame(47500, $flows->firstWhere('id', $this->paymentMethod('BANK-001')->id)['inflow']);
+        $this->assertSame(47500, $flows->firstWhere('id', $this->paymentMethod('CASH')->id)['outflow']);
+        $this->assertSame(0, $flows->sum('net'));
+        $before = $this->getJson('/operasional/keuangan/laporan?from=2036-06-03&to=2036-06-03')->assertOk();
+        $this->assertSame(0, collect($before->json('cash_flow.payment_flows'))->sum('outflow'));
+        $this->assertDatabaseMissing('transactions', ['reservation_id' => $id]);
+    }
+
+    public function test_deposit_refund_rejects_unpaid_plans_inactive_methods_and_missing_references(): void
+    {
+        Carbon::setTestNow('2036-06-03 10:00:00');
+        $treatment = $this->treatment('TRT-FACIAL-BARRIER');
+        $item = $this->item($treatment->id, '13:00', [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary']]);
+        $id = $this->createReservation($this->admin, [$item], ['deposit' => ['amount' => 47500]])->assertCreated()->json('id');
+        $cash = $this->paymentMethod('CASH');
+        $this->patchJson("/operasional/reservasi/{$id}", ['status' => 'cancelled', 'reason' => 'Belum bayar DP'])->assertOk();
+        $this->postJson("/reservasi/{$id}/pengembalian-dp", ['payment_method_id' => $cash->id])->assertUnprocessable();
+        $id = $this->createReservation($this->admin, [$item], ['phone' => '081298888801', 'deposit' => ['amount' => 47500]])->assertCreated()->json('id');
+        $this->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $cash->id])->assertCreated();
+        $this->patchJson("/operasional/reservasi/{$id}", ['status' => 'cancelled', 'reason' => 'Batal'])->assertOk();
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => false]);
+        $this->postJson("/reservasi/{$id}/pengembalian-dp", ['payment_method_id' => $cash->id])->assertUnprocessable();
+        DB::table('payment_methods')->where('id', $cash->id)->update(['is_active' => true, 'requires_reference' => true]);
+        $this->postJson("/reservasi/{$id}/pengembalian-dp", ['payment_method_id' => $cash->id])->assertUnprocessable()->assertJsonValidationErrors('reference_number');
+        $this->assertDatabaseCount('reservation_deposit_refunds', 0);
+    }
+
+    public function test_treatment_can_be_replaced_after_dp_without_changing_dp_or_its_receipt(): void
+    {
+        Carbon::setTestNow('2036-06-03 10:00:00');
+        $facial = $this->treatment('TRT-FACIAL-BARRIER');
+        $replacement = $this->treatment('TRT-CREAMBATH-MKRZ');
+        $staff = [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary', 'commission_percent' => 30]];
+        $id = $this->createReservation($this->admin, [$this->item($facial->id, '13:00', $staff)],
+            ['deposit' => ['amount' => 47500]])->assertCreated()->json('id');
+        $this->postJson("/operasional/reservasi/{$id}/dp", ['payment_method_id' => $this->paymentMethod('CASH')->id])->assertCreated();
+        $reportUrl = '/operasional/penggajian/rekap?from=2036-06-01&to=2036-06-03';
+        $this->getJson($reportUrl)->assertOk()->assertJsonPath('summary.commission', 0);
+        foreach ([$staff[0]['employee_id'], $this->employee('EMP-MAYA')->id] as $employeeId) {
+            $this->postJson('/operasional/penggajian', ['employee_id' => $employeeId, 'period' => '2036-06',
+                'base_salary' => 3500000, 'bonus' => 0, 'overtime' => 0, 'late_duration_minutes' => 0,
+                'late_deduction' => 0, 'other_deduction' => 0])->assertCreated();
+            $this->assertDatabaseHas('payrolls', ['employee_id' => $employeeId, 'period' => '2036-06', 'commission' => 0]);
+        }
+        $deposit = DB::table('reservation_deposits')->where('reservation_id', $id)->first();
+        $old = DB::table('reservation_items')->where('reservation_id', $id)->first();
+        $url = "/operasional/reservasi/{$id}/item/{$old->id}/ganti";
+        $data = $this->item($replacement->id, '13:00', [
+            [...$staff[0], 'commission_percent' => 10],
+            ['employee_id' => $this->employee('EMP-MAYA')->id, 'role' => 'assistant', 'commission_percent' => 5],
+        ]);
+        $this->actingAs(User::factory()->create())->patchJson($url, $data)->assertForbidden();
+        $this->actingAs($this->admin)->patchJson($url, [...$data, 'staff' => [['employee_id' => 999999, 'role' => 'primary']]])->assertUnprocessable();
+        $this->assertDatabaseHas('reservation_items', ['id' => $old->id, 'work_status' => 'waiting']);
+        $newId = $this->patchJson($url, $data)->assertOk()->json('id');
+        $this->patchJson($url, $data)->assertUnprocessable();
+        $this->assertSame(2, DB::table('reservation_items')->where('reservation_id', $id)->count());
+        $this->assertDatabaseHas('reservation_items', ['id' => $old->id, 'work_status' => 'cancelled']);
+        $this->assertDatabaseHas('reservation_items', ['id' => $newId, 'work_status' => 'waiting', 'treatment_id' => $replacement->id]);
+        $this->assertDatabaseHas('reservation_item_staff', ['reservation_item_id' => $newId, 'employee_id' => $staff[0]['employee_id'], 'commission_percent' => '10.0000', 'commission_amount' => 12500]);
+        $this->assertDatabaseHas('reservation_item_staff', ['reservation_item_id' => $newId, 'employee_id' => $this->employee('EMP-MAYA')->id, 'role' => 'assistant', 'commission_percent' => '5.0000', 'commission_amount' => 6250]);
+        $this->assertEquals($deposit, DB::table('reservation_deposits')->find($deposit->id));
+        $this->getJson("/operasional/dp/{$deposit->id}")->assertOk()->assertJsonPath('items.0.name', $facial->name);
+        $this->getJson($reportUrl)->assertOk()->assertJsonPath('summary.commission', 0);
+        $this->postJson('/operasional/pembayaran', ['reservation_id' => $id, 'payments' => [[
+            'payment_method_id' => $this->paymentMethod('BANK-001')->id, 'amount' => (int) $replacement->normal_price - 47500,
+            'charge_enabled' => true, 'charge_percent' => 3.5, 'tendered_amount' => (int) $replacement->normal_price - 47500 + 4375,
+        ]]])->assertCreated()->assertJsonPath('deposit_amount', 47500)->assertJsonPath('payment_charge_amount', 4375)
+            ->assertJsonPath('total', (int) $replacement->normal_price + 4375);
+        $transaction = DB::table('transactions')->where('reservation_id', $id)->first();
+        $this->assertDatabaseMissing('transaction_items', ['transaction_id' => $transaction->id, 'reservation_item_id' => $old->id]);
+        $this->assertDatabaseHas('transaction_items', ['transaction_id' => $transaction->id, 'reservation_item_id' => $newId]);
+        $report = $this->getJson($reportUrl)->assertOk()->assertJsonPath('summary.commission', 18750)->json();
+        $employees = collect($report['employees'])->keyBy('employee_id');
+        $this->assertSame(12500, $employees[$staff[0]['employee_id']]['commission']);
+        $this->assertSame(6250, $employees[$this->employee('EMP-MAYA')->id]['commission']);
+        $this->assertEquals(1, $employees[$staff[0]['employee_id']]['treatment_count']);
+        $this->assertDatabaseHas('payrolls', ['employee_id' => $staff[0]['employee_id'], 'period' => '2036-06', 'commission' => 12500]);
+        $this->assertDatabaseHas('payrolls', ['employee_id' => $this->employee('EMP-MAYA')->id, 'period' => '2036-06', 'commission' => 6250]);
+        $detail = app(\App\Http\Services\RemunerationReportService::class)->report($this->admin,
+            \Carbon\CarbonImmutable::parse('2036-06-01'), \Carbon\CarbonImmutable::parse('2036-06-30'));
+        $this->assertCount(2, $detail['commission_details']);
+        $this->assertSame([$replacement->name], collect($detail['commission_details'])->pluck('treatment_name')->unique()->values()->all());
+        $this->patchJson("/operasional/reservasi/{$id}/item/{$newId}/ganti", $data)->assertUnprocessable();
+    }
+
+    public function test_adding_treatment_accepts_multiple_therapists_and_rejects_invalid_commission(): void
+    {
+        Carbon::setTestNow('2036-06-03 10:00:00');
+        $treatment = $this->treatment('TRT-CREAMBATH-MKRZ');
+        $staff = [['employee_id' => $this->employee('EMP-DITA')->id, 'role' => 'primary', 'commission_percent' => 12],
+            ['employee_id' => $this->employee('EMP-MAYA')->id, 'role' => 'assistant', 'commission_percent' => 8]];
+        $id = $this->createReservation($this->admin, [$this->item($treatment->id, '13:00', $staff)])->assertCreated()->json('id');
+        $url = "/operasional/reservasi/{$id}/item";
+        foreach ([-1, 101] as $invalid) {
+            $invalidStaff = $staff;
+            $invalidStaff[0]['commission_percent'] = $invalid;
+            $this->postJson($url, $this->item($treatment->id, '14:00', $invalidStaff))->assertUnprocessable()->assertJsonValidationErrors('staff.0.commission_percent');
+        }
+        $excess = $staff;
+        $excess[0]['commission_percent'] = 95;
+        $this->postJson($url, $this->item($treatment->id, '14:00', $excess))->assertUnprocessable();
+        $this->assertSame(1, DB::table('reservation_items')->where('reservation_id', $id)->count());
+        $newId = $this->postJson($url, $this->item($treatment->id, '14:00', $staff))->assertCreated()->json('id');
+        $this->assertDatabaseHas('reservation_items', ['id' => $newId, 'commission_percent' => '20.0000', 'commission_amount' => 25000]);
+        $this->assertDatabaseHas('reservation_item_staff', ['reservation_item_id' => $newId, 'employee_id' => $staff[0]['employee_id'], 'commission_amount' => 15000]);
+        $this->assertDatabaseHas('reservation_item_staff', ['reservation_item_id' => $newId, 'employee_id' => $staff[1]['employee_id'], 'commission_amount' => 10000]);
     }
 
     private function createReservation(User $actor, array $items, array $overrides = []): TestResponse
